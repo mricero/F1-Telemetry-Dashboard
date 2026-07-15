@@ -1,0 +1,14 @@
+# Core Framework
+streamlit>=1.35.0
+plotly>=5.22.0
+pandas>=2.2.0
+numpy>=1.26.0
+
+# F1 Data
+fastf1>=3.8.0
+livef1>=1.2.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Utilities
+pyarrow>=16.0.0  # for parquet support in replay
