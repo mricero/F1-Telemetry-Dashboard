@@ -1,0 +1,23 @@
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+# Black's defaults cover .venv but not these; without them `black --check .`
+# walks the vendored site-packages and fails CI on third-party code.
+extend-exclude = '''
+/(
+    \.venv311
+  | ff1_cache
+  | replay_sessions
+  | test_cache
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", ".venv311", "ff1_cache", "replay_sessions"]
+
+[tool.ruff.lint]
+# Keep to high-signal rules (errors, undefined names, unused imports);
+# broader style is delegated to black.
+select = ["E4", "E7", "E9", "F"]

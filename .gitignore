@@ -22,6 +22,7 @@ wheels/
 
 # Virtual Environment
 .venv/
+.venv311/
 venv/
 ENV/
 env/
@@ -48,6 +49,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Persistent metrics store (fastest lap/sector/top speed records)
+metrics_store.json
 
 # Test coverage
 .coverage

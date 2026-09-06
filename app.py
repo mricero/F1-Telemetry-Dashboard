@@ -1,401 +1,300 @@
-"""Main Streamlit Application - F1 Telemetry Dashboard"""
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from typing import Optional
+"""Main Streamlit Application - F1 Telemetry Dashboard.
+
+Thin orchestration layer: session selection, data loading (with the
+two-tier cache), processing and record keeping. All rendering lives in
+:mod:`ui.layout`.
+
+Either entry point works::
+
+    streamlit run app.py     # the normal way
+    python app.py            # re-enters through Streamlit automatically
+"""
+
+import os
 import sys
 from pathlib import Path
+
+from streamlit.runtime import exists as streamlit_runtime_exists
+
+# Guards against a relaunch loop if Streamlit somehow starts without its
+# runtime: the second pass through gives up instead of forking forever.
+_RELAUNCH_FLAG = "F1_DASHBOARD_RELAUNCHED"
+
+_BARE_MODE_HELP = """\
+Could not start the Streamlit runtime. Run the dashboard directly with:
+
+    streamlit run app.py
+
+The plain interpreter leaves Streamlit in "bare mode", where widgets return
+defaults, session state is unavailable and st.stop() does nothing - which
+turns any load failure into a confusing crash further down.
+"""
+
+
+def launch_via_streamlit() -> None:
+    """Hand this script to ``streamlit run`` and never return.
+
+    Running ``python app.py`` - an IDE's Run button, for instance - would
+    otherwise leave Streamlit in bare mode. Rather than failing with advice,
+    re-enter through Streamlit's own CLI so the dashboard just starts.
+    """
+    if os.environ.get(_RELAUNCH_FLAG):
+        print(_BARE_MODE_HELP, file=sys.stderr)
+        raise SystemExit(2)
+    os.environ[_RELAUNCH_FLAG] = "1"
+
+    from streamlit.web import cli as streamlit_cli
+
+    script = str(Path(__file__).resolve())
+    print(f"Starting Streamlit: streamlit run {script}", file=sys.stderr)
+    # Streamlit's CLI reads sys.argv; pass through any extra user flags.
+    sys.argv = ["streamlit", "run", script, *sys.argv[1:]]
+    raise SystemExit(streamlit_cli.main())
+
+
+# Re-enter through Streamlit *before* the heavy imports below: applying the
+# @st.cache_data decorators in ui.layout without a runtime emits confusing
+# "No runtime found" warnings on the way out.
+if __name__ == "__main__" and not streamlit_runtime_exists():
+    launch_via_streamlit()  # does not return
+
+import pandas as pd  # noqa: E402
+import streamlit as st  # noqa: E402
 
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from data.source_manager import DataSourceManager
-from processing.telemetry_processor import TelemetryProcessor
-from config import config
+from data.runtime_cache import runtime_cache  # noqa: E402
+from data.source_manager import DataSourceManager  # noqa: E402
+from processing.metrics_store import MetricsStore  # noqa: E402
+from processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
+from ui.dashboard import render_dashboard  # noqa: E402
+from ui.layout import (  # noqa: E402
+    render_driver_comparison,
+    render_header,
+    render_live_dashboard,
+    render_lap_times,
+    render_live_controls,
+    render_position_changes,
+    render_race_control,
+    render_session_selector,
+    render_telemetry_charts,
+    render_tire_strategy,
+    render_track_map,
+    render_weather,
+)
+from config import config  # noqa: E402,F401  (loads .env before adapters read it)
 
 
-COMPOUND_COLORS = {
-    "SOFT": "red",
-    "MEDIUM": "yellow", 
-    "HARD": "white",
-    "INTERMEDIATE": "green",
-    "WET": "blue",
-    "UNKNOWN": "gray"
-}
+def load_session_data(data_manager, selection: dict) -> dict:
+    """Fetch a session, using the runtime cache when possible.
+
+    Never returns None: load failures are surfaced with ``st.error`` and halt
+    the script, so callers can rely on getting a real session dict.
+    """
+    cache_key = runtime_cache.make_key("session", selection)
+    session_data = runtime_cache.get(cache_key)
+    if session_data is not None:
+        return session_data
+
+    with st.spinner("Loading session data..."):
+        try:
+            session_data = data_manager.get_session_data(**selection)
+        except Exception as exc:
+            st.error(f"Failed to load session: {exc}")
+            with st.expander("Details"):
+                st.exception(exc)
+            st.stop()
+            # st.stop() raises under `streamlit run`; the explicit raise keeps
+            # any other execution context from continuing without data.
+            raise
+
+    if session_data is None:
+        st.error("The data source returned no session data.")
+        st.stop()
+        raise RuntimeError("get_session_data() returned None")
+
+    if not session_data.get("is_live"):
+        runtime_cache.set(cache_key, session_data)
+    return session_data
 
 
-def render_session_selector(data_manager) -> dict:
-    """Session selection with live detection."""
-    
-    # Check for live session
-    is_race_weekend = data_manager._is_race_weekend()
-    
-    col1, col2, col3 = st.columns([2, 2, 1])
-    
-    with col1:
-        source = st.selectbox(
-            "Data Source",
-            ["Auto (Live → Historical)", "FastF1 (Historical)", "LiveF1 (Historical)", "Live (SignalR)", "Replay (Saved)"],
-            index=0
-        )
-    
-    # Live indicator
-    live_session = None
-    if "Auto" in source and is_race_weekend:
-        with col2:
-            st.success("🔴 LIVE SESSION DETECTED - Race weekend active!")
-            live_session = True
-    elif "Live" in source:
-        with col2:
-            st.warning("🔴 LIVE MODE - Attempting SignalR connection...")
-            live_session = True
-    
-    # Historical selection
-    if not live_session or "Replay" in source:
-        with col2:
-            years = st.selectbox("Season", [2025, 2024, 2023], index=0)
-        
-        with col3:
-            # Get available GPs for selected year
-            if "FastF1" in source or "Auto" in source:
-                meetings = data_manager.fastf1.get_available_sessions(years)
-                gps = sorted(meetings['EventName'].unique())
-            else:
-                schedule = data_manager.jolpica.get_schedule(years)
-                gps = sorted(schedule['race_name'].unique())
-            
-            gp = st.selectbox("Grand Prix", gps) if gps else st.selectbox("Grand Prix", ["No data"])
-        
-        session_types = ['FP1', 'FP2', 'FP3', 'Q', 'S', 'R']
-        session_type = st.selectbox("Session", session_types, index=len(session_types)-1)
-        
-        # Replay file selection
-        if "Replay" in source:
-            replays = data_manager.get_available_replays()
-            if replays:
-                replay_file = st.selectbox("Replay File", replays)
-            else:
-                st.info("No replay files available")
-                replay_file = None
-        else:
-            replay_file = None
-    else:
-        years = None
-        gp = None
-        session_type = None
-        replay_file = None
-    
-    source_map = {
-        "Auto (Live → Historical)": "auto",
-        "FastF1 (Historical)": "fastf1",
-        "LiveF1 (Historical)": "livef1",
-        "Live (SignalR)": "live",
-        "Replay (Saved)": "replay"
-    }
-    
-    return {
-        'source': source_map.get(source, "auto"),
-        'year': years,
-        'gp': gp,
-        'session_type': session_type,
-        'replay_file': replay_file,
-    }
+def ensure_driver_table(session_data: dict) -> pd.DataFrame:
+    """Return a usable drivers table, synthesizing one for bare live feeds."""
+    drivers_df = session_data.get("drivers")
+    if drivers_df is not None and not drivers_df.empty:
+        return drivers_df
 
-
-def create_telemetry_chart(telemetry_data: dict, config: dict, color_map: dict) -> Optional[go.Figure]:
-    """Create multi-driver telemetry line chart."""
-    col = config['col']
-    unit = config['unit']
-    
-    fig = go.Figure()
-    has_data = False
-    
-    for driver, df in telemetry_data.items():
-        if df.empty or col not in df.columns or 'Distance' not in df.columns:
-            continue
-        
-        has_data = True
-        color = color_map.get(driver, "#888888")
-        
-        if col == 'Gear':
-            # Gear as step chart
-            fig.add_trace(go.Scatter(
-                x=df['Distance'], y=df[col],
-                mode='lines', name=driver,
-                line=dict(color=color, shape='hv'),
-                hovertemplate=f"{driver}: %{{y}}<br>Distance: %{{x}}m<extra></extra>"
-            ))
-        else:
-            fig.add_trace(go.Scatter(
-                x=df['Distance'], y=df[col],
-                mode='lines', name=driver,
-                line=dict(color=color, width=2),
-                hovertemplate=f"{driver}: %{{y}} {unit}<br>Distance: %{{x}}m<extra></extra>"
-            ))
-    
-    if not has_data:
-        return None
-    
-    fig.update_layout(
-        title=f"{col} by Track Distance",
-        xaxis_title="Distance (m)",
-        yaxis_title=f"{col} ({unit})" if unit else col,
-        hovermode="x unified",
-        height=400,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    # Live feeds may not have sent DriverList yet: fall back to telemetry keys.
+    names = sorted(session_data.get("telemetry", {}).keys())
+    drivers_df = pd.DataFrame(
+        {
+            "driver_number": names,
+            "name_acronym": names,
+            "team_colour": ["#888888"] * len(names),
+            "team_name": [""] * len(names),
+            "full_name": names,
+        }
     )
-    
-    return fig
-
-
-def render_telemetry_charts(telemetry_data: dict, color_map: dict):
-    """Render speed, throttle, brake, rpm, gear, DRS charts."""
-    
-    if not telemetry_data:
-        st.info("No telemetry data available")
-        return
-    
-    tabs = st.tabs(["📈 Speed", "⚡ Throttle", "🛑 Brake", "🔧 RPM", "⚙️ Gear", "🚀 DRS"])
-    
-    channel_config = {
-        "Speed": {"col": "Speed", "unit": "km/h"},
-        "Throttle": {"col": "Throttle", "unit": "%"},
-        "Brake": {"col": "Brake", "unit": "%"},
-        "RPM": {"col": "RPM", "unit": "RPM"},
-        "Gear": {"col": "Gear", "unit": ""},
-        "DRS": {"col": "DRS", "unit": ""},
-    }
-    
-    for i, (tab_name, cfg) in enumerate(channel_config.items()):
-        with tabs[i]:
-            fig = create_telemetry_chart(telemetry_data, cfg, color_map)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-
-
-def render_lap_times(laps_df: pd.DataFrame, color_map: dict):
-    """Render lap time chart with pit stop indicators."""
-    if laps_df.empty:
-        st.warning("No lap data available")
-        return
-    
-    fig = go.Figure()
-    
-    for driver in laps_df['DriverAcronym'].unique():
-        driver_laps = laps_df[laps_df['DriverAcronym'] == driver].sort_values('LapNumber')
-        color = color_map.get(driver, "#888888")
-        
-        # Convert LapTime to seconds
-        lap_times_sec = driver_laps['LapTime'].dt.total_seconds()
-        
-        # Pit out lap markers
-        pit_out = driver_laps['IsPitOutLap'] == True
-        
-        fig.add_trace(go.Scatter(
-            x=driver_laps['LapNumber'],
-            y=lap_times_sec,
-            mode='lines+markers',
-            name=driver,
-            line=dict(color=color),
-            marker=dict(
-                color=['red' if p else color for p in pit_out],
-                size=8,
-                symbol=['diamond' if p else 'circle' for p in pit_out]
-            ),
-            hovertemplate=(
-                f"{driver}: Lap %{{x}}<br>"
-                f"Time: %{{customdata}}<br>"
-                f"Pit: %{{text}}<extra></extra>"
-            ),
-            customdata=driver_laps['LapTime'].astype(str),
-            text=['🔧 PIT OUT' if p else '' for p in pit_out]
-        ))
-    
-    fig.update_layout(
-        title="Lap Times by Driver",
-        xaxis_title="Lap Number",
-        yaxis_title="Lap Time (seconds)",
-        hovermode="x unified",
-        height=500
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_tire_strategy_strategy(stints_df: pd.DataFrame, color_map: dict):
-    """Render horizontal bar chart for tire strategy."""
-    
-    if stints_df.empty:
-        st.warning("No tire stint data available")
-        return
-    
-    fig = go.Figure()
-    
-    for _, row in stints_df.iterrows():
-        driver = row.get('DriverAcronym') or row.get('Driver', '')
-        compound = row['Compound'].upper()
-        
-        fig.add_trace(go.Bar(
-            x=[row['LapCount']],
-            y=[driver],
-            base=row['LapStart'],
-            orientation='h',
-            marker=dict(color=COMPOUND_COLORS.get(compound, "gray")),
-            hovertemplate=(
-                f"{driver}: {compound}<br>"
-                f"Laps: {row['LapCount']}<br>"
-                f"Start: {row['LapStart']}<br>"
-                f"End: {row['LapEnd']}<extra></extra>"
-            ),
-            showlegend=False
-        ))
-    
-    # Add driver labels with team colors
-    for driver in stints_df['DriverAcronym'].unique():
-        fig.add_annotation(
-            x=-2, y=driver, xref="x", yref="y",
-            text=f"<b>{driver}</b>", showarrow=False,
-            font=dict(color=color_map.get(driver, "#AAA"), size=12),
-            align="right", xanchor="right"
-        )
-    
-    fig.update_layout(
-        title="Tire Strategy by Driver",
-        xaxis_title="Lap Number",
-        barmode="stack",
-        height=max(400, len(stints_df['DriverAcronym'].unique()) * 30 + 100),
-        margin=dict(l=120),
-        yaxis=dict(showticklabels=False)
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_track_map(location_data: dict, color_map: dict):
-    """Render track map with driver positions."""
-    if not location_data:
-        st.info("GPS data not available for track map")
-        return
-    
-    first_driver = next(iter(location_data))
-    df = location_data[first_driver]
-    
-    if df.empty or 'X' not in df.columns:
-        st.info("Track map requires GPS data")
-        return
-    
-    fig = go.Figure()
-    
-    # Circuit outline
-    fig.add_trace(go.Scatter(
-        x=df['X'], y=df['Y'],
-        mode='lines', line=dict(color='#444', width=2),
-        name='Circuit', showlegend=False
-    ))
-    
-    # Driver positions (last known)
-    for driver, loc_df in location_data.items():
-        if loc_df.empty:
-            continue
-        last_pos = loc_df.iloc[-1]
-        fig.add_trace(go.Scatter(
-            x=[last_pos['X']], y=[last_pos['Y']],
-            mode='markers+text',
-            marker=dict(color=color_map.get(driver, "#888"), size=12),
-            text=[driver], textposition="top center",
-            name=driver, showlegend=False
-        ))
-    
-    fig.update_layout(
-        title="Track Map - Driver Positions",
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-        height=500, showlegend=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    session_data["drivers"] = drivers_df
+    return drivers_df
 
 
 def main():
     """Main Streamlit application."""
-    # Page config
-    st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide")
-    st.title("🏎️ Formula 1 Telemetry Dashboard")
-    st.caption("Historical (FastF1) • Live (SignalR - FREE) • Replay (Local)")
-    
+    render_header()
+
+    # Wipe the in-memory cache once per app session. Streamlit re-executes this
+    # script on every interaction, so this must be guarded - resetting on each
+    # rerun would evict the sessions the cache exists to keep hot.
+    if not st.session_state.get("_runtime_cache_started"):
+        runtime_cache.begin_session()
+        st.session_state["_runtime_cache_started"] = True
+
     # Initialize managers
-    if 'data_manager' not in st.session_state:
+    if "data_manager" not in st.session_state:
         st.session_state.data_manager = DataSourceManager()
-    if 'processor' not in st.session_state:
+    if "processor" not in st.session_state:
         st.session_state.processor = TelemetryProcessor()
-    
+    if "metrics_store" not in st.session_state:
+        st.session_state.metrics_store = MetricsStore()
+
     data_manager = st.session_state.data_manager
     processor = st.session_state.processor
-    
+    metrics_store = st.session_state.metrics_store
+
     # Session Selection
     with st.expander("📋 Session Selection", expanded=True):
         selection = render_session_selector(data_manager)
-    
-    # Load Data
-    with st.spinner("Loading session data..."):
-        try:
-            session_data = data_manager.get_session_data(**selection)
-        except Exception as e:
-            st.error(f"Failed to load session: {e}")
-            st.stop()
-    
-    # Build color map
-    color_map = processor.build_driver_color_map(session_data['drivers'])
-    
-    # Process telemetry
-    telemetry_aligned = processor.align_drivers_by_distance(session_data['telemetry'])
-    telemetry_processed = {d: processor.normalize_units(df) for d, df in telemetry_aligned.items()}
-    
-    # Process laps & stints
-    laps_processed = processor.process_laps(session_data['laps'], session_data['drivers'])
-    stints_processed = processor.process_stints(session_data['stints'])
-    
-    # Display Session Info
-    info = session_data['session_info']
-    live_badge = " 🔴 **LIVE**" if session_data.get('is_live') else ""
-    st.markdown(f"### {info.get('gp', '')} {info.get('year', '')} - {info.get('session_type', '')}{live_badge}")
-    st.caption(f"Source: {session_data.get('source', 'unknown')}")
-    
-    # Live mode handling
-    if session_data.get('is_live'):
-        st.warning("🔴 **LIVE MODE** - Connecting to F1 SignalR feed...")
-        live_client = session_data.get('live_client')
-        if live_client:
-            if st.button("Start Live Stream"):
+
+    # Load Data (runtime-cached: repeat selections are instant, and
+    # everything evaporates when the app closes)
+    session_data = load_session_data(data_manager, selection)
+
+    # Build color map (live feeds may not have DriverList yet)
+    drivers_df = ensure_driver_table(session_data)
+    color_map = processor.build_driver_color_map(drivers_df)
+
+    # Process telemetry (live snapshots already carry real distances derived
+    # from Position.z; resampling them again would waste cycles, so only
+    # align historical data)
+    if session_data.get("is_live"):
+        telemetry_processed = {
+            d: processor.normalize_units(df.copy()) for d, df in session_data["telemetry"].items()
+        }
+    else:
+        telemetry_aligned = processor.align_drivers_by_distance(session_data["telemetry"])
+        telemetry_processed = {
+            d: processor.normalize_units(df) for d, df in telemetry_aligned.items()
+        }
+
+    # Process laps & stints (latest known lap helps bound live tyre stints)
+    laps_processed = processor.process_laps(session_data["laps"], session_data["drivers"])
+    stints_processed = processor.process_stints(
+        session_data["stints"], latest_lap=max_lap_number(laps_processed)
+    )
+
+    info = session_data["session_info"]
+
+    # --- Live timing dashboard (layout.md): header bar, leaderboard matrix,
+    # sector widgets and the vector track map on the 60/40 grid.
+    render_dashboard(session_data)
+
+    # Metrics label + persistent record keeping (survives app restarts)
+    metrics_label = MetricsStore.make_label({**info, **selection})
+    if not laps_processed.empty:
+        metrics_store.update_laps(metrics_label, laps_processed)
+    if telemetry_processed:
+        metrics_store.update_telemetry(metrics_label, telemetry_processed)
+
+    with st.expander("🏆 Session & All-Time Records", expanded=True):
+        rec_lines = metrics_store.summary_lines(metrics_store.session_records(metrics_label))
+        if rec_lines:
+            st.markdown(f"**This session — {metrics_label}**")
+            for line in rec_lines:
+                st.markdown(f"- {line}")
+        else:
+            st.info("No records yet for this session.")
+        at_lines = metrics_store.summary_lines(metrics_store.all_time())
+        if at_lines:
+            st.markdown("**🏅 All-time (across sessions viewed)**")
+            for line in at_lines:
+                st.markdown(f"- {line}")
+        cache_stats = runtime_cache.stats()
+        st.caption(
+            f"Runtime cache: {cache_stats['entries']} session(s) hot · "
+            f"{cache_stats['hits']} hits / {cache_stats['misses']} misses · "
+            f"app open for {cache_stats['age_seconds']}s "
+            f"(cache clears automatically when the app closes; "
+            f"records above are kept)"
+        )
+
+    # Live mode handling - auto-refreshing fragment polls the SignalR buffers
+    if session_data.get("is_live"):
+        live_client = session_data.get("live_client")
+        if live_client and not live_client.is_running():
+            if st.button("🔴 Start Live Stream"):
                 live_client.start_async()
-                st.success("Live stream started! Data will appear below.")
-    
-    # Telemetry Charts
+                st.rerun()
+        elif live_client and live_client.is_running():
+            err = live_client.last_error()
+            if err:
+                st.error(f"Live client error: {err}")
+            render_live_dashboard(data_manager, processor)
+        return
+
+    # --- Deep-dive analysis. The dashboard above answers "what happened";
+    # these tabs are for digging into a single channel or driver.
     st.markdown("---")
-    st.subheader("📊 Telemetry Channels")
-    render_telemetry_charts(telemetry_processed, color_map)
-    
-    # Lap Times
-    st.markdown("---")
-    st.subheader("⏱️ Lap Times")
-    render_lap_times(laps_processed, color_map)
-    
-    # Tire Strategy
-    st.markdown("---")
-    st.subheader("🛞 Tire Strategy")
-    render_tire_strategy_strategy(stints_processed, color_map)
-    
-    # Track Map
-    st.markdown("---")
-    st.subheader("🗺️ Track Map")
-    render_track_map(session_data['location'], color_map)
-    
+    analysis = st.tabs(
+        [
+            "📊 Telemetry",
+            "⚔️ Head-to-Head",
+            "⏱️ Lap Times",
+            "📈 Positions",
+            "🛞 Tyres",
+            "🗺️ Track",
+            "🌤️ Weather",
+            "🚩 Race Control",
+        ]
+    )
+    with analysis[0]:
+        scope_note = {
+            "fastest": "Each driver's fastest lap — distance runs 0 → lap length, "
+            "so drivers line up at the same track position.",
+            "session": "Every lap of the session — distance accumulates across the "
+            "full run, so drivers are not aligned by track position.",
+        }.get(info.get("telemetry_scope"))
+        if scope_note:
+            st.caption(scope_note)
+        render_telemetry_charts(telemetry_processed, color_map)
+    with analysis[1]:
+        render_driver_comparison(telemetry_processed, color_map)
+    with analysis[2]:
+        render_lap_times(laps_processed, color_map)
+    with analysis[3]:
+        render_position_changes(laps_processed, color_map)
+    with analysis[4]:
+        render_tire_strategy(stints_processed, color_map, session_data.get("compound_colors"))
+    with analysis[5]:
+        render_track_map(session_data["location"], color_map)
+    with analysis[6]:
+        render_weather(session_data.get("weather"))
+    with analysis[7]:
+        render_race_control(session_data.get("race_control"))
+
+    if session_data.get("source") == "live":
+        render_live_controls(data_manager.live)
+
     # Replay Save Option
-    if not session_data.get('is_live') and st.button("💾 Save Session for Replay"):
+    if st.button("💾 Save Session for Replay"):
         name = f"{info.get('gp', 'race')}_{info.get('session_type', 'R')}"
         path = data_manager.save_replay(session_data, name)
         st.success(f"Saved to {path}")
 
 
 if __name__ == "__main__":
+    # The bare-interpreter case already relaunched above; reaching here means
+    # Streamlit's runtime is up and this is the real script run.
     main()

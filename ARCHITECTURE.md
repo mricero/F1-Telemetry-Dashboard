@@ -40,15 +40,15 @@ Both connect to the same official F1 SignalR endpoint - no subscription needed!
         ┌──────────────────────────┼──────────────────────────┐
         ▼                          ▼                          ▼
 ┌───────────────┐         ┌───────────────┐         ┌───────────────┐
-│  FASTF1       │         │   OPENF1      │         │   LOCAL       │
-│  (Historical) │         │   (Live/Hist) │         │   CACHE/REPLAY│
+│  FASTF1       │         │   LIVEF1 /    │         │   LOCAL       │
+│  (Historical) │         │   JOLPICA     │         │   CACHE/REPLAY│
 │               │         │               │         │               │
-│ • get_session │         │ • /meetings   │         │ • FastF1 disk │
-│ • load()      │         │ • /sessions   │         │   cache       │
-│ • car_data    │         │ • /laps       │         │ • Saved JSON  │
-│ • laps        │         │ • /car_data   │         │   sessions    │
-│ • stints      │         │ • /location   │         │ • Pre-loaded  │
-│ • Cache       │         │ • /weather    │         │   samples     │
+│ • get_session │         │ • SignalR     │         │ • FastF1 disk │
+│ • load()      │         │   live feed   │         │   cache       │
+│ • car_data    │         │ • Ergast REST │         │ • Saved .pkl  │
+│ • laps        │         │   (schedule/  │         │   sessions    │
+│ • stints      │         │   results)    │         │ • Race-       │
+│ • Cache       │         │ • get_session │         │   weekend     │
 └───────────────┘         └───────────────┘         └───────────────┘
 ```
 
@@ -78,123 +78,218 @@ class FastF1Adapter:
         session.load(telemetry=True, laps=True, weather=True, messages=True)
         return session
     
-    def get_telemetry(self, session: fastf1.Session, driver: str) -> pd.DataFrame:
-        """Get car telemetry (speed, throttle, brake, rpm, gear, drs)."""
-        laps = session.laps.pick_drivers(driver)
-        if laps.empty:
+    def get_telemetry(self, session, driver: str, scope: str = SCOPE_FASTEST) -> pd.DataFrame:
+        """Get car telemetry (speed, throttle, brake, rpm, gear, drs).
+
+        scope='fastest' (default) takes the driver's fastest lap, so Distance
+        runs 0 -> lap length and drivers align at the same track position.
+        scope='session' takes every lap; Distance then accumulates over the
+        whole run (~300 km for a race), which is far heavier to render.
+        """
+        selection = self._pick_laps(session, driver, scope)
+        if selection is None:
             return pd.DataFrame()
-        telemetry = laps.get_telemetry().add_distance()
-        return telemetry[['Distance', 'Speed', 'Throttle', 'Brake', 'RPM', 'nGear', 'DRS']]
+        telemetry = selection.get_telemetry()   # merges car + position data
+        return telemetry[['Distance', 'Time', 'Speed', 'Throttle',
+                          'Brake', 'RPM', 'nGear', 'DRS']]
     
-    def get_laps(self, session: fastf1.Session) -> pd.DataFrame:
-        """Get lap timing data."""
-        return session.laps[['Driver', 'LapNumber', 'LapTime', 'Sector1Time', 
-                             'Sector2Time', 'Sector3Time', 'IsPitOutLap']]
+    def get_laps(self, session) -> pd.DataFrame:
+        """Get lap timing data.
+
+        NOTE: FastF1 has no 'IsPitOutLap' column - pit activity is exposed as
+        the PitOutTime/PitInTime timestamps, so the boolean flag is derived.
+        """
+        laps = session.laps.copy()
+        result = laps[['Driver', 'LapNumber', 'LapTime',
+                       'Sector1Time', 'Sector2Time', 'Sector3Time']]
+        result['IsPitOutLap'] = laps['PitOutTime'].notna()
+        return result
     
-    def get_stints(self, session: fastf1.Session) -> pd.DataFrame:
-        """Get tyre stint data."""
-        return session.laps[['Driver', 'Stint', 'Compound', 'LapStart', 'LapEnd']].drop_duplicates()
+    def get_stints(self, session) -> pd.DataFrame:
+        """Get tyre stint data, derived from per-lap Stint/Compound values.
+
+        Lap counters are cast to Int64 - a groupby leaves them as floats,
+        which would render as "Laps: 12.0" in the strategy chart.
+        """
+        return (session.laps
+                .groupby(['Driver', 'Stint'])
+                .agg(LapStart=('LapNumber', 'min'),
+                     LapEnd=('LapNumber', 'max'),
+                     Compound=('Compound', 'first'))
+                .reset_index())
     
-    def get_location(self, session: fastf1.Session, driver: str) -> pd.DataFrame:
-        """Get GPS location data."""
-        laps = session.laps.pick_drivers(driver)
-        if laps.empty:
+    def get_location(self, session, driver: str, scope: str = SCOPE_FASTEST) -> pd.DataFrame:
+        """Get GPS location data.
+
+        WARNING: do NOT call `get_pos_data().add_distance()`. Position data
+        carries no Speed channel, and distance integration needs one, so it
+        raises `ValueError: Telemetry does not contain required channels
+        'Time' and 'Speed'`. The merged telemetry already has X/Y/Z *and*
+        Distance; a raw-position fallback derives distance from GPS arc
+        length instead (coordinates are in 1/10 m).
+        """
+        selection = self._pick_laps(session, driver, scope)
+        if selection is None:
             return pd.DataFrame()
-        return laps.get_pos_data().add_distance()[['Distance', 'X', 'Y', 'Z']]
+        return selection.get_telemetry()[['Distance', 'X', 'Y', 'Z']]
 ```
 
-### 1.2 OpenF1 Adapter (`data/openf1_adapter.py`)
+### 1.2 Jolpica Adapter (`data/jolpica_adapter.py`)
 
 ```python
-class OpenF1Adapter:
-    """Fetches data from OpenF1 REST API with filtering support."""
-    
-    BASE_URL = "https://api.openf1.org/v1"
-    
+class JolpicaAdapter:
+    """Free historical data via Jolpica F1 API (Ergast-compatible)."""
+
+    BASE_URL = "https://api.jolpi.ca/ergast/f1"
+
     def __init__(self):
         self.session = requests.Session()
-    
-    def _fetch(self, endpoint: str, params: dict = None) -> pd.DataFrame:
-        """Generic fetch with filtering and error handling."""
+        self.session.headers.update({'User-Agent': 'F1-Telemetry-Dashboard/1.0'})
+
+    def _fetch(self, endpoint: str, params: dict = None) -> dict:
+        """Generic fetch with error handling."""
         url = f"{self.BASE_URL}/{endpoint}"
-        response = self.session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        return pd.DataFrame(response.json())
-    
-    # Historical Data (always available)
-    def get_meetings(self, year: int = None) -> pd.DataFrame:
-        params = {"year": year} if year else {}
-        return self._fetch("meetings", params)
-    
-    def get_sessions(self, meeting_key: int) -> pd.DataFrame:
-        return self._fetch("sessions", {"meeting_key": meeting_key})
-    
-    def get_drivers(self, session_key: int) -> pd.DataFrame:
-        return self._fetch("drivers", {"session_key": session_key})
-    
-    def get_laps(self, session_key: int, driver_number: int = None) -> pd.DataFrame:
-        params = {"session_key": session_key}
-        if driver_number:
-            params["driver_number"] = driver_number
-        return self._fetch("laps", params)
-    
-    def get_stints(self, session_key: int) -> pd.DataFrame:
-        return self._fetch("stints", {"session_key": session_key})
-    
-    def get_pit_stops(self, session_key: int) -> pd.DataFrame:
-        return self._fetch("pit", {"session_key": session_key})
-    
-    def get_telemetry(self, session_key: int, driver_number: int) -> pd.DataFrame:
-        """Get high-frequency car data (~3.7Hz)."""
-        return self._fetch("car_data", {"session_key": session_key, "driver_number": driver_number})
-    
-    def get_location(self, session_key: int, driver_number: int) -> pd.DataFrame:
-        """Get GPS location (~3.7Hz)."""
-        return self._fetch("location", {"session_key": session_key, "driver_number": driver_number})
-    
-    def get_weather(self, meeting_key: int) -> pd.DataFrame:
-        return self._fetch("weather", {"meeting_key": meeting_key})
-    
-    def get_intervals(self, session_key: int) -> pd.DataFrame:
-        return self._fetch("intervals", {"session_key": session_key})
-    
-    def get_position(self, session_key: int) -> pd.DataFrame:
-        return self._fetch("position", {"session_key": session_key})
-    
-    # Live Session Detection
-    def get_latest_session(self) -> dict | None:
-        """Check if a live session is currently active."""
         try:
-            df = self._fetch("sessions", {"session_key": "latest"})
-            if not df.empty:
-                session = df.iloc[0]
-                # Check if session is recent (within last 6 hours)
-                start = pd.to_datetime(session['date_start'], utc=True)
-                if (pd.Timestamp.now(tz='UTC') - start) < pd.Timedelta(hours=6):
-                    return session.to_dict()
-        except:
-            pass
-        return None
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            raise ConnectionError(f"Failed to fetch {endpoint}: {e}")
+
+    @lru_cache(maxsize=32)
+    def get_schedule(self, year: int) -> pd.DataFrame:
+        """Race schedule for a year (round, race_name, circuit, date...)."""
+        ...
+
+    def get_race_results_df(self, year: int, round_num: int) -> pd.DataFrame: ...
+    def get_qualifying_df(self, year: int, round_num: int) -> pd.DataFrame: ...
+    def get_lap_times_df(self, year: int, round_num: int) -> pd.DataFrame: ...
+    def get_pit_stops_df(self, year: int, round_num: int) -> pd.DataFrame: ...
+    def get_driver_standings_df(self, year: int) -> pd.DataFrame: ...
+
+    def is_race_weekend(self, year: int = None) -> bool:
+        """True if a scheduled race falls within +/-3 days of now (UTC)."""
+        ...
 ```
 
-### 1.3 Data Source Manager (`data/source_manager.py`)
+### 1.3 Live Telemetry Adapter (`data/live_adapter.py`)
+
+**Wire format (verified against LiveF1 source & FastF1 docs):**
+- Endpoint: `wss://livetiming.formula1.com/signalrcore`
+- Compressed topics (`CarData.z`, `Position.z`) carry base64-encoded **raw DEFLATE**
+  JSON (`zlib.decompress(b64decode(text), -zlib.MAX_WBITS)`).
+- CarData channels: `0`=RPM, `2`=Speed, `3`=Gear, `4`=Throttle, `5`=Brake, `45`=DRS.
+- LiveF1's `MessageHandlerTemplate` parses messages through its `function_map`
+  **before** invoking callbacks, so our buffers hold flat records
+  (`DriverNo`, `speed`, `rpm`, `n_gear`, `X/Y/Z`, ...). All subscribed topics
+  have dedicated parsers there; unknown topics would raise on every message.
+
+```python
+class SignalRLiveAdapter:
+    """
+    FREE live telemetry via SignalR - connects directly to the official F1 feed.
+    Two implementations available:
+    1. LiveF1 package: livef1.adapters.RealF1Client (async callbacks)
+    2. FastF1 built-in: fastf1.livetiming.SignalRClient (saves raw stream to file)
+    Both use: wss://livetiming.formula1.com/signalrcore
+    """
+
+    TELEMETRY_TOPICS = [
+        "CarData.z",       # Speed, Throttle, Brake, RPM, Gear, DRS
+        "Position.z",      # GPS position X,Y,Z
+        "TimingData", "WeatherData",
+        "RaceControlMessages", "TrackStatus", "SessionInfo",
+        "SessionStatus", "DriverList", "LapSeries", "CurrentTyres",
+        "PitLaneTimeCollection", "TyreStintSeries",
+    ]
+
+    def start_async(self, topics=None, log_file=None):
+        """Run the client in a daemon thread.
+
+        RealF1Client.run() creates and owns its own event loop internally,
+        so the background thread must call it directly - wrapping it in
+        another asyncio loop raises RuntimeError.
+        """
+
+    def register_callback(self, topic: str, callback): ...
+    def get_buffered_data(self, topic: str) -> list[dict]: ...
+    def get_latest_data(self, topic: str) -> dict | None: ...
+    def stop(self): ...
+
+    # Buffers are capped per topic (buffer_limit, default 20000 records);
+    # the oldest entries are dropped first so long sessions stay bounded.
+    _buffer_topic(topic, records)
+
+
+class LiveDataProcessor:
+    """Turn parsed SignalR records into chart-ready DataFrames."""
+    parse_car_data(records)      # -> driver_number, Speed/RPM/nGear/Throttle/Brake/DRS
+    parse_position_data(records) # -> driver_number, X/Y/Z (track map trails)
+    parse_timing_data(records)   # -> flattened timing fields per driver
+    parse_weather_data(records)  # -> AirTemp/TrackTemp/Humidity/...
+    parse_tyre_stints(records)   # -> stint rows for the tyre strategy chart
+    parse_driver_list(records)   # -> drivers table incl. team colours
+
+distance_at(pos_df, timestamps)  # metres travelled along the driver's GPS
+                                 #    trajectory, interpolated at CarData
+                                 #    times (real x-axis for live charts)
+
+
+def decode_zipped(text) -> dict:          # base64 + raw-deflate + JSON
+def decode_topic_payload(topic, payload)  # replay FastF1-recorded raw streams
+```
+
+### 1.4 Ephemeral Runtime Cache (`data/runtime_cache.py`)
+
+```python
+class RuntimeCache:
+    """Thread-safe in-memory cache scoped to one app session.
+
+    Loaded sessions stay hot while the app is open; everything is discarded
+    the moment the process exits, so each app opening starts fresh.
+    """
+    begin_session()            # called once at startup: full reset
+    get(key) / set(key, val)   # hit/miss counters exposed via stats()
+    stats()                    # entries, keys, hits, misses, age_seconds
+
+runtime_cache = RuntimeCache()   # module singleton shared across reruns
+```
+
+### 1.5 Persistent Metrics Store (`processing/metrics_store.py`)
+
+```python
+class MetricsStore:
+    """Keeps derived records across app restarts (JSON file on disk).
+
+    Unlike the runtime cache, fastest lap / fastest sector / top speed
+    survive closing and reopening the app.
+    """
+    update_laps(label, laps_df, driver_map=None)  # fastest lap + S1/S2/S3
+    update_telemetry(label, telemetry_dict)       # top speed per driver
+    session_records(label)                        # records for one session
+    all_time()                                    # best across all sessions
+    summary_lines(records)                        # markdown-ready lines
+
+# Accepts Timedelta (FastF1), 'M:SS.mmm' and 'SS.mmm' strings (live feed).
+# Storage path: ./metrics_store.json (env: F1_METRICS_STORE)
+```
+
+### 1.6 Data Source Manager (`data/source_manager.py`)
 
 ```python
 class DataSourceManager:
-    """Unified interface with automatic fallback: Live → Historical → Replay"""
-    
+    """Unified interface with automatic fallback: Live -> Historical -> Replay"""
+
     def __init__(self):
         self.fastf1 = FastF1Adapter()
-        self.openf1 = OpenF1Adapter()
+        self.jolpica = JolpicaAdapter()   # race-weekend detection + schedule fallback
+        self.live = SignalRLiveAdapter(use_livef1=True)
         self.replay_dir = Path("./replay_sessions")
-        self.replay_dir.mkdir(exist_ok=True)
-    
-    def get_session_data(self, 
-                         source: str = "auto",  # "auto", "fastf1", "openf1", "replay"
-                         year: int = None, 
-                         gp: str = None, 
-                         session_type: str = None,
-                         replay_file: str = None) -> dict:
+
+    def get_session_data(self,
+                         source="auto",     # "auto" | "fastf1" | "livef1" | "live" | "replay"
+                         year=None, gp=None, session_type=None,
+                         replay_file=None) -> dict:
         """
         Returns unified data dict:
         {
@@ -205,122 +300,49 @@ class DataSourceManager:
             'location': {driver: DataFrame[Distance, X, Y, Z]},
             'weather': DataFrame,
             'drivers': DataFrame[driver_number, name_acronym, team_colour, team_name],
-            'source': 'fastf1'|'openf1'|'replay',
+            'source': 'fastf1'|'livef1'|'live'|'replay',
             'is_live': bool
         }
         """
-        
-        if source == "replay" and replay_file:
+
+        if source == "replay":
             return self._load_replay(replay_file)
-        
+
         if source == "auto":
-            # Try live first
-            live_session = self.openf1.get_latest_session()
-            if live_session:
-                return self._load_openf1_session(live_session['session_key'], is_live=True)
-            
+            # Try live first (during race weekends)
+            if self._is_race_weekend():
+                return self._load_live_session()
             # Fallback: most recent completed race
             if not year:
                 recent = self._get_most_recent_completed_race()
-                year, gp, session_type = recent['year'], recent['gp'], recent['session_type']
-        
+                year, gp, session_type = (recent['year'], recent['gp'],
+                                          recent['session_type'])
+
         if source in ("auto", "fastf1"):
             return self._load_fastf1_session(year, gp, session_type)
-        
-        if source == "openf1":
-            # Need to resolve meeting_key/session_key from year/gp/session_type
-            meetings = self.openf1.get_meetings(year)
-            meeting = meetings[meetings['meeting_name'].str.contains(gp, case=False)].iloc[0]
-            sessions = self.openf1.get_sessions(meeting['meeting_key'])
-            session = sessions[sessions['session_name'].str.contains(session_type, case=False)].iloc[0]
-            return self._load_openf1_session(session['session_key'], is_live=False)
-        
+        if source == "livef1":
+            return self._load_livef1_session(year, gp, session_type)
+        if source == "live":
+            return self._load_live_session()
+
         raise ValueError(f"Unknown source: {source}")
-    
-    def _load_fastf1_session(self, year: int, gp: str, session_type: str) -> dict:
-        session = self.fastf1.load_session(year, gp, session_type)
-        drivers = session.results['Abbreviation'].tolist()
-        
-        return {
-            'session_info': {
-                'year': year, 'gp': gp, 'session_type': session_type,
-                'session_name': session.name, 'date': session.date
-            },
-            'telemetry': {d: self.fastf1.get_telemetry(session, d) for d in drivers},
-            'laps': self.fastf1.get_laps(session),
-            'stints': self.fastf1.get_stints(session),
-            'location': {d: self.fastf1.get_location(session, d) for d in drivers},
-            'weather': self._get_weather_from_session(session),
-            'drivers': self._get_driver_info(session),
-            'source': 'fastf1',
-            'is_live': False
-        }
-    
-    def _load_openf1_session(self, session_key: int, is_live: bool) -> dict:
-        drivers_df = self.openf1.get_drivers(session_key)
-        driver_numbers = drivers_df['driver_number'].tolist()
-        driver_acronyms = drivers_df['name_acronym'].tolist()
-        
-        return {
-            'session_info': {
-                'session_key': session_key,
-                'is_live': is_live
-            },
-            'telemetry': {
-                acr: self.openf1.get_telemetry(session_key, num) 
-                for acr, num in zip(driver_acronyms, driver_numbers)
-            },
-            'laps': self.openf1.get_laps(session_key),
-            'stints': self.openf1.get_stints(session_key),
-            'location': {
-                acr: self.openf1.get_location(session_key, num) 
-                for acr, num in zip(driver_acronyms, driver_numbers)
-            },
-            'weather': self.openf1.get_weather(
-                self.openf1.get_sessions(
-                    self.openf1._fetch("sessions", {"session_key": session_key}).iloc[0]['meeting_key']
-                ).iloc[0]['meeting_key']
-            ),
-            'drivers': drivers_df,
-            'source': 'openf1',
-            'is_live': is_live
-        }
-    
-    def _get_most_recent_completed_race(self) -> dict:
-        """Find most recent completed race from FastF1 schedule."""
-        schedule = fastf1.get_event_schedule([2025, 2024, 2023])
-        completed = schedule[schedule['EventDate'] < pd.Timestamp.now(tz='UTC')]
-        if completed.empty:
-            return {'year': 2024, 'gp': 'Abu Dhabi', 'session_type': 'R'}
-        last_event = completed.iloc[-1]
-        return {'year': last_event['Year'], 'gp': last_event['EventName'], 'session_type': 'R'}
-    
-    def save_replay(self, data: dict, name: str) -> str:
-        """Save session data for offline replay."""
-        filepath = self.replay_dir / f"{name}_{pd.Timestamp.now():%Y%m%d_%H%M%S}.parquet"
-        # Convert DataFrames to parquet-compatible format
-        save_data = {k: v.to_dict('records') if isinstance(v, pd.DataFrame) else v 
-                     for k, v in data.items() if k != 'telemetry' and k != 'location'}
-        save_data['telemetry'] = {k: v.to_dict('records') for k, v in data['telemetry'].items()}
-        save_data['location'] = {k: v.to_dict('records') for k, v in data['location'].items()}
-        with open(filepath, 'wb') as f:
-            pickle.dump(save_data, f)
-        return str(filepath)
-    
-    def _load_replay(self, filepath: str) -> dict:
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        # Reconstruct DataFrames
-        for k in ['laps', 'stints', 'weather', 'drivers']:
-            if k in data:
-                data[k] = pd.DataFrame(data[k])
-        data['telemetry'] = {k: pd.DataFrame(v) for k, v in data['telemetry'].items()}
-        data['location'] = {k: pd.DataFrame(v) for k, v in data['location'].items()}
-        data['source'] = 'replay'
-        return data
+
+    def poll_live_data(self):
+        """Fold buffered SignalR records into the unified session-dict shape
+        (telemetry / laps / stints / location / weather / drivers). Called
+        repeatedly by the auto-refreshing live fragment in the UI."""
+
+    def _is_race_weekend(self):
+        return self.jolpica.is_race_weekend()   # safe fallback: False on any error
+
+    def _gp_to_circuit_short(cls, gp: str) -> str:
+        """'Bahrain Grand Prix' -> 'Sakhir' for LiveF1 meeting_identifier."""
+
+    def save_replay(self, data: dict, name: str) -> str: ...   # pickled .pkl files
+    def _load_replay(self, filepath: str) -> dict: ...
+    def get_available_replays(self) -> list[str]: ...
 ```
 
----
 
 ## 2. Data Processing Layer
 
@@ -336,7 +358,7 @@ class TelemetryProcessor:
         self.driver_color_map = {}
     
     def build_driver_color_map(self, drivers_df: pd.DataFrame) -> dict:
-        """Map driver acronyms to team colors (from FastF1 or OpenF1)."""
+        """Map driver acronyms to team colors (from FastF1 or LiveF1)."""
         color_map = {}
         for _, row in drivers_df.iterrows():
             acronym = row.get('name_acronym') or row.get('TeamName', '')[:3].upper()
@@ -384,7 +406,7 @@ class TelemetryProcessor:
         """Normalize units for consistent display."""
         df = df.copy()
         if 'Brake' in df.columns:
-            # FastF1: boolean → 0/100, OpenF1: already 0/100
+            # FastF1: boolean → 0/100, LiveF1: already 0/100
             if df['Brake'].max() <= 1:
                 df['Brake'] = df['Brake'] * 100
         if 'nGear' in df.columns:
@@ -422,20 +444,20 @@ class TelemetryProcessor:
 def render_header():
     st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide")
     st.title("🏎️ Formula 1 Telemetry Dashboard")
-    st.caption("Historical (FastF1) • Live (OpenF1) • Replay (Local)")
+    st.caption("Historical (FastF1) • Live (SignalR - FREE) • Replay (Local)")
 
 def render_session_selector(data_manager: DataSourceManager) -> dict:
     """Session selection with live detection."""
     
-    # Check for live session
-    live_session = data_manager.openf1.get_latest_session()
+    # Check for live session (Jolpica schedule probe)
+    is_race_weekend = data_manager._is_race_weekend()
     
     col1, col2, col3 = st.columns([2, 2, 1])
     
     with col1:
         source = st.selectbox(
             "Data Source",
-            ["Auto (Live → Historical)", "FastF1 (Historical)", "OpenF1 (API)", "Replay (Saved)"],
+            ["Auto (Live → Historical)", "FastF1 (Historical)", "LiveF1 (Historical)", "Live (SignalR)", "Replay (Saved)"],
             index=0
         )
     
@@ -482,7 +504,7 @@ def render_telemetry_charts(telemetry_data: dict, color_map: dict):
     for i, (tab_name, config) in enumerate(channel_config.items()):
         with tabs[i]:
             fig = create_telemetry_chart(telemetry_data, config, color_map)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 def create_telemetry_chart(telemetry_data: dict, config: dict, color_map: dict) -> go.Figure:
     """Create multi-driver telemetry line chart."""
@@ -537,7 +559,7 @@ def render_lap_times(laps_df: pd.DataFrame, color_map: dict):
         lap_times_sec = driver_laps['LapTime'].dt.total_seconds()
         
         # Pit out lap markers
-        pit_out = driver_laps['IsPitOutLap'] == True
+        pit_out = driver_laps['IsPitOutLap'].fillna(False).astype(bool)
         
         fig.add_trace(go.Scatter(
             x=driver_laps['LapNumber'],
@@ -570,7 +592,7 @@ def render_lap_times(laps_df: pd.DataFrame, color_map: dict):
     # Format y-axis as MM:SS.mmm
     fig.update_yaxes(tickformat="%M:%S.%3f")
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 def render_tire_strategy(stints_df: pd.DataFrame, color_map: dict):
     """Render horizontal bar chart for tire strategy."""
@@ -619,7 +641,7 @@ def render_tire_strategy(stints_df: pd.DataFrame, color_map: dict):
         yaxis=dict(showticklabels=False)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 def render_track_map(location_data: dict, color_map: dict):
     """Render track map with driver positions."""
@@ -663,7 +685,7 @@ def render_track_map(location_data: dict, color_map: dict):
         height=500, showlegend=False
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 ```
 
 ### 3.2 Main App (`app.py`)
@@ -764,11 +786,9 @@ numpy>=1.26.0
 
 # F1 Data
 fastf1>=3.8.0
+livef1>=1.2.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-
-# Utilities
-pyarrow>=16.0.0  # for parquet support in replay
 ```
 
 ### Development Dependencies (requirements-dev.txt)
@@ -788,9 +808,6 @@ pre-commit>=3.7.0
 
 ### .env
 ```env
-# OpenF1 API (free tier for historical, paid for real-time)
-OPENF1_BASE_URL=https://api.openf1.org/v1
-
 # FastF1 Cache Directory
 FASTF1_CACHE_DIR=./ff1_cache
 
@@ -801,6 +818,9 @@ REPLAY_DIR=./replay_sessions
 DEFAULT_YEAR=2024
 DEFAULT_GP=Abu Dhabi
 DEFAULT_SESSION=R
+
+# Persistent metrics (fastest lap/sector/top speed records)
+F1_METRICS_STORE=./metrics_store.json
 ```
 
 ### config.py (Runtime Config)
@@ -810,7 +830,6 @@ import os
 
 @dataclass
 class Config:
-    openf1_base_url: str = os.getenv("OPENF1_BASE_URL", "https://api.openf1.org/v1")
     fastf1_cache_dir: str = os.getenv("FASTF1_CACHE_DIR", "./ff1_cache")
     replay_dir: str = os.getenv("REPLAY_DIR", "./replay_sessions")
     default_year: int = int(os.getenv("DEFAULT_YEAR", "2024"))
@@ -838,22 +857,30 @@ f1-telemetry-dashboard/
 ├── data/
 │   ├── __init__.py
 │   ├── fastf1_adapter.py       # FastF1 historical data loading
-│   ├── openf1_adapter.py       # OpenF1 REST API client
-│   └── source_manager.py       # Unified data source with fallback
+│   ├── jolpica_adapter.py      # Jolpica F1 API (Ergast-compatible) client
+│   ├── live_adapter.py         # SignalR live timing adapter (LiveF1/FastF1)
+│   ├── runtime_cache.py        # Ephemeral hot cache (cleared on app restart)
+│   └── source_manager.py       # Unified data source with fallback + live polling
 ├── processing/
 │   ├── __init__.py
-│   └── telemetry_processor.py  # Distance alignment, normalization
+│   ├── telemetry_processor.py  # Distance alignment, normalization
+│   ├── metrics_store.py        # Persistent fastest lap/sector/top-speed records
+│   └── time_utils.py           # Shared lap/sector time parsing (M:SS.mmm etc.)
 ├── ui/
 │   ├── __init__.py
-│   └── layout.py               # Streamlit UI components
-├── tests/
-│   ├── __init__.py
-│   ├── test_fastf1_adapter.py
-│   ├── test_openf1_adapter.py
-│   ├── test_telemetry_processor.py
-│   └── test_source_manager.py
+│   └── layout.py               # Canonical Streamlit UI components + charts
+├── scripts/
+│   ├── inspect_fastf1.py       # Manual FastF1 data-structure inspection
+│   ├── inspect_livef1.py       # Manual LiveF1 data-structure inspection
+│   └── live_smoke.py           # Live SignalR E2E smoke test (race weekends)
+├── tests/                      # Adapter, cache, metrics and parsing suites
+├── pytest.ini                  # Collect tests from tests/ only; network marker
+├── pyproject.toml              # black/ruff configuration
+├── .github/workflows/ci.yml    # ruff + black --check + pytest
+├── LICENSE                     # MIT license
 ├── ff1_cache/                  # FastF1 local cache (gitignored)
 ├── replay_sessions/            # Saved replay files (gitignored)
+├── metrics_store.json          # Persisted records (gitignored)
 └── .gitignore
 ```
 
@@ -864,15 +891,22 @@ f1-telemetry-dashboard/
 ```
 USER ACTION                          DATA FLOW
 ────────────────────────────────────────────────────────────────────────
-1. Select Session                    → DataSourceManager.get_session_data()
-2. Auto-detect Live?                 → OpenF1Adapter.get_latest_session()
-   ├─ YES: Load OpenF1 Live          → OpenF1Adapter.get_*() endpoints
-   └─ NO: Load Historical            → FastF1Adapter.load_session()
-3. Process Telemetry                 → TelemetryProcessor.align_drivers_by_distance()
-4. Normalize Units                   → TelemetryProcessor.normalize_units()
-5. Build Color Map                   → TelemetryProcessor.build_driver_color_map()
-6. Render Charts                     → UI layout functions → Plotly Figures
-7. Optional: Save Replay             → DataSourceManager.save_replay()
+1. Select Session                    → runtime_cache.get(key)
+   |─ HIT:  instant reuse            → cached unified dict
+   └─ MISS: DataSourceManager.get_session_data()
+2. Auto-detect Live?                 → _is_race_weekend() (Jolpica probe)
+   |─ YES: SignalR Live              → start_async() + poll_live_data() every 3s
+   └─ NO:  Historical                → FastF1Adapter.load_session()
+3. Hot-Cache Result                  → runtime_cache.set(key, data)
+                                       (memory only - discarded on app close)
+4. Process Telemetry                 → TelemetryProcessor.align_drivers_by_distance()
+5. Normalize Units                   → TelemetryProcessor.normalize_units()
+6. Build Color Map                   → TelemetryProcessor.build_driver_color_map()
+7. Update Records                    → MetricsStore.update_laps()/update_telemetry()
+                                       (PERSISTED: fastest lap / sectors / top speed
+                                        survive app restarts)
+8. Render Charts                     → UI layout functions → Plotly Figures
+9. Optional: Save Replay             → DataSourceManager.save_replay()
 ```
 
 ---
@@ -881,16 +915,16 @@ USER ACTION                          DATA FLOW
 
 | Scenario | Primary Source | Fallback 1 | Fallback 2 | UI Indicator |
 |----------|---------------|------------|------------|--------------|
-| Race Weekend (Live) | OpenF1 Live | FastF1 Historical | Replay | 🔴 LIVE badge |
-| Mid-week (No Live) | FastF1 Historical | OpenF1 Historical | Replay | "Showing 2024 Abu Dhabi GP" |
+| Race Weekend (Live) | SignalR Live (FREE) | FastF1 Historical | Replay | 🔴 LIVE badge |
+| Mid-week (No Live) | FastF1 Historical | Jolpica schedule/results | Replay | "Showing most recent GP" |
 | API Failure | FastF1 Cache | Replay Files | Error | Warning toast |
-| First Run (No Cache) | OpenF1 Historical | Sample Replay | Error | "Loading..." spinner |
+| First Run (No Cache) | FastF1/Jolpica Historical | Sample Replay | Error | "Loading..." spinner |
 
 ---
 
 ## 9. Future Extensibility Points
 
-1. **WebSocket Live Streaming**: Replace OpenF1 polling with FastF1 SignalR client for true real-time
+1. **Replay Streaming Engine**: Simulate real-time playback from saved SignalR sessions with pause/seek/speed controls
 2. **ML Anomaly Detection**: Add Isolation Forest module (per siddoboi architecture)
 3. **MongoDB Persistence**: Replace file-based replay with MongoDB time-series
 4. **Multi-Session Comparison**: Compare qualifying vs race pace

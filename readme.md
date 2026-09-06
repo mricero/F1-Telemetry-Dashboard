@@ -22,9 +22,10 @@ Dive deep into the archives using the powerful `FastF1` library.
 
 ### 2. **Real-Time Live Telemetry (100% Free)**
 The dashboard connects directly to the official Formula 1 live timing endpoint (`wss://livetiming.formula1.com/signalrcore`).
-- Uses the `FastF1 SignalRClient` and the `LiveF1` package.
+- Uses the `LiveF1 RealF1Client` (with `FastF1 SignalRClient` as the file-recording alternative).
 - No paid subscription is required.
-- Receives topics such as `CarData.z`, `Position.z`, `TimingData`, `SessionInfo`, and more in real-time.
+- Subscribes to topics such as `CarData.z`, `Position.z`, `TimingData`, `TyreStintSeries`, `WeatherData`, `DriverList`, and more in real time.
+- The live view auto-refreshes every 3 seconds: telemetry channels, GPS track map with driver trails, tyre stints and timing all update while the session runs.
 
 ### 3. **Intelligent Fallback Architecture**
 F1 live timing data is only broadcasted during active race weekends (Friday-Sunday). Our application handles the remaining 90% of the time gracefully:
@@ -34,8 +35,14 @@ F1 live timing data is only broadcasted during active race weekends (Friday-Sund
 
 ### 4. **Session Recording & Offline Replay**
 Catching a race live but want to analyze it later? 
-- Our built-in local JSON/Parquet storage allows you to save live SignalR sessions.
-- Replay mode simulates real-time streaming using these pre-recorded files, perfect for development or offline analysis without needing internet access.
+- Our built-in local storage allows you to save live SignalR sessions as pickle (`.pkl`) files in `./replay_sessions/` (with a schema header so old files keep loading across app versions).
+- Replay mode reloads these pre-recorded sessions, perfect for development or offline analysis without needing internet access.
+- To verify SignalR connectivity during a race weekend, run `python scripts/live_smoke.py 30`.
+
+### 5. **Two-Tier Caching: Hot Session Cache + Persistent Records**
+- **Runtime cache (memory only)**: every session you load during a visit stays hot in memory, so switching between sessions or re-selecting one is instant. When you close the app the cache is discarded - the next launch always starts completely fresh. No stale data ever survives a restart.
+- **Persistent metrics store** (`./metrics_store.json`): derived records - fastest lap, fastest sector per sector (S1/S2/S3) and top speed per driver - are written to disk and kept across restarts. Reopen the app and your benchmark times are still there, ready to beat.
+- The 🏆 panel in the app shows both *this session's* records and *all-time* bests across every session you have ever viewed.
 
 ### 5. **Advanced Interactive Visualizations**
 We use Plotly for deep interactivity and responsive charts:
@@ -96,26 +103,31 @@ Below is an overview of the key directories and files in this repository:
 ├── config.py                  # Global runtime configuration and environments
 ├── requirements.txt           # Core Python dependencies
 ├── requirements-dev.txt       # Development and testing dependencies
+├── pytest.ini                 # Pytest configuration (tests live in tests/)
 ├── ARCHITECTURE.md            # In-depth architectural breakdown & data flows
 ├── PHASE1_RESEARCH_SUMMARY.md # Research notes on Free APIs vs Paid APIs
+├── LICENSE                    # MIT license
 ├── data/                      # Data Ingestion Layer
 │   ├── __init__.py
-│   ├── source_manager.py      # Unified interface (Auto/Live/History/Replay)
+│   ├── source_manager.py      # Unified interface (Auto/Live/FastF1/LiveF1/Replay)
 │   ├── fastf1_adapter.py      # Historical loading & caching via FastF1
-│   ├── live_adapter.py        # SignalR implementation for Live Timing
-│   └── jolpica_adapter.py     # Free Ergast-compatible REST API fallback
+│   ├── jolpica_adapter.py     # Free Ergast-compatible REST API fallback (Jolpica)
+│   ├── live_adapter.py        # SignalR implementation for Live Timing (LiveF1 / FastF1)
+│   └── runtime_cache.py       # Ephemeral hot cache - cleared on every app restart
 ├── processing/                # Data Processing Layer
 │   ├── __init__.py
-│   └── telemetry_processor.py # Distance alignment, unit fixing, formatting
+│   ├── telemetry_processor.py # Distance alignment, unit fixing, formatting
+│   └── metrics_store.py       # Persistent fastest lap/sector/top-speed records
 ├── ui/                        # UI Components (Custom Plotly wrappers)
-├── hooks/                     # Custom lifecycle hooks
-├── rules/                     # Linting and repository rules
-├── skills/                    # Custom agent instructions
-├── tests/                     # Test suites for Live and FastF1 adapters
-│   ├── test_fastf1.py
-│   └── test_livef1.py
+│   ├── __init__.py
+│   └── layout.py              # Canonical Streamlit UI layout components
+├── scripts/                   # Manual inspection utilities (not run by pytest)
+│   ├── inspect_fastf1.py      # Explore FastF1 session data structures
+│   └── inspect_livef1.py      # Explore LiveF1 session data structures
+├── tests/                     # Test suites (adapters, cache, metrics, live parsing)
 ├── ff1_cache/                 # [Auto-generated] FastF1 persistent cache
-└── replay_sessions/           # [Auto-generated] Directory for saved replays
+├── replay_sessions/           # [Auto-generated] Directory for saved replays (.pkl)
+└── metrics_store.json         # [Auto-generated] Persistent performance records
 ```
 
 ---
@@ -154,12 +166,18 @@ Install all required packages from `requirements.txt`.
 ```bash
 pip install -r requirements.txt
 ```
-*(Dependencies include `streamlit`, `plotly`, `pandas`, `fastf1`, `livef1`, `requests`, and `pyarrow` for replay storage.)*
+*(Dependencies include `streamlit`, `plotly`, `pandas`, `fastf1`, `livef1`, and `requests`.)*
 
 If you plan to run the test suite, also install the development dependencies:
 ```bash
 pip install -r requirements-dev.txt
 ```
+
+Run the tests with:
+```bash
+pytest
+```
+(Pytest is configured via `pytest.ini` to collect only from `tests/`, so the network-dependent inspection scripts in `scripts/` are never executed automatically.)
 
 ### 5. Setup Cache Directories
 The application will automatically create `./ff1_cache` and `./replay_sessions` if they do not exist. Ensure your user has write permissions to the repository folder.
@@ -176,12 +194,19 @@ streamlit run app.py
 
 This will spin up a local web server and automatically open the dashboard in your default browser at `http://localhost:8501`.
 
+**`python app.py` works too.** The plain interpreter would otherwise leave Streamlit in "bare mode" — widgets return defaults, session state is unavailable and `st.stop()` does nothing, which turns a failed data load into a confusing crash further down. Rather than refusing, `app.py` detects this and re-enters through Streamlit's own CLI, so hitting **Run** in an IDE starts the dashboard normally. Extra flags pass straight through:
+
+```bash
+python app.py --server.port 8600
+```
+
 ### Navigating the App
 
 1. **Session Selection Panel (Top)**:
    - Choose your **Data Source**: Auto, FastF1 (Historical), LiveF1, Live (SignalR), or Replay.
    - If a live session is active, a red `🔴 LIVE SESSION DETECTED` badge will appear automatically.
    - If in Historical mode, select the **Season**, **Grand Prix**, and **Session** (FP1, FP2, FP3, Q, S, R).
+   - Pick a **Telemetry scope**: *Fastest lap* (default — every driver's quickest lap on a shared `0 → lap length` axis, so the charts are directly comparable) or *Full session* (every lap, distance accumulating across the whole run).
 
 2. **Telemetry Tabs**:
    - Flip through `Speed`, `Throttle`, `Brake`, `RPM`, `Gear`, and `DRS` tabs. 
@@ -189,12 +214,21 @@ This will spin up a local web server and automatically open the dashboard in you
    - You can **double-click a driver in the legend** to isolate their data and hide everyone else.
    - You can **click and drag** on the charts to zoom into specific corners or straights.
 
-3. **Lap Times & Strategy**:
-   - Scroll down to view the lap time progression chart (which includes pit-out indicators).
-   - View the stacked bar chart for tire strategy to see who ran softs/mediums/hards, when they pitted, and for how many laps.
+3. **Driver Comparison**:
+   - Pick any two drivers for a head-to-head speed trace plus a cumulative time delta along the lap, so you can see exactly where one gains or loses.
+   - The delta is integrated from the speed traces (`ds / v` per step). `fastf1.utils.delta_time` is deprecated since FastF1 3.0 and emits a `FutureWarning`, so it is not used. Expect the result to land within roughly 0.1–0.3 s of the true lap-time gap — read exact gaps off the lap times themselves.
 
-4. **Track Map**:
-   - The interactive track map plots `X` and `Y` telemetry data to draw the circuit and overlays driver positions. This is incredibly useful for spotting traffic during qualifying or visualizing gaps on track during a race.
+4. **Lap Times & Strategy**:
+   - The lap time progression chart marks pit-out laps with red diamonds.
+   - **Position Changes** plots the running order lap by lap (P1 at the top) — the clearest view of who actually made progress.
+   - The tire strategy chart uses FastF1's official per-season compound colours rather than a hardcoded table.
+
+5. **Track Map**:
+   - The interactive track map plots `X` and `Y` telemetry data to draw the circuit and overlays driver positions. The axes are locked to a 1:1 aspect ratio so circuits are not distorted by the container's shape. Useful for spotting traffic during qualifying or visualizing gaps on track during a race.
+
+6. **Weather & Race Control**:
+   - Current air/track temperature, humidity, wind and pressure, plus a temperature trace across the session and a rainfall warning.
+   - The full race control feed — flags, safety cars, investigations and penalties — filterable by category, newest first. In live mode the current track status (green / yellow / SC / VSC / red) is shown as a banner.
 
 ---
 
@@ -209,6 +243,7 @@ The dashboard behavior can be tailored using `config.py` or environment variable
 | `DEFAULT_YEAR`       | `2024` | Fallback year when the app first loads. |
 | `DEFAULT_GP`         | `Abu Dhabi` | Fallback race location. |
 | `DEFAULT_SESSION`    | `R` | Fallback session type (`R` = Race). |
+| `F1_METRICS_STORE`   | `./metrics_store.json` | Where fastest lap/sector/top-speed records are persisted. |
 
 You can also adjust `distance_step` in `config.py` (default: 5 meters). Lowering this number (e.g. to 1 or 2 meters) increases chart resolution but uses significantly more memory. Increasing it improves performance on slower devices or low-bandwidth connections.
 
@@ -219,6 +254,17 @@ You can also adjust `distance_step` in `config.py` (default: 5 meters). Lowering
 ### Distance Resampling (`processing/telemetry_processor.py`)
 F1 cars cross the start/finish line at different times. If we plot Speed against Time, the data won't align. For example, if we want to compare Verstappen and Hamilton braking into Turn 1, we must convert Time to Track Distance. 
 We generate a uniform mathematical grid (e.g., every 5 meters) and use `numpy.interp` to resample the telemetry for every driver onto this exact grid. This enables perfectly aligned X-axes on all Plotly charts, ensuring an apples-to-apples comparison.
+
+Two details matter for that comparison to mean anything:
+
+- **Telemetry scope.** FastF1's `Distance` channel accumulates over whatever laps you ask for. Across a full race that reaches ~300 km, so "the same X value" is not the same corner for two drivers — and 20 drivers × 60,000 points is far more than a browser will happily draw. The **Telemetry scope** control therefore defaults to *Fastest lap*, where distance runs `0 → lap length` and drivers genuinely line up at the same track position. *Full session* is still available when you want the whole run.
+- **Discrete channels are not interpolated.** Gear, DRS and Brake are coded values — gear 4.7 does not exist. Those channels take the nearest sample; only Speed, Throttle and RPM are linearly interpolated.
+
+### Pit-out laps
+FastF1 has no `IsPitOutLap` column; it exposes pit activity as the `PitOutTime` / `PitInTime` timestamps. The adapter derives the boolean flag from `PitOutTime`, which is what the lap-time chart's diamond markers key off.
+
+### A note on 2026 data
+DRS was removed under the 2026 technical regulations (replaced by active-aero X/Z modes plus a manual-override power boost), so the DRS channel reads `0` throughout for 2026 sessions. That is the source data, not a parsing fault.
 
 ### The SignalR WebSocket
 Formula 1's live timing uses Microsoft's SignalR protocol.

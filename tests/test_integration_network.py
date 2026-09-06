@@ -1,0 +1,219 @@
+"""Opt-in network integration tests.
+
+These exercise the real FastF1/Jolpica endpoints and are skipped unless
+``F1_NETWORK_TESTS=1`` is set (keeps the default suite offline/deterministic):
+
+    F1_NETWORK_TESTS=1 .venv/Scripts/python -m pytest -m network
+"""
+
+import os
+from pathlib import Path
+
+import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+pytestmark = [
+    pytest.mark.network,
+    pytest.mark.skipif(
+        os.getenv("F1_NETWORK_TESTS") != "1", reason="opt-in: set F1_NETWORK_TESTS=1"
+    ),
+]
+
+
+class TestJolpicaLive:
+    def test_schedule_2024(self):
+        from data.jolpica_adapter import JolpicaAdapter
+
+        schedule = JolpicaAdapter().get_schedule(2024)
+        assert not schedule.empty
+        assert "Bahrain Grand Prix" in set(schedule["race_name"])
+
+
+class TestFastF1Roundtrip:
+    def test_available_sessions_2023(self):
+        from data.fastf1_adapter import FastF1Adapter
+
+        meetings = FastF1Adapter().get_available_sessions(2023)
+        assert not meetings.empty
+        assert "Bahrain Grand Prix" in set(meetings["EventName"])
+
+    def test_load_cached_race_and_telemetry(self):
+        from data.fastf1_adapter import FastF1Adapter
+
+        adapter = FastF1Adapter()
+        session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
+        drivers = session.results["Abbreviation"].tolist()
+        assert len(drivers) >= 20
+        tel = adapter.get_telemetry(session, drivers[0])
+        for col in ("Distance", "Speed", "Throttle", "Brake", "RPM"):
+            assert col in tel.columns
+
+    def test_location_does_not_raise_on_real_position_data(self):
+        """Regression: this raised ValueError and killed every session load.
+
+        ``get_pos_data()`` has no Speed channel, so integrating distance over
+        it fails. Only mocks that were not shaped like real FastF1 objects
+        ever let this pass.
+        """
+        from data.fastf1_adapter import FastF1Adapter
+
+        adapter = FastF1Adapter()
+        session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
+        driver = session.results["Abbreviation"].tolist()[0]
+
+        location = adapter.get_location(session, driver)
+
+        assert not location.empty
+        assert {"X", "Y"}.issubset(location.columns)
+
+    def test_fastest_lap_scope_is_lap_relative(self):
+        """Default scope must not hand the browser a whole race of points."""
+        from data.fastf1_adapter import SCOPE_SESSION, FastF1Adapter
+
+        adapter = FastF1Adapter()
+        session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
+        driver = session.results["Abbreviation"].tolist()[0]
+
+        one_lap = adapter.get_telemetry(session, driver)
+        whole = adapter.get_telemetry(session, driver, scope=SCOPE_SESSION)
+
+        assert one_lap["Distance"].max() < 12_000  # a lap, not a race
+        assert whole["Distance"].max() > one_lap["Distance"].max() * 5
+
+    def test_laps_carry_derived_pit_out_flag(self):
+        from data.fastf1_adapter import FastF1Adapter
+
+        adapter = FastF1Adapter()
+        session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
+
+        laps = adapter.get_laps(session)
+
+        assert "IsPitOutLap" in laps.columns
+        assert laps["IsPitOutLap"].any(), "a race always has pit-out laps"
+
+
+class TestAppSmoke:
+    """The whole dashboard, executed the way Streamlit executes it.
+
+    ``python app.py`` cannot catch layout/render regressions: without a script
+    run context widgets return defaults and ``st.stop()`` is a no-op.
+    """
+
+    def test_app_runs_without_exceptions(self, tmp_path, monkeypatch):
+        from streamlit.testing.v1 import AppTest
+
+        # Keep the developer's real records file out of the test.
+        monkeypatch.setenv("F1_METRICS_STORE", str(tmp_path / "metrics.json"))
+
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=600)
+        app.run()
+
+        assert not app.exception, [str(e.value) for e in app.exception]
+        assert not app.error, [str(e.value) for e in app.error]
+
+        # The timing dashboard renders through st.html, which AppTest does not
+        # expose as an element - its markup is covered directly in
+        # tests/test_track_map.py. Here we assert the analysis tabs below it.
+        labels = [t.label for t in app.tabs]
+        for expected in (
+            "📊 Telemetry",
+            "⚔️ Head-to-Head",
+            "⏱️ Lap Times",
+            "📈 Positions",
+            "🛞 Tyres",
+            "🗺️ Track",
+            "🌤️ Weather",
+            "🚩 Race Control",
+        ):
+            assert expected in labels, f"missing analysis tab {expected!r}"
+        assert any(r.label == "Telemetry scope" for r in app.radio)
+
+    def test_app_renders_panels_from_previously_unused_data(self, tmp_path, monkeypatch):
+        """Weather, race control and lap Position were fetched then discarded.
+
+        Each panel reports its own "no data" notice, so an empty render shows
+        up here rather than passing silently.
+        """
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.setenv("F1_METRICS_STORE", str(tmp_path / "metrics.json"))
+
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=600)
+        app.run()
+
+        notices = [i.value for i in app.info] + [w.value for w in app.warning]
+        for absent in ("No weather data", "No race control messages", "No position data"):
+            assert not any(absent in n for n in notices), f"{absent!r} - panel got no data"
+
+        # Weather readings render as st.metric tiles.
+        metric_labels = [m.label for m in app.metric]
+        assert "🌡️ Air" in metric_labels and "🛣️ Track" in metric_labels
+
+
+class TestDashboardOnRealSession:
+    """The spec dashboard, built from a real loaded session.
+
+    AppTest cannot see st.html output, so the markup is asserted here against
+    genuine FastF1 data rather than through the app harness.
+    """
+
+    @staticmethod
+    def _session():
+        from data.source_manager import DataSourceManager
+
+        return DataSourceManager().get_session_data(
+            source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="Q"
+        )
+
+    def test_timing_rows_are_ranked_and_complete(self):
+        from processing.timing import build_timing_rows
+
+        rows = build_timing_rows(self._session())
+
+        assert len(rows) >= 15
+        times = [r["best_seconds"] for r in rows if r["best_seconds"] is not None]
+        assert times == sorted(times), "classification must run fastest to slowest"
+        assert rows[0]["gap"] == "----" and rows[0]["is_overall_best"]
+        assert rows[1]["gap"].startswith("+")
+        # Every timed row carries a team, a speed trap reading and tyre history.
+        leader = rows[0]
+        assert leader["team_name"] and leader["speed_kmh"] > 100
+        assert leader["tyre_history"]
+
+    def test_track_map_svg_is_wellformed_with_corners(self):
+        import xml.etree.ElementTree as ET
+
+        from processing.timing import build_timing_rows
+        from ui.dashboard import map_panel_html
+        from ui.track_map import build_track_svg
+
+        session = self._session()
+        rows = build_timing_rows(session)
+        svg = build_track_svg(
+            session["location"],
+            circuit_info=session.get("circuit_info"),
+            driver_meta={r["code"]: r for r in rows},
+        )
+
+        assert svg is not None, "GPS telemetry should yield a track map"
+        ET.fromstring(svg)  # raises if the SVG is malformed
+        corners = session.get("circuit_info", {}).get("corners")
+        if corners is not None and len(corners):
+            assert svg.count("<circle") == len(corners)
+
+        panel = map_panel_html(session, rows)
+        assert "f1-map-wrap" in panel and "Session best" in panel
+
+    def test_micro_sectors_cover_every_driver_with_telemetry(self):
+        from processing.timing import TOTAL_SEGMENTS, build_timing_rows
+
+        session = self._session()
+        rows = build_timing_rows(session)
+
+        strips = [
+            state for row in rows for sector in row["sectors"] for state in sector["segments"]
+        ]
+        assert len(strips) == len(rows) * TOTAL_SEGMENTS
+        # A real session has an outright fastest driver in at least one slice.
+        assert "PURPLE" in strips
