@@ -813,3 +813,99 @@ class TestSectorStripsCoverTheirSector:
         assert len(rows[0]["sectors"]) == SECTORS
         assert all(len(s["segments"]) == SEGMENTS_PER_SECTOR for s in rows[0]["sectors"])
         assert rows[0]["sectors"][0]["segments"] != ["NONE"] * SEGMENTS_PER_SECTOR
+
+
+class TestStatusBadges:
+    """DASH-10: every historical row said CLASSIFIED, DNFs included."""
+
+    @staticmethod
+    def _session(status: str) -> dict:
+        return {
+            "session_info": {"session_type": "R"},
+            "laps": _laps(_race_laps("VER", [90.0, 90.0])),
+            "results": _results(("VER", 1, status, 270.0)),
+            "drivers": _drivers(("VER", "Red Bull Racing", "#3671c6")),
+            "telemetry": {},
+            "is_live": False,
+        }
+
+    @pytest.mark.parametrize(
+        "status,badge",
+        [
+            ("Finished", "FIN"),
+            ("+1 Lap", "+1L"),
+            ("+2 Laps", "+2L"),
+            ("Retired", "DNF"),
+            ("Accident", "DNF"),
+            ("Power Unit", "DNF"),
+            ("Disqualified", "DSQ"),
+            ("Withdrew", "DNS"),
+            ("Did not start", "DNS"),
+        ],
+    )
+    def test_official_status_becomes_a_badge(self, status, badge):
+        rows = build_timing_rows(self._session(status))
+
+        assert rows[0]["status"] == badge
+
+    def test_without_results_the_row_is_simply_classified(self):
+        session = self._session("Finished")
+        session["results"] = pd.DataFrame()
+
+        rows = build_timing_rows(session)
+
+        assert rows[0]["status"] == "CLASSIFIED"
+
+    def test_a_driver_with_no_laps_is_out(self):
+        session = self._session("Finished")
+        session["laps"] = session["laps"].iloc[0:0]
+
+        assert build_timing_rows(session) == []
+
+
+class TestLiveStatus:
+    """DASH-10: live state comes from TimingData, not FastF1-only columns."""
+
+    @staticmethod
+    def _live_session(**flags) -> dict:
+        laps = _laps(_race_laps("VER", [90.0, 90.0]))
+        laps["IsInProgress"] = [False, True]
+        for column, value in flags.items():
+            laps[column] = value
+        return {
+            "session_info": {"session_type": "R"},
+            "laps": laps,
+            "drivers": _drivers(("VER", "Red Bull Racing", "#3671c6")),
+            "telemetry": {},
+            "is_live": True,
+        }
+
+    def test_in_pit_is_reported(self):
+        rows = build_timing_rows(self._live_session(InPit=True))
+
+        assert rows[0]["status"] == "IN PIT"
+
+    def test_pit_out_returns_the_car_to_the_track(self):
+        rows = build_timing_rows(self._live_session(InPit=False, PitOut=True))
+
+        assert rows[0]["status"] == "ON TRACK"
+
+    def test_retirement_is_reported(self):
+        rows = build_timing_rows(self._live_session(Retired=True))
+
+        assert rows[0]["status"] == "OUT"
+
+    def test_a_stopped_car_is_out(self):
+        rows = build_timing_rows(self._live_session(Stopped=True))
+
+        assert rows[0]["status"] == "OUT"
+
+    def test_retirement_wins_over_a_stale_pit_flag(self):
+        rows = build_timing_rows(self._live_session(InPit=True, Retired=True))
+
+        assert rows[0]["status"] == "OUT"
+
+    def test_the_in_progress_lap_is_not_counted_as_completed(self):
+        rows = build_timing_rows(self._live_session())
+
+        assert rows[0]["laps_completed"] == 1

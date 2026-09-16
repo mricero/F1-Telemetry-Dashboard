@@ -496,7 +496,7 @@ class TestLapTimeColumns:
         laps = FastF1Adapter().get_laps(session)
 
         assert "Time" in laps.columns and "LapStartTime" in laps.columns
-        assert laps["Time"].iloc[-1] == pd.Timedelta("00:03:29")
+        assert laps["Time"].iloc[-1].total_seconds() == pytest.approx(209.0)
 
     def test_get_laps_without_a_time_column_still_works(self):
         session = Mock()

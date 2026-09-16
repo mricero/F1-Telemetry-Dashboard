@@ -10,6 +10,7 @@ position, with Gap/Interval as race time behind the leader and the car ahead
 lap, where Gap and Interval are lap-time deltas.
 """
 
+import re
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -147,6 +148,17 @@ def _tyre_history(laps: pd.DataFrame) -> List[dict]:
     return history
 
 
+def _laps_completed(laps: pd.DataFrame) -> int:
+    """Laps the driver has finished.
+
+    Live lap frames append a synthetic row for the lap in progress; counting
+    it would put every car one lap ahead of where it is.
+    """
+    if "IsInProgress" in laps.columns:
+        return int((~laps["IsInProgress"].fillna(False).astype(bool)).sum())
+    return int(len(laps))
+
+
 def _last_position(laps: pd.DataFrame) -> Optional[float]:
     """On-road position at the driver's last lap, when the laps carry it."""
     if laps.empty or "Position" not in laps.columns:
@@ -205,23 +217,78 @@ def _speed_trap(laps: pd.DataFrame) -> Optional[float]:
     return None
 
 
-def _status(laps: pd.DataFrame, is_live: bool) -> str:
-    """Driver state badge: IN PIT / ON TRACK / CLASSIFIED / OUT.
+# FastF1 result statuses that are not a classified finish. Anything else that
+# is not "Finished" or "+N Lap(s)" is a retirement of some kind (Accident,
+# Power Unit, Collision damage, ...), which all read as DNF on a timing screen.
+DNS_STATUSES = {"withdrew", "did not start", "did not qualify", "not classified"}
+DSQ_STATUSES = {"disqualified", "excluded"}
+_LAPS_DOWN = re.compile(r"^\+(\d+)\s+laps?$", re.IGNORECASE)
 
-    IN PIT and ON TRACK only mean something while cars are circulating; a
-    completed session is uniformly CLASSIFIED, regardless of where a driver
-    happened to stop.
+
+def status_badge(official_status: Optional[str]) -> Optional[str]:
+    """``session.results.Status`` -> a tower badge, or None when unknown.
+
+    FIN / +NL / DNF / DSQ / DNS, so a retirement is not presented as a
+    classified finish.
+    """
+    if official_status is None or pd.isna(official_status):
+        return None
+    status = str(official_status).strip()
+    if not status:
+        return None
+    lowered = status.lower()
+    if lowered == "finished":
+        return "FIN"
+    laps_down = _LAPS_DOWN.match(lowered)
+    if laps_down:
+        return f"+{int(laps_down.group(1))}L"
+    if lowered in DSQ_STATUSES:
+        return "DSQ"
+    if lowered in DNS_STATUSES:
+        return "DNS"
+    return "DNF"
+
+
+def _flag_is_set(laps: pd.DataFrame, column: str) -> bool:
+    """Whether a live TimingData flag is set on any of the driver's rows.
+
+    The feed is lossy, so retirement latches: one message saying a car is out
+    stands even if a later partial update omits it.
+    """
+    if column not in laps.columns:
+        return False
+    values = laps[column]
+    return bool(values.fillna(False).astype(bool).any())
+
+
+def _live_status(laps: pd.DataFrame) -> str:
+    """Live driver state from TimingData flags: OUT / IN PIT / ON TRACK."""
+    if _flag_is_set(laps, "Retired") or _flag_is_set(laps, "Stopped"):
+        return "OUT"
+    last = laps.iloc[-1]
+    in_pit = last.get("InPit")
+    if in_pit is not None and pd.notna(in_pit) and bool(in_pit):
+        return "IN PIT"
+    if "InPit" not in laps.columns:
+        # No live flags at all (e.g. a source without TimingData): FastF1's
+        # pit timestamps are the only hint available.
+        pit_in, pit_out = last.get("PitInTime"), last.get("PitOutTime")
+        if pit_in is not None and pd.notna(pit_in) and (pit_out is None or pd.isna(pit_out)):
+            return "IN PIT"
+    return "ON TRACK"
+
+
+def _status(laps: pd.DataFrame, is_live: bool, official_status: Optional[str] = None) -> str:
+    """Driver state badge.
+
+    Live sessions report where the car is now; a finished session reports how
+    the driver was classified (a DNF is not "CLASSIFIED").
     """
     if laps.empty:
         return "OUT"
-    if not is_live:
-        return "CLASSIFIED"
-    last = laps.iloc[-1]
-    in_pit = last.get("PitInTime")
-    out_pit = last.get("PitOutTime")
-    if in_pit is not None and pd.notna(in_pit) and (out_pit is None or pd.isna(out_pit)):
-        return "IN PIT"
-    return "ON TRACK"
+    if is_live:
+        return _live_status(laps)
+    return status_badge(official_status) or "CLASSIFIED"
 
 
 def fastest_lap_row(laps_df: pd.DataFrame, driver: str) -> Optional[pd.Series]:
@@ -674,6 +741,7 @@ def build_timing_rows(session_data: dict) -> List[dict]:
 
     is_live = bool(session_data.get("is_live"))
     meta = _driver_meta(session_data.get("drivers"))
+    results = _results_index(session_data.get("results"))
     telemetry, _ = dashboard_frames(session_data)
 
     # Micro-sector heat strips come from each driver's own telemetry trace,
@@ -729,7 +797,7 @@ def build_timing_rows(session_data: dict) -> List[dict]:
                 "full_name": info.get("full_name", str(code)),
                 "team_name": info.get("team_name", ""),
                 "team_colour": info.get("team_colour", ""),
-                "status": _status(driver_laps, is_live),
+                "status": _status(driver_laps, is_live, results.get(str(code), {}).get("Status")),
                 "best_seconds": best_seconds,
                 "best_lap": format_lap(best_seconds),
                 "last_lap": format_lap(last_seconds),
@@ -738,7 +806,7 @@ def build_timing_rows(session_data: dict) -> List[dict]:
                 "personal_ideal": _ideal_lap(best_sectors),
                 "tyre_history": _tyre_history(driver_laps),
                 "speed_kmh": _speed_trap(driver_laps),
-                "laps_completed": int(len(driver_laps)),
+                "laps_completed": _laps_completed(driver_laps),
                 "last_position": _last_position(driver_laps),
                 # Only a knock-out session sets these; see _classify_qualifying.
                 "knocked_out": False,
@@ -748,7 +816,6 @@ def build_timing_rows(session_data: dict) -> List[dict]:
         )
 
     session_info = session_data.get("session_info")
-    results = _results_index(session_data.get("results"))
     if is_race_session(session_info):
         ordered = _classify_race(rows, results)
     elif is_qualifying_session(session_info):

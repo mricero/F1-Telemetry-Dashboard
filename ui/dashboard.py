@@ -239,13 +239,25 @@ def _tyres_html(history: Sequence[dict]) -> str:
     return f'<div class="f1-tyres">{"".join(badges)}</div>'
 
 
+# Badge -> CSS modifier. "+1L"-style badges (a lapped but classified finish)
+# are matched by prefix below.
+STATUS_CSS = {
+    "IN PIT": "pit",
+    "ON TRACK": "track",
+    "KO": "ko",
+    "CLASSIFIED": "track",
+    "FIN": "track",
+    "DNF": "out",
+    "DSQ": "out",
+    "DNS": "out",
+    "OUT": "out",
+}
+
+
 def _status_html(status: str) -> str:
-    css = {
-        "IN PIT": "pit",
-        "ON TRACK": "track",
-        "KO": "ko",
-        "CLASSIFIED": "track",
-    }.get(status, "out")
+    css = STATUS_CSS.get(status)
+    if css is None:
+        css = "track" if status.startswith("+") and status.endswith("L") else "out"
     return f'<span class="f1-badge {css}">{_esc(status)}</span>'
 
 

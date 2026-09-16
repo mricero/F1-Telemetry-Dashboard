@@ -345,3 +345,22 @@ class TestScopeIndependenceOfTheDashboard:
         markup = map_panel_html(session, build_timing_rows(session))
 
         assert len(markup.encode("utf-8")) < 150 * 1024
+
+
+class TestStatusBadgesOnRealSession:
+    """DASH-10: DNFs must not be presented as classified finishes."""
+
+    def test_retirements_are_badged_on_the_2023_bahrain_race(self):
+        from data.source_manager import DataSourceManager
+        from processing.timing import build_timing_rows
+
+        session = DataSourceManager().get_session_data(
+            source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="R"
+        )
+        rows = build_timing_rows(session)
+        badges = {r["status"] for r in rows}
+
+        assert "FIN" in badges
+        assert "CLASSIFIED" not in badges
+        # Three cars retired at Bahrain 2023 (LEC, STR's team mate aside).
+        assert "DNF" in badges

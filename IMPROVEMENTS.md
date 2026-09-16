@@ -391,13 +391,13 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: For historical sessions, use `session.track_status` (FastF1) final value or show `CHEQUERED`/"SESSION ENDED"; only consider messages with `Scope == "Track"`. Live: `TrackStatus` only.
   - Note: took the second option - `Track`-scoped race-control messages (which end with CHEQUERED, or RED for an abandoned session), falling back to SESSION ENDED - rather than adding `session.track_status` to the unified dict for a header badge.
 
-- [x] **DASH-09** · P2 · S — **Header "clock" is the weather-sampling window length** — done in <pending>
+- [x] **DASH-09** · P2 · S — **Header "clock" is the weather-sampling window length** — done in dbdb9e2
   - Files: `ui/dashboard.py:91-103, 149`.
   - Problem: Shown in the clock slot as `MM:SS`, it's actually the time span of weather samples (often >60 min, so the minutes overflow the format's intent).
   - Fix: Historical: session duration from `session.session_start_time`/last lap, formatted `H:MM:SS`, labelled "Duration". Live: `ExtrapolatedClock` (`Remaining`, `Extrapolating`, `Utc`) counting down client-side; laps `LapCount.CurrentLap/TotalLaps` for races.
   - Note: the historical half is done (duration from the session time at the last lap; `get_laps` now carries `Time`/`LapStartTime`). The live half reads `session_info['extrapolated_clock']` and shows a placeholder until the feed provides it — subscribing to `ExtrapolatedClock`/`LapCount` belongs to **LIVE-05/LIVE-16**.
 
-- [ ] **DASH-10** · P2 · S — **Driver status badges are not informative**
+- [x] **DASH-10** · P2 · S — **Driver status badges are not informative** — done in <pending>
   - Files: `processing/timing.py:93-109, 271-285`.
   - Problem: Every historical row is `CLASSIFIED` (DNFs, DSQs, DNS included); live `IN PIT` uses FastF1-only `PitInTime/PitOutTime` columns that live laps don't have; `laps_completed` counts the synthetic in-progress live lap row.
   - Fix: Historical from `results.Status` (`Finished`, `+1 Lap`, `Retired`, `Disqualified`, …) → badges `FIN / +1L / DNF / DSQ / DNS`; live from `TimingData` `InPit`, `PitOut`, `Retired`, `Stopped` (latch retirement, as matteocelani/f1-telemetry does, because the feed is lossy).

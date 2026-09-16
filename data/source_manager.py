@@ -427,6 +427,13 @@ class DataSourceManager:
         }
 
     @staticmethod
+    def _ever_true(records: pd.DataFrame, column: str) -> bool:
+        """Whether a flag was ever set across a driver's TimingData records."""
+        if column not in records.columns:
+            return False
+        return bool(records[column].fillna(False).astype(bool).any())
+
+    @staticmethod
     def _laps_from_timing(timing_df: pd.DataFrame, acr_by_num: Dict) -> pd.DataFrame:
         """Build a laps DataFrame from TimingData records with real lap
         numbers.
@@ -445,6 +452,14 @@ class DataSourceManager:
             completed: Dict[int, str] = {}
             current_lap = 0
             latest = grp.iloc[-1]
+            # Driver state for the tower's badge. Retirement latches: the feed
+            # is lossy, so one "Retired" stands even if later partials omit it.
+            flags = {
+                "InPit": bool(latest.get("InPit")) if pd.notna(latest.get("InPit")) else False,
+                "PitOut": bool(latest.get("PitOut")) if pd.notna(latest.get("PitOut")) else False,
+                "Retired": DataSourceManager._ever_true(grp, "Retired"),
+                "Stopped": DataSourceManager._ever_true(grp, "Stopped"),
+            }
             for _, rec in grp.iterrows():
                 nol = pd.to_numeric(pd.Series([rec.get("NumberOfLaps")]), errors="coerce").iloc[0]
                 if pd.notna(nol):
@@ -467,6 +482,8 @@ class DataSourceManager:
                         "LapNumber": len(grp),
                         "LapTime": lap_time,
                         "IsPitOutLap": False,
+                        "IsInProgress": False,
+                        **flags,
                     }
                 )
             else:
@@ -478,6 +495,8 @@ class DataSourceManager:
                             "LapNumber": lap_no,
                             "LapTime": lap_time,
                             "IsPitOutLap": False,
+                            "IsInProgress": False,
+                            **flags,
                         }
                     )
                 # In-progress lap
@@ -488,6 +507,9 @@ class DataSourceManager:
                         "LapNumber": current_lap + 1,
                         "LapTime": None,
                         "IsPitOutLap": False,
+                        # Not a completed lap: laps_completed must skip it.
+                        "IsInProgress": True,
+                        **flags,
                     }
                 )
             row = rows[-1]

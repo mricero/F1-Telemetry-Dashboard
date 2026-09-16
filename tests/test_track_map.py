@@ -679,3 +679,22 @@ class TestHeaderClock:
 
         assert "Duration" in markup
         assert "1:00:00" in markup
+
+
+class TestStatusBadgeMarkup:
+    """DASH-10: the new badges need sensible styling, not the 'out' default."""
+
+    def test_finished_reads_as_on_track_styling(self):
+        markup = tower_html([TestTowerPartitions._row(1, status="FIN")])
+
+        assert 'class="f1-badge track">FIN' in markup
+
+    def test_a_lapped_finish_is_still_a_finish(self):
+        markup = tower_html([TestTowerPartitions._row(1, status="+1L")])
+
+        assert 'class="f1-badge track">+1L' in markup
+
+    def test_retirements_are_marked_out(self):
+        for badge in ("DNF", "DSQ", "DNS"):
+            markup = tower_html([TestTowerPartitions._row(1, status=badge)])
+            assert f'class="f1-badge out">{badge}' in markup
