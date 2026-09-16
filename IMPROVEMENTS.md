@@ -223,11 +223,12 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: With the new client (LIVE-01): `connection.stop()`, `on_close` → state `DISCONNECTED`, automatic reconnect with exponential backoff capped at 60 s, a supervisor that marks the feed `STALE` after 30 s without `Heartbeat`, and a status chip in the UI (`CONNECTING / LIVE / STALE / RECONNECTING / STOPPED / AUTH_REQUIRED / BLOCKED(403)`).
   - Acceptance: unit test with a fake connection: stop → thread joins within 5 s; simulated close → reconnect attempted with backoff; 403 on negotiate → `BLOCKED` state surfaced, no tight retry loop.
 
-- [ ] **LIVE-09** · P0 · M — **One SignalR connection per browser session**
+- [x] **LIVE-09** · P0 · M — **One SignalR connection per browser session** — done in <pending>
   - Files: `app.py:156-157`, `data/source_manager.py:20-27`.
   - Problem: `DataSourceManager()` (which creates its own `SignalRLiveAdapter`) lives in `st.session_state`, i.e. **per browser tab**. Five viewers = five upstream connections, five copies of the buffers, and a much higher chance of F1 rate-limiting or IP-blocking the host.
   - Fix: Create the live ingest service once per process with `@st.cache_resource` (or a module singleton guarded by a lock). Browser sessions only *read* snapshots. Start/stop is a process-level action (admin-only if deployed).
   - Acceptance: two `AppTest` sessions share one adapter instance (assert `id()` equality); starting live in one shows data in the other.
+  - Note: a module singleton behind a lock (`data/live_service.py`) rather than `@st.cache_resource`, so scripts, tests and `live_smoke.py` can reach the adapter without a Streamlit runtime. `DataSourceManager` takes an optional `live_adapter` for tests, and `tests/conftest.py` resets the singleton between tests.
 
 - [ ] **LIVE-10** · P0 · M — **Live mode never feeds the timing-tower dashboard**
   - Files: `app.py:173-202, 233-245`, `ui/layout.py:481-530`, `ui/dashboard.py:343-355`.

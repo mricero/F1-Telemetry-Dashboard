@@ -5,24 +5,33 @@ import numpy as np
 import pickle
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from config import config
 from data.fastf1_adapter import SCOPE_FASTEST, FastF1Adapter, latest_completed_event
 from data.jolpica_adapter import JolpicaAdapter
 from data.live_adapter import SignalRLiveAdapter, LiveDataProcessor
+from data.live_service import get_live_adapter
 from livef1 import get_session
 
 
 class DataSourceManager:
     """Unified interface with automatic fallback: Live → Historical → Replay"""
 
-    def __init__(self, cache_dir: str = None, replay_dir: str = None):
+    def __init__(
+        self,
+        cache_dir: str = None,
+        replay_dir: str = None,
+        live_adapter: Optional[SignalRLiveAdapter] = None,
+    ):
         # Defaults come from config (which reads .env), so the documented
         # FASTF1_CACHE_DIR / REPLAY_DIR settings actually take effect.
         self.fastf1 = FastF1Adapter(cache_dir or config.fastf1_cache_dir)
         self.jolpica = JolpicaAdapter()
-        self.live = SignalRLiveAdapter(use_livef1=True)
+        # One upstream connection per process, not per browser tab: managers
+        # live in st.session_state, so a per-manager adapter meant a new
+        # SignalR connection for every viewer (LIVE-09).
+        self.live = live_adapter or get_live_adapter()
         self.replay_dir = Path(replay_dir or config.replay_dir)
         self.replay_dir.mkdir(parents=True, exist_ok=True)
 

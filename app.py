@@ -149,6 +149,7 @@ def init_browser_session() -> None:
     second viewer evicted the first viewer's loaded sessions.
     """
     if "data_manager" not in st.session_state:
+        # Per-tab manager, but it shares the one process-wide live adapter.
         st.session_state.data_manager = DataSourceManager()
     if "processor" not in st.session_state:
         st.session_state.processor = TelemetryProcessor()
