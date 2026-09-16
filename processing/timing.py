@@ -859,6 +859,9 @@ def build_timing_rows(session_data: dict) -> List[dict]:
                 "best_seconds": best_seconds,
                 "best_lap": format_lap(best_seconds),
                 "last_lap": format_lap(last_seconds),
+                "last_seconds": last_seconds,
+                # Set once every row is known (spec section 3.4).
+                "last_is_session_best": False,
                 "sectors": sectors,
                 "best_sectors": best_sectors,
                 "personal_ideal": _ideal_lap(best_sectors),
@@ -889,9 +892,19 @@ def build_timing_rows(session_data: dict) -> List[dict]:
         key=lambda r: r["best_seconds"],
         default=None,
     )
+    session_best = fastest["best_seconds"] if fastest else None
     for position, row in enumerate(ordered, start=1):
         row["position"] = position
         row["is_overall_best"] = row is fastest
+        # A last lap that *is* the session best gets the purple treatment.
+        row["last_is_session_best"] = bool(
+            session_best is not None
+            and row["last_seconds"] is not None
+            and abs(row["last_seconds"] - session_best) < 1e-6
+        )
+        # A car in the pit lane is not doing any speed (spec section 3.13).
+        if row["status"] == "IN PIT":
+            row["speed_kmh"] = 0.0
 
     best_possible = theoretical_best(ordered)
     for row in ordered:

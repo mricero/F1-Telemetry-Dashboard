@@ -408,10 +408,11 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Use `TyreLife` max per stint and a "used" marker; live from `TimingAppData.Lines[n].Stints` (`Compound`, `New`, `TotalLaps`, `StartLaps`) — the same source f1-dash/undercut-f1 use.
   - Note: historical side done (`TyreLife`/`FreshTyre` now carried by `get_laps`). Live falls back to the session stint table, so it shows real compounds as soon as stints parse; subscribing to `TimingAppData` itself belongs to **LIVE-05/LIVE-16**.
 
-- [ ] **DASH-12** · P3 · S — **Spec gaps vs `layout.md`**
+- [x] **DASH-12** · P3 · S — **Spec gaps vs `layout.md`** — done in <pending>
   - Files: `ui/dashboard.py`, `layout.md`.
   - Problem: Not implemented: last-lap purple highlight when it is the session best (§3.4), country flag in header (§2), position-swap animation (§3), `0 km/h` speed when in pit (§3.13), compass arrow for wind (§2). The spec also says speed trap is "current speed" whereas the code shows the best speed-trap reading.
   - Fix: Decide which spec items still matter; implement or strike them from `layout.md`.
+  - Decisions: **implemented** the purple last-lap highlight, `0 km/h` in the pits, the wind compass arrow, and the host country in the header (as *text* — a flag-icon table goes stale as the calendar changes). **Struck from `layout.md`** the position-swap animations (Streamlit re-renders the whole tower through `st.html`, so there is no stable DOM to animate). **Clarified** in `layout.md` that the Speed column is the best speed-trap reading for a finished session, that the clock is `H:MM:SS`, and that the knock-out split follows the session's segments.
 
 ---
 ## 6. P1/P2 — Caching, state & persistence

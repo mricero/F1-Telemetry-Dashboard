@@ -32,9 +32,10 @@ The top header bar provides session state, clock controls, and environmental tel
 
 ### Component Structure
 
-* **Event & Session Badge**: Country Flag icon + Event Name (`Dutch GP`) + Session Identifier (`Qualifying 3`).
+* **Event & Session Badge**: Event Name (`Dutch GP`) + host country (`Netherlands`) + Session Identifier (`Qualifying 3`).
+  *Implemented as the country name rather than a flag icon: mapping events to flags needs a hand-maintained table, which goes stale as the calendar changes (Madrid 2026).*
 * **Session Status Banner**:
-* **Session Clock**: Displayed in `MM:SS` format (e.g., `00:00`).
+* **Session Clock**: `H:MM:SS`. Historical sessions show their duration; live sessions count down `ExtrapolatedClock`. (Was `MM:SS`, which overflows on any session longer than an hour.)
 * **Flag Status Indicator**: Background-highlighted badge (e.g., `Yellow Flag` in yellow `#FFD700` with black text, `Green Flag`, `Red Flag`, or `Safety Car`).
 
 
@@ -53,9 +54,9 @@ The top header bar provides session state, clock controls, and environmental tel
 | Metric Field | Data Type | Refresh Rate | Visual Styling / State Rules |
 | --- | --- | --- | --- |
 | `session_name` | String | Static | Font-weight: Bold, Uppercase, White text |
-| `session_clock` | String (MM:SS) | 1 Hz | Monospace font (`Roboto Mono`), digital readout |
+| `session_clock` | String (H:MM:SS) | 1 Hz | Monospace font (`Roboto Mono`), digital readout; labelled Duration (historical) / Remaining (live) |
 | `flag_status` | Enum | Event-driven | Dynamic fill: `GREEN` (#00E676), `YELLOW` (#FFD700), `RED` (#FF1744) |
-| `wind_speed_dir` | String | 0.1 Hz | Inline compass arrow icon + numeric value |
+| `wind_speed_dir` | String | 0.1 Hz | Inline compass arrow + value in km/h (the feed reports m/s) |
 | `track_temp` | Float (°C) | 0.1 Hz | High contrast text display |
 | `air_temp` | Float (°C) | 0.1 Hz | High contrast text display |
 | `humidity` | Float (%) | 0.05 Hz | Standard telemetry font |
@@ -106,16 +107,19 @@ The left panel is the telemetry core. It renders a real-time table of 22 drivers
 
 
 12. **Diff (`Diff`)**: Differential value compared to theoretical best sector sum.
-13. **Speed Trap (`Speed`)**: Speed readout in km/h (`0 km/h` when stationary/in pit).
+13. **Speed Trap (`Speed`)**: Speed readout in km/h, `0 km/h` when in the pits. Historical sessions show the driver's best speed-trap reading (there is no "current" speed once a session has ended); live sessions show the latest reading.
 
 ---
 
 ### Row Partitioning Logic
 
-#### Active Drivers Section (Positions 1 - 10 for Q3)
+#### Active Drivers Section (Q3 runners)
+
+The knock-out split follows the session's own segments, not a fixed top ten: with 22 cars (2026) six are eliminated after Q1 and six after Q2; with 20 cars, five and five. Races and practice partition nobody.
 
 * **Background**: Dark charcoal theme (`#121212`) with alternate row zebra striping (`#1E1E1E`).
-* **Interactive Elements**: Real-time position swap animations on telemetry updates.
+* ~~**Interactive Elements**: Real-time position swap animations on telemetry updates.~~
+  *Struck: Streamlit re-renders the whole table through `st.html` on every update, so there is no stable DOM for a row to animate between. Revisit only if the tower becomes a custom component.*
 * **Full Data Transparency**: Displays complete Sector 1, 2, 3 micro-sectors, Tyre history, and gap deltas.
 
 ```
@@ -454,7 +458,7 @@ To drive this dashboard, incoming real-time socket frames must conform to standa
 1. **Header Component**: Listens for high-frequency environment updates, updating the digital clock via local browser requestAnimationFrame intervals synced to server timestamp.
 2. **Leaderboard Engine**:
 * Uses React virtualized list or optimized DOM reconciliation (Vue/Svelte) to handle rapid sorting without layout thrashing.
-* Row state transitions (Position switches) execute CSS flex/grid animations.
+* ~~Row state transitions (Position switches) execute CSS flex/grid animations.~~ *Struck, same reason as section 3.*
 * Tyre badges render as SVG or CSS circular elements containing lap age counts.
 * Micro-sector heatmaps render as dynamic HTML flex spans within each sector cell.
 

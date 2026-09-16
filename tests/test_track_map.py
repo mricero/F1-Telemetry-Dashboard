@@ -725,3 +725,47 @@ class TestTyreBadges:
 
     def test_unknown_condition_is_stated(self):
         assert "condition unknown" in self._markup(fresh=None)
+
+
+class TestSpecGapMarkup:
+    """DASH-12: purple last lap, zero speed in the pits, wind arrow."""
+
+    def test_session_best_last_lap_is_highlighted(self):
+        markup = tower_html(
+            [TestTowerPartitions._row(1, last_lap="1:30.500", last_is_session_best=True)]
+        )
+
+        assert 'class="f1-time best f1-mono">1:30.500' in markup
+
+    def test_an_ordinary_last_lap_is_not_highlighted(self):
+        markup = tower_html([TestTowerPartitions._row(1, last_lap="1:32.000")])
+
+        assert 'class="f1-time f1-mono">1:32.000' in markup
+
+    def test_a_car_in_the_pits_reads_zero_kmh(self):
+        markup = tower_html([TestTowerPartitions._row(1, status="IN PIT", speed_kmh=0.0)])
+
+        assert "0 km/h" in markup
+
+    def test_wind_shows_a_compass_arrow(self):
+        weather = pd.DataFrame(
+            {
+                "Time": pd.to_timedelta([0], unit="s"),
+                "WindSpeed": [5.0],
+                "WindDirection": [90],
+            }
+        )
+
+        markup = header_html({"session_info": {}, "weather": weather, "is_live": False})
+
+        assert "→" in markup and "18.0 km/h E" in markup
+
+    def test_header_names_the_country(self):
+        markup = header_html(
+            {
+                "session_info": {"gp": "Dutch Grand Prix", "country": "Netherlands"},
+                "is_live": False,
+            }
+        )
+
+        assert "Netherlands" in markup

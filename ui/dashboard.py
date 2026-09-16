@@ -66,6 +66,17 @@ def _cardinal(degrees) -> str:
     return _CARDINALS[int((float(degrees) % 360) / 45 + 0.5) % 8]
 
 
+# Compass arrow per cardinal point, so wind direction reads at a glance
+# (layout.md section 2 asks for an inline compass arrow).
+_WIND_ARROWS = {"N": "↑", "NE": "↗", "E": "→", "SE": "↘", "S": "↓", "SW": "↙", "W": "←", "NW": "↖"}
+
+
+def _wind_arrow(degrees) -> str:
+    """Arrow glyph for a wind bearing, or empty when unknown."""
+    cardinal = _cardinal(degrees)
+    return _WIND_ARROWS.get(cardinal, "")
+
+
 def _esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
@@ -171,6 +182,7 @@ def header_html(session_data: dict) -> str:
     clock_label = "Remaining" if session_data.get("is_live") else "Duration"
 
     event = _esc(info.get("gp") or "Session")
+    country = _esc(info.get("country") or "")
     year = info.get("year")
     session_type = _esc(info.get("session_name") or info.get("session_type") or "")
 
@@ -189,8 +201,9 @@ def header_html(session_data: dict) -> str:
     rain = latest.get("Rainfall")
     rain_yes = bool(rain) and not pd.isna(rain)
     wind_speed = wind_kmh(latest.get("WindSpeed"))
+    direction = latest.get("WindDirection")
     wind = (
-        f"{wind_speed:.1f} km/h {_cardinal(latest.get('WindDirection'))}".strip()
+        f"{_wind_arrow(direction)} {wind_speed:.1f} km/h {_cardinal(direction)}".strip()
         if wind_speed is not None
         else "--"
     )
@@ -199,6 +212,7 @@ def header_html(session_data: dict) -> str:
 <div class="f1-header">
   <div class="f1-event">
     <span class="f1-event-name">{event}{f" {year}" if year else ""}</span>
+    {f'<span class="f1-event-country">{country}</span>' if country else ""}
     <span class="f1-event-session">{session_type}</span>
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
@@ -289,6 +303,7 @@ def tower_html(rows: Sequence[dict]) -> str:
 
         accent = team_color(row.get("team_name"), row.get("team_colour"))
         best_class = "f1-time best" if row.get("is_overall_best") else "f1-time"
+        last_class = "f1-time best" if row.get("last_is_session_best") else "f1-time"
         status = (
             "KO" if row.get("knocked_out") and row.get("status") == "CLASSIFIED" else row["status"]
         )
@@ -315,7 +330,7 @@ def tower_html(rows: Sequence[dict]) -> str:
             f'<td><div class="f1-code">{_esc(row["code"])}</div>'
             f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
             f"<td>{_status_html(status)}</td>"
-            f'<td><span class="f1-time f1-mono">{_esc(row["last_lap"])}</span></td>'
+            f'<td><span class="{last_class} f1-mono">{_esc(row["last_lap"])}</span></td>'
             f'<td><span class="{best_class} f1-mono">{_esc(row["best_lap"])}</span></td>'
             f'<td><span class="f1-time f1-mono f1-dim">{_esc(row["interval"])}</span></td>'
             f'<td><span class="f1-time f1-mono f1-dim">{_esc(row["gap"])}</span></td>'

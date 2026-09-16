@@ -990,3 +990,41 @@ class TestTyreHistory:
 
         assert [s["compound"] for s in history] == ["SOFT", "HARD"]
         assert [s["laps_used"] for s in history] == [12, 20]
+
+
+class TestSpecGaps:
+    """DASH-12: the last-lap purple highlight and the in-pit speed."""
+
+    @staticmethod
+    def _session() -> dict:
+        return {
+            "session_info": {"session_type": "FP1"},
+            "laps": _laps(
+                _lap_rows("VER", [92.0, 90.5], (30.0, 30.0, 30.5), speed=310.0),
+                _lap_rows("HAM", [91.0, 93.0], (30.4, 30.6, 31.5), speed=305.0),
+            ),
+            "drivers": _drivers(
+                ("VER", "Red Bull Racing", "#3671c6"), ("HAM", "Ferrari", "#e80020")
+            ),
+            "telemetry": {},
+            "is_live": False,
+        }
+
+    def test_last_lap_is_flagged_when_it_is_the_session_best(self):
+        rows = build_timing_rows(self._session())
+        ver = next(r for r in rows if r["code"] == "VER")
+        ham = next(r for r in rows if r["code"] == "HAM")
+
+        # VER's last lap (90.5) is the session best; HAM's last (93.0) is not.
+        assert ver["last_is_session_best"] is True
+        assert ham["last_is_session_best"] is False
+
+    def test_a_driver_in_the_pits_reads_zero(self):
+        session = self._session()
+        session["is_live"] = True
+        session["laps"]["InPit"] = True
+
+        rows = build_timing_rows(session)
+
+        assert all(r["status"] == "IN PIT" for r in rows)
+        assert all(r["speed_kmh"] == 0.0 for r in rows)

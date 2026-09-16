@@ -163,6 +163,9 @@ DASHBOARD_CSS = f"""
 }}
 .f1-event {{ display: flex; align-items: baseline; gap: 10px; min-width: 0; }}
 .f1-event-name {{ font-size: 15px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }}
+.f1-event-country {{
+  font-size: 11px; color: var(--dim); letter-spacing: .08em; text-transform: uppercase;
+}}
 .f1-event-session {{ font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }}
 .f1-clock {{
   font-size: 18px; font-weight: 700; letter-spacing: .06em;

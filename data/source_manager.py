@@ -127,6 +127,7 @@ class DataSourceManager:
                 "gp": gp,
                 "session_type": session_type,
                 "session_name": session.name,
+                "country": self._event_country(session),
                 "date": session.date,
                 "telemetry_scope": telemetry_scope,
             },
@@ -586,6 +587,14 @@ class DataSourceManager:
             "gp": config.default_gp,
             "session_type": config.default_session,
         }
+
+    @staticmethod
+    def _event_country(session) -> str:
+        """Host country for the header badge, or "" when unavailable."""
+        try:
+            return str(session.event["Country"])
+        except Exception:
+            return ""
 
     def _get_weather_from_session(self, session) -> pd.DataFrame:
         """Extract weather data from FastF1 session."""
