@@ -146,12 +146,13 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     6. Keep livef1's parsers only if still useful; otherwise decode `.z` topics with the existing `decode_zipped()`.
   - Acceptance: `scripts/live_smoke.py 60` during a session prints non-zero counts for `TimingData`, `TrackStatus`, `RaceControlMessages`, `WeatherData`, `SessionInfo`, `DriverList`, `ExtrapolatedClock`; with a token also `CarData.z`/`Position.z`. Unit tests feed a recorded CompletionMessage + feed messages through the handler.
 
-- [ ] **LIVE-02** · P0 · M — **Degraded mode when auth-only topics are missing**
+- [x] **LIVE-02** · P0 · M — **Degraded mode when auth-only topics are missing** — done in <pending>
   - Files: `ui/layout.py:493-495`, `app.py:233-245`, `data/source_manager.py:281-407`.
   - Problem: `render_live_dashboard` returns early with "Waiting for live data…" when `telemetry` and `location` are both empty. Without an F1TV token those are *always* empty, so timing, tyres, race control and weather — all of which work without auth — are never shown.
   - Fix: Render each panel independently from whatever topics have data. Show a single banner: "Car telemetry and driver positions need an F1TV subscription token (set `F1TV_SUBSCRIPTION_TOKEN`)". Maintain an explicit list `AUTH_TOPICS = {"CarData.z", "Position.z", "PitStopSeries", "ChampionshipPrediction", "DriverRaceInfo", "TeamRadio"}` and only subscribe to them when a token is configured.
   - Acceptance: With buffers holding only `TimingData` + `RaceControlMessages` + `WeatherData`, the live fragment renders the timing table, race control and weather, plus the auth banner (AppTest).
   - Depends on: LIVE-01 (the list of gated topics should be re-confirmed live).
+  - Note: done ahead of LIVE-01 because the dependency is only about re-confirming the topic list, and the acceptance is offline. `AUTH_TOPICS` and `subscription_token()` live in `data/live_adapter.py`; gated topics are dropped from the subscription without a token, and the view renders every ungated panel with a banner naming `F1TV_SUBSCRIPTION_TOKEN`. The recorded fixture also caught a live-only crash: `WeatherData` values arrive as strings and the weather panel formatted them with `:g`.
 
 - [x] **LIVE-03** · P0 · S — **Live GPS distance is 10× too large** — done in 59a13b7
   - Files: `data/live_adapter.py:438-466` (`distance_at`, line 457), `data/fastf1_adapter.py:12, 185-199`.
@@ -223,7 +224,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: With the new client (LIVE-01): `connection.stop()`, `on_close` → state `DISCONNECTED`, automatic reconnect with exponential backoff capped at 60 s, a supervisor that marks the feed `STALE` after 30 s without `Heartbeat`, and a status chip in the UI (`CONNECTING / LIVE / STALE / RECONNECTING / STOPPED / AUTH_REQUIRED / BLOCKED(403)`).
   - Acceptance: unit test with a fake connection: stop → thread joins within 5 s; simulated close → reconnect attempted with backoff; 403 on negotiate → `BLOCKED` state surfaced, no tight retry loop.
 
-- [x] **LIVE-09** · P0 · M — **One SignalR connection per browser session** — done in <pending>
+- [x] **LIVE-09** · P0 · M — **One SignalR connection per browser session** — done in e472183
   - Files: `app.py:156-157`, `data/source_manager.py:20-27`.
   - Problem: `DataSourceManager()` (which creates its own `SignalRLiveAdapter`) lives in `st.session_state`, i.e. **per browser tab**. Five viewers = five upstream connections, five copies of the buffers, and a much higher chance of F1 rate-limiting or IP-blocking the host.
   - Fix: Create the live ingest service once per process with `@st.cache_resource` (or a module singleton guarded by a lock). Browser sessions only *read* snapshots. Start/stop is a process-level action (admin-only if deployed).

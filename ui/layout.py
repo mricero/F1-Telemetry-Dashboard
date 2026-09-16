@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from data.fastf1_adapter import session_codes_for_event
+from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from ui.dashboard import wind_kmh
 from processing.time_utils import format_m_s, seconds_series
@@ -516,9 +517,19 @@ def render_live_dashboard(data_manager, processor):
     )
     laps_df = snapshot["laps"]
 
-    if not telemetry and not location:
-        st.info("Waiting for live data from the F1 SignalR feed...")
-        return
+    # Car telemetry and positions are the only auth-gated parts of the feed.
+    # Timing, tyres, race control and weather work without a token, so the
+    # view renders whatever arrived instead of waiting for everything.
+    has_car_data = bool(telemetry or location)
+    if not has_car_data:
+        if subscription_token():
+            st.info("Waiting for car telemetry and positions from the F1 SignalR feed...")
+        else:
+            st.warning(
+                "Car telemetry and driver positions need an F1TV subscription token "
+                f"(set `{TOKEN_ENV_VAR}`). Timing, tyres, race control and weather "
+                "below do not need one."
+            )
 
     status = (snapshot.get("session_info") or {}).get("track_status")
     if status:
@@ -619,7 +630,8 @@ def render_weather(weather_df: pd.DataFrame):
         ("🔽 Pressure", "Pressure", "mbar", None),
     ]
     for col, (label, key, unit, convert) in zip(cols, readings):
-        value = latest.get(key)
+        # The live feed sends these as strings ("21.0"); FastF1 sends floats.
+        value = pd.to_numeric(latest.get(key), errors="coerce")
         if convert is not None:
             value = convert(value)
         col.metric(label, f"{value:g} {unit}" if pd.notna(value) else "--")

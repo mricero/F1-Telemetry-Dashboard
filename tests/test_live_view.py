@@ -1,0 +1,156 @@
+"""The live view without an F1TV token (IMPROVEMENTS.md LIVE-02, LIVE-10).
+
+Car telemetry and driver positions have needed a subscription token since the
+2025 Dutch GP. The live view returned early when both were empty, so timing,
+tyres, race control and weather - none of which are gated - were never shown.
+"""
+
+import pandas as pd
+import pytest
+from streamlit.testing.v1 import AppTest
+
+from tests import live_fixtures
+
+
+def _primed_adapter():
+    """An adapter holding only the topics that work without a token."""
+    from data.live_adapter import SignalRLiveAdapter
+
+    adapter = SignalRLiveAdapter()
+    for topic in ("SessionInfo", "DriverList", "TimingData", "TyreStintSeries"):
+        for timestamp, payload in live_fixtures.messages(topic):
+            adapter.handle_message(topic, payload, timestamp)
+    adapter._buffer_topic(
+        "RaceControlMessages",
+        [
+            {
+                "Utc": "2026-09-06T13:00:00",
+                "Category": "Flag",
+                "Flag": "GREEN",
+                "Scope": "Track",
+                "Message": "GREEN LIGHT",
+                "Lap": 1,
+            }
+        ],
+    )
+    adapter._buffer_topic(
+        "WeatherData",
+        [
+            {
+                "timestamp": "2026-09-06T13:00:00",
+                "AirTemp": "21.0",
+                "TrackTemp": "33.0",
+                "Humidity": "45.0",
+                "Pressure": "1011.0",
+                "WindSpeed": "3.0",
+                "WindDirection": "180",
+                "Rainfall": "0",
+            }
+        ],
+    )
+    return adapter
+
+
+def _live_script():
+    import streamlit as st
+
+    from data.source_manager import DataSourceManager
+    from processing.telemetry_processor import TelemetryProcessor
+    from tests.test_live_view import _primed_adapter
+    from ui.layout import render_live_dashboard
+
+    class Stub(DataSourceManager):
+        def __init__(self):
+            super().__init__(live_adapter=_primed_adapter())
+
+    manager = Stub()
+    st.session_state["snapshot"] = manager.poll_live_data()
+    render_live_dashboard(manager, TelemetryProcessor())
+
+
+@pytest.fixture
+def live_app(monkeypatch):
+    import data.source_manager as source_manager
+
+    monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+    app = AppTest.from_function(_live_script, default_timeout=60)
+    app.run()
+    return app
+
+
+class TestDegradedMode:
+    """LIVE-02: no token means no car data - everything else still works."""
+
+    def test_the_view_renders_without_telemetry_or_positions(self, live_app):
+        assert not live_app.exception, live_app.exception
+        snapshot = live_app.session_state["snapshot"]
+        assert not snapshot["telemetry"] and not snapshot["location"]
+
+    def test_it_does_not_stop_at_waiting_for_data(self, live_app):
+        notices = " ".join(info.value for info in live_app.info)
+
+        assert "Waiting for live data" not in notices
+
+    def test_the_auth_banner_names_the_token(self, live_app):
+        text = " ".join(
+            [w.value for w in live_app.warning]
+            + [i.value for i in live_app.info]
+            + [c.value for c in live_app.caption]
+        )
+
+        assert "F1TV_SUBSCRIPTION_TOKEN" in text
+
+    def test_the_unauthenticated_panels_are_present(self, live_app):
+        labels = [tab.label for tab in live_app.tabs]
+
+        for expected in ("🚩 Race Control", "🌤️ Weather", "🛞 Tyres"):
+            assert expected in labels
+
+    def test_auth_topics_are_named_explicitly(self):
+        from data.live_adapter import AUTH_TOPICS
+
+        assert {"CarData.z", "Position.z"} <= AUTH_TOPICS
+
+    def test_gated_topics_are_only_subscribed_with_a_token(self, monkeypatch):
+        from data.live_adapter import AUTH_TOPICS, SignalRLiveAdapter
+
+        monkeypatch.delenv("F1TV_SUBSCRIPTION_TOKEN", raising=False)
+        without = set(SignalRLiveAdapter().subscribed_topics())
+
+        monkeypatch.setenv("F1TV_SUBSCRIPTION_TOKEN", "a-token")
+        with_token = set(SignalRLiveAdapter().subscribed_topics())
+
+        gated_and_wanted = AUTH_TOPICS & set(SignalRLiveAdapter.TELEMETRY_TOPICS)
+
+        assert gated_and_wanted, "the subscription list should include gated topics"
+        assert not (without & AUTH_TOPICS)
+        assert gated_and_wanted <= with_token
+
+
+class TestLiveDashboardIsFed:
+    """LIVE-10: the timing tower must see live data, not the empty dict."""
+
+    def test_the_polled_snapshot_carries_timing_rows(self, live_app):
+        from processing.timing import build_timing_rows
+
+        rows = build_timing_rows(live_app.session_state["snapshot"])
+
+        assert rows, "the tower would render 'No timing data' for a live session"
+        assert len(rows) >= 15
+
+    def test_the_header_names_the_session(self, live_app):
+        from ui.dashboard import header_html
+
+        markup = header_html(live_app.session_state["snapshot"])
+
+        assert "Bahrain Grand Prix" in markup
+
+    def test_the_tower_has_a_row_per_driver(self, live_app):
+        from processing.timing import build_timing_rows
+        from ui.dashboard import tower_html
+
+        snapshot = live_app.session_state["snapshot"]
+        markup = tower_html(build_timing_rows(snapshot))
+
+        assert "No timing data" not in markup
+        assert isinstance(snapshot["laps"], pd.DataFrame)

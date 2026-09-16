@@ -21,6 +21,7 @@ FastF1-style raw recordings.
 
 import asyncio
 import base64
+import os
 import json
 import threading
 import zlib
@@ -122,6 +123,31 @@ def _as_bool(value: Any) -> Optional[bool]:
 
 # Official CarData.z channel ids (verified against LiveF1 channel_name_map)
 CAR_CHANNELS = {"0": "rpm", "2": "speed", "3": "n_gear", "4": "throttle", "5": "brake", "45": "drs"}
+
+
+# Topics F1 has gated behind an F1TV subscription token since the 2025 Dutch
+# GP. Without a token they never produce data, so subscribing to them only
+# adds noise - and the panels that do not need one must still render (LIVE-02).
+AUTH_TOPICS = frozenset(
+    {
+        "CarData.z",
+        "Position.z",
+        "PitStopSeries",
+        "ChampionshipPrediction",
+        "DriverRaceInfo",
+        "TeamRadio",
+    }
+)
+
+# Where the user's own token is read from. It stays on their machine: the
+# sustainable mode for this feed is local, single-connection, own-token use.
+TOKEN_ENV_VAR = "F1TV_SUBSCRIPTION_TOKEN"
+
+
+def subscription_token() -> Optional[str]:
+    """The configured F1TV subscription token, or None."""
+    token = os.getenv(TOKEN_ENV_VAR, "").strip()
+    return token or None
 
 
 class SignalRLiveAdapter:
@@ -241,6 +267,16 @@ class SignalRLiveAdapter:
         """Apply a subscription snapshot: ``{topic: full_state}``."""
         self.state.seed(snapshot)
 
+    def subscribed_topics(self) -> List[str]:
+        """Topics worth subscribing to, given whether a token is configured.
+
+        Auth-gated topics are dropped without one: they would never deliver
+        anything, and the rest of the feed works perfectly well alone.
+        """
+        if subscription_token():
+            return list(self.TELEMETRY_TOPICS)
+        return [topic for topic in self.TELEMETRY_TOPICS if topic not in AUTH_TOPICS]
+
     def _buffer_topic(self, topic: str, records: Any):
         """Append parsed records to a topic buffer, dropping the oldest
         entries beyond ``buffer_limit`` to keep memory bounded."""
@@ -264,7 +300,7 @@ class SignalRLiveAdapter:
         """
         from livef1.adapters import RealF1Client
 
-        topics = topics or self.TELEMETRY_TOPICS
+        topics = topics or self.subscribed_topics()
         self.client = RealF1Client(topics=topics, log_file_name=log_file)
         self._running = True
 
@@ -290,7 +326,7 @@ class SignalRLiveAdapter:
         """Start FastF1 SignalRClient - saves raw stream to file."""
         from fastf1.livetiming.client import SignalRClient
 
-        topics = topics or self.TELEMETRY_TOPICS
+        topics = topics or self.subscribed_topics()
         self.client = SignalRClient(filename=filename, filemode="w", timeout=timeout, no_auth=False)
         self._running = True
         self.client.start()  # Blocks
