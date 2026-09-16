@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from unittest.mock import Mock, patch
 import pandas as pd
-from data.fastf1_adapter import SCOPE_SESSION, FastF1Adapter
+from data.fastf1_adapter import SCOPE_SESSION, FastF1Adapter, latest_completed_event
 
 
 def _merged_telemetry_frame() -> pd.DataFrame:
@@ -326,3 +326,85 @@ class TestFastF1Adapter:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestScheduleYears:
+    """HIST-04: the default season window must follow the clock, not 2025."""
+
+    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    def test_default_years_are_relative_to_now(self, mock_get_schedule, monkeypatch):
+        monkeypatch.setattr(
+            "data.fastf1_adapter._utcnow", lambda: pd.Timestamp("2026-09-16", tz="UTC")
+        )
+        mock_get_schedule.return_value = pd.DataFrame(
+            {
+                "EventName": ["Bahrain"],
+                "EventFormat": ["conventional"],
+                "EventDate": [pd.Timestamp("2026-03-08", tz="UTC")],
+            }
+        )
+
+        FastF1Adapter().get_available_sessions()
+
+        requested = sorted(call.args[0] for call in mock_get_schedule.call_args_list)
+        assert requested == [2025, 2026]
+
+    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    def test_latest_completed_event_uses_the_race_session_end(self, mock_get_schedule, monkeypatch):
+        monkeypatch.setattr(
+            "data.fastf1_adapter._utcnow",
+            lambda: pd.Timestamp("2026-09-16T12:00:00", tz="UTC"),
+        )
+        schedule = pd.DataFrame(
+            {
+                "Year": [2026, 2026, 2026],
+                "EventName": ["Zandvoort", "Monza", "Baku"],
+                "EventFormat": ["conventional"] * 3,
+                "EventDate": [
+                    pd.Timestamp("2026-08-30", tz="UTC"),
+                    pd.Timestamp("2026-09-06", tz="UTC"),
+                    pd.Timestamp("2026-09-20", tz="UTC"),  # still to come
+                ],
+                "Session5DateUtc": [
+                    pd.Timestamp("2026-08-30T13:00:00"),
+                    pd.Timestamp("2026-09-06T13:00:00"),
+                    pd.Timestamp("2026-09-20T11:00:00"),
+                ],
+            }
+        )
+
+        latest = latest_completed_event(schedule)
+
+        assert latest is not None
+        assert latest["EventName"] == "Monza"
+
+    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    def test_latest_completed_event_ignores_a_race_still_running(
+        self, mock_get_schedule, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "data.fastf1_adapter._utcnow",
+            lambda: pd.Timestamp("2026-09-06T14:00:00", tz="UTC"),
+        )
+        schedule = pd.DataFrame(
+            {
+                "Year": [2026, 2026],
+                "EventName": ["Zandvoort", "Monza"],
+                "EventFormat": ["conventional"] * 2,
+                "EventDate": [
+                    pd.Timestamp("2026-08-30", tz="UTC"),
+                    pd.Timestamp("2026-09-06", tz="UTC"),
+                ],
+                "Session5DateUtc": [
+                    pd.Timestamp("2026-08-30T13:00:00"),
+                    pd.Timestamp("2026-09-06T13:00:00"),  # started an hour ago
+                ],
+            }
+        )
+
+        latest = latest_completed_event(schedule)
+
+        assert latest["EventName"] == "Zandvoort"
+
+    def test_latest_completed_event_on_an_empty_schedule(self):
+        assert latest_completed_event(pd.DataFrame()) is None

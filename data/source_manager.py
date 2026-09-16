@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict
 
 from config import config
-from data.fastf1_adapter import SCOPE_FASTEST, FastF1Adapter
+from data.fastf1_adapter import SCOPE_FASTEST, FastF1Adapter, latest_completed_event
 from data.jolpica_adapter import JolpicaAdapter
 from data.live_adapter import SignalRLiveAdapter, LiveDataProcessor
 from livef1 import get_session
@@ -522,12 +522,28 @@ class DataSourceManager:
         return info
 
     def _get_most_recent_completed_race(self) -> dict:
-        """Find most recent completed race from FastF1 schedule."""
-        schedule = self.fastf1.get_available_sessions()
-        if schedule.empty:
-            return {"year": 2024, "gp": "Abu Dhabi", "session_type": "R"}
-        last_event = schedule.iloc[-1]
-        return {"year": int(last_event["Year"]), "gp": last_event["EventName"], "session_type": "R"}
+        """Most recent *finished* race from the FastF1 schedule.
+
+        Falls back to the configured defaults only when the schedule is
+        unavailable - a hardcoded event silently becomes a year stale.
+        """
+        try:
+            schedule = self.fastf1.get_available_sessions()
+        except Exception:
+            schedule = pd.DataFrame()
+
+        event = latest_completed_event(schedule)
+        if event is not None:
+            return {
+                "year": int(event["Year"]),
+                "gp": event["EventName"],
+                "session_type": "R",
+            }
+        return {
+            "year": config.default_year,
+            "gp": config.default_gp,
+            "session_type": config.default_session,
+        }
 
     def _get_weather_from_session(self, session) -> pd.DataFrame:
         """Extract weather data from FastF1 session."""

@@ -14,6 +14,40 @@ POSITION_UNITS_PER_METRE = 10.0
 SCOPE_FASTEST = "fastest"
 SCOPE_SESSION = "session"
 
+# A Grand Prix is limited to three hours including suspensions, so a race that
+# started longer ago than this has certainly finished. The explicit unit avoids
+# NumPy's deprecated generic timedelta (see CLAUDE.md "Time parsing").
+RACE_MAX_DURATION = pd.Timedelta(3, unit="h")
+
+
+def _utcnow() -> pd.Timestamp:
+    """Current UTC time. Indirection so tests can freeze the clock."""
+    return pd.Timestamp.now(tz="UTC")
+
+
+def latest_completed_event(schedule: pd.DataFrame) -> Optional[pd.Series]:
+    """The most recently *finished* round in a schedule, or None.
+
+    Rows are ordered by the race session's start (``Session5DateUtc``,
+    which FastF1 reports naive-UTC) rather than by position in the frame:
+    schedules for several seasons are concatenated, so the last row is not
+    the latest race. An event only counts once the race can have ended.
+    """
+    if schedule is None or schedule.empty:
+        return None
+
+    if "Session5DateUtc" in schedule.columns:
+        race_start = pd.to_datetime(schedule["Session5DateUtc"], utc=True, errors="coerce")
+    else:  # older schedule shapes only carry the event date
+        race_start = pd.to_datetime(schedule.get("EventDate"), utc=True, errors="coerce")
+    if race_start is None or race_start.isna().all():
+        return schedule.iloc[-1]
+
+    finished = schedule[race_start + RACE_MAX_DURATION < _utcnow()]
+    if finished.empty:
+        return None
+    return finished.loc[race_start.loc[finished.index].idxmax()]
+
 
 class FastF1Adapter:
     """Loads historical F1 sessions with local caching."""
@@ -32,7 +66,10 @@ class FastF1Adapter:
         picked from the Grand Prix dropdown.
         """
         if years is None:
-            years = [2023, 2024, 2025]
+            # The current season plus the previous one: hardcoding seasons left
+            # "most recent completed race" a year behind once the year rolled.
+            this_year = _utcnow().year
+            years = [this_year, this_year - 1]
         elif isinstance(years, int):
             years = [years]
         all_schedules = []
@@ -56,8 +93,7 @@ class FastF1Adapter:
         # FastF1 EventDate tz-awareness varies by version, so normalize both sides to UTC-aware.
         if "EventDate" in combined.columns and not combined.empty:
             event_dates = pd.to_datetime(combined["EventDate"], utc=True)
-            now = pd.Timestamp.now(tz="UTC")
-            completed = combined[event_dates < now]
+            completed = combined[event_dates < _utcnow()]
         else:
             completed = combined
         return completed

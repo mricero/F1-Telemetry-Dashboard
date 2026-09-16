@@ -296,7 +296,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Either (a) remove the source from the selector until fixed, or (b) write a proper adapter with explicit column maps, lap-relative distance for the fastest lap (filter `LapNo == fastest`), and resolve the meeting via `meeting_key/session_key` from `Index.json`/FastF1 schedule instead of name heuristics. Mark as experimental in the UI.
   - Acceptance: network test (`F1_NETWORK_TESTS=1`) loads 2025 Bahrain Q via livef1 and gets ≥18 drivers with non-empty telemetry, location and laps; offline unit test with a captured silver-table sample.
 
-- [ ] **HIST-04** · P1 · S — **Auto fallback is stuck in 2025**
+- [x] **HIST-04** · P1 · S — **Auto fallback is stuck in 2025** — done in <pending>
   - Files: `data/fastf1_adapter.py:27-36`, `data/source_manager.py:493-499`.
   - Problem: `get_available_sessions(years=None)` defaults to `[2023, 2024, 2025]`; `_get_most_recent_completed_race()` calls it without years, so in September 2026 "most recent completed race" is the 2025 finale. The hard fallback is "2024 Abu Dhabi". `config.default_year` (`DEFAULT_YEAR`) exists but is never read.
   - Fix: `years = [now.year, now.year - 1]`; pick the latest event whose **race session end** is in the past (use `Session5DateUtc`). Use config defaults only when the schedule is unavailable.
@@ -375,7 +375,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Compute `best_s1/s2/s3` per driver over all valid laps (exclude deleted laps: FastF1 `Deleted` column / `IsAccurate`); session ideal = min over drivers; show both "personal ideal" and "session ideal".
   - Acceptance: synthetic laps where a driver's best S1 is on a slower lap → ideal uses it.
 
-- [x] **DASH-07** · P1 · S — **Wind speed unit is wrong in the header** — done in <pending>
+- [x] **DASH-07** · P1 · S — **Wind speed unit is wrong in the header** — done in c0f7d4a
   - Files: `ui/dashboard.py:135-140`, `ui/layout.py:591`.
   - Problem: FastF1 `WindSpeed` is **m/s**. The weather tab labels it m/s; the header prints the same number as "km/h" (3.6× understatement). `layout.md` asks for km/h.
   - Fix: Convert `× 3.6` in the header (and in the tab if you standardise on km/h); unit test.

@@ -284,3 +284,56 @@ class TestReplayFileResolution:
 
         with pytest.raises(FileNotFoundError):
             manager.get_session_data(source="replay", replay_file="../outside.pkl")
+
+
+class TestMostRecentCompletedRace:
+    """HIST-04: 'Auto' must land on the latest finished round, not 2025."""
+
+    @staticmethod
+    def _stub_schedule(manager, schedule):
+        manager.fastf1 = type(
+            "Stub",
+            (),
+            {"get_available_sessions": staticmethod(lambda *a, **kw: schedule)},
+        )()
+
+    def test_picks_the_latest_round_not_the_last_row(self, manager, monkeypatch):
+        monkeypatch.setattr(
+            "data.fastf1_adapter._utcnow", lambda: pd.Timestamp("2026-09-16", tz="UTC")
+        )
+        # Seasons are concatenated newest-first, so the last row is a 2025 race.
+        self._stub_schedule(
+            manager,
+            pd.DataFrame(
+                {
+                    "Year": [2026, 2025],
+                    "EventName": ["Monza", "Abu Dhabi"],
+                    "EventFormat": ["conventional"] * 2,
+                    "EventDate": [
+                        pd.Timestamp("2026-09-06", tz="UTC"),
+                        pd.Timestamp("2025-12-07", tz="UTC"),
+                    ],
+                    "Session5DateUtc": [
+                        pd.Timestamp("2026-09-06T13:00:00"),
+                        pd.Timestamp("2025-12-07T13:00:00"),
+                    ],
+                }
+            ),
+        )
+
+        recent = manager._get_most_recent_completed_race()
+
+        assert recent == {"year": 2026, "gp": "Monza", "session_type": "R"}
+
+    def test_falls_back_to_config_when_the_schedule_is_unavailable(self, manager):
+        from config import config
+
+        self._stub_schedule(manager, pd.DataFrame())
+
+        recent = manager._get_most_recent_completed_race()
+
+        assert recent == {
+            "year": config.default_year,
+            "gp": config.default_gp,
+            "session_type": config.default_session,
+        }
