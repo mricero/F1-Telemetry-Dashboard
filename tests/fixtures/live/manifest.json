@@ -1,0 +1,23 @@
+{
+  "source": "https://livetiming.formula1.com/static/2023/2023-03-05_Bahrain_Grand_Prix/2023-03-05_Race/",
+  "year": 2023,
+  "meeting": "Bahrain",
+  "session": "Race",
+  "message_cap": 60,
+  "telemetry_skip": 4750,
+  "topics": {
+    "SessionInfo": 1,
+    "TimingData": 60,
+    "TimingAppData": 60,
+    "TyreStintSeries": 60,
+    "DriverList": 60,
+    "RaceControlMessages": 60,
+    "WeatherData": 60,
+    "TrackStatus": 11,
+    "LapCount": 57,
+    "SessionStatus": 5,
+    "ExtrapolatedClock": 2,
+    "CarData.z": 60,
+    "Position.z": 60
+  }
+}

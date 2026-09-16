@@ -571,11 +571,12 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 
 ## 9. P2 — Tests
 
-- [ ] **TEST-01** · P1 · M — **Live fixtures repeat the "mocks diverge from reality" mistake**
+- [x] **TEST-01** · P1 · M — **Live fixtures repeat the "mocks diverge from reality" mistake** — done in <pending>
   - Files: `tests/test_live_parsing.py:125-260`, `tests/test_source_manager.py:100-190`.
   - Problem: Hand-written records encode the code's assumptions, not the feed: `SessionInfo {"Meeting": "Bahrain"}` (real: nested dict), stints always with `Compound` and `LapStart: None` (real: `StartLaps`/`TotalLaps`, compound-less deltas, list snapshots), only 1-based `Sectors_N_Value` (real deltas are 0-based), X/Y treated as metres. That's why LIVE-03/04/05/06 pass CI.
   - Fix: Commit a small **recorded** live timing fixture (a few minutes of a real session from the public static archive `https://livetiming.formula1.com/static/<year>/<meeting>/<session>/<Topic>.jsonStream`, which is what FastF1 uses for historical loads) into `tests/fixtures/live/`, and build tests that replay it through the real ingest handler. Add a `scripts/capture_fixture.py` to refresh it. Keep fixtures tiny (<2 MB) — gzip them.
   - Acceptance: LIVE-03…06 each have a failing test on the recorded fixture before their fix.
+  - Note: 13 topics of the real 2023 Bahrain **Race** recorded into `tests/fixtures/live/` (134 KiB gzipped), refreshable with `scripts/capture_fixture.py`. LIVE-03 and LIVE-06 were already fixed, so their fixture tests assert the fixed behaviour; LIVE-04's 0-based `Sectors` deltas and LIVE-05's list snapshots + compound-less updates are pinned as *shape* assertions, with the dropped-stint defect held as a `strict` xfail that flips to a real assertion when LIVE-05 lands. The capture also confirmed LIVE-14: cars in the garage report `0,0,0` for the first ~4700 messages of the race stream, and entries carry a `Status`.
 
 - [x] **TEST-02** · P1 · S — **No UI-to-loader tests per source** — done in a657652
   - Problem: The Replay path is broken end-to-end (HIST-01) yet green, because nothing drives the selector → loader → dashboard path with a mocked manager.
