@@ -265,7 +265,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Drop `Status != "OnTrack"` and exact-zero triples before building trails/distances.
   - Acceptance: unit test with interleaved OffTrack zeros → distance monotonic and no (0,0) in trail.
 
-- [x] **LIVE-15** · P1 · M — **"Live session detected" is a date heuristic** — done in <pending>
+- [x] **LIVE-15** · P1 · M — **"Live session detected" is a date heuristic** — done in cd81537
   - Files: `data/jolpica_adapter.py:208-224`, `ui/layout.py:85-117`, `data/source_manager.py:65-68`, `data/live_adapter.py:469-477`, `readme.md` ("real-time endpoint probing").
   - Problem: `is_race_weekend()` returns True if **race day** (midnight UTC, no time) is within ±72 h. That is Thursday 00:00 → Wednesday 00:00, including days with no sessions; the UI then shows "🔴 LIVE SESSION DETECTED", and `Auto` hides the historical selectors for the whole window. It also only checks the current calendar year (a race on 1 Jan+ would be missed) and ignores session times entirely. The readme calls this "real-time endpoint probing"; it isn't.
   - Fix: Use the FastF1 event schedule (`Session1DateUtc … Session5DateUtc`) or `https://livetiming.formula1.com/static/{year}/Index.json` to find a session whose window `[start − 15 min, start + duration + 30 min]` contains now; confirm with `SessionStatus` once connected. In `Auto`, show a "Go live" call-to-action rather than silently switching and hiding history.
