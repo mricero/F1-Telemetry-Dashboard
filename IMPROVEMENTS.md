@@ -231,7 +231,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: two `AppTest` sessions share one adapter instance (assert `id()` equality); starting live in one shows data in the other.
   - Note: a module singleton behind a lock (`data/live_service.py`) rather than `@st.cache_resource`, so scripts, tests and `live_smoke.py` can reach the adapter without a Streamlit runtime. `DataSourceManager` takes an optional `live_adapter` for tests, and `tests/conftest.py` resets the singleton between tests.
 
-- [x] **LIVE-10** · P0 · M — **Live mode never feeds the timing-tower dashboard** — done in <pending>
+- [x] **LIVE-10** · P0 · M — **Live mode never feeds the timing-tower dashboard** — done in aa56c2f
   - Files: `app.py:173-202, 233-245`, `ui/layout.py:481-530`, `ui/dashboard.py:343-355`.
   - Problem: `render_dashboard(session_data)` runs with the dict from `_load_live_session()` — all empty frames — so the header, tower, sector cards and map show "No timing data" during a live session. Live data only reaches the plain tabs inside `render_live_dashboard`.
   - Fix: Move `render_dashboard` inside the live fragment and feed it `poll_live_data()` (or the LiveState snapshot). Remove the duplicate plain "Timing" dataframe tab.
