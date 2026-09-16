@@ -590,9 +590,10 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 - [ ] **TEST-05** · P3 · S — **Coverage & property tests**
   - Fix: `pytest --cov` in CI with a floor (start at current, ratchet up); `hypothesis` for `to_seconds`, `deep_merge`, `segment_boundaries`, `resample_to_distance_grid` (monotonic grid, coded channels only take source values).
 
-- [ ] **TEST-06** · P2 · S — **Network test encodes a wrong expectation**
+- [x] **TEST-06** · P2 · S — **Network test encodes a wrong expectation** — done in c05cefd / 9cb2acd
   - Files: `tests/test_integration_network.py:167-180`.
   - Problem: `test_timing_rows_are_ranked_and_complete` asserts fastest-to-slowest classification — correct only for practice/quali (DASH-01). It uses a Q session, so it will keep passing after DASH-01, but add an R-session test asserting real race order.
+  - Note: closed by the DASH-01/DASH-02 commits rather than separately. The Q-session test now asserts the *official* qualifying order (which is not globally fastest-to-slowest — a driver who reaches Q3 without setting a lap keeps a quicker Q2 time), and `TestRaceClassificationOnRealSession` asserts the real 2023 Bahrain race order and gaps. `TestStatusBadgesOnRealSession` and `TestScopeIndependenceOfTheDashboard` cover the other semantics changes.
 
 ---
 
