@@ -26,6 +26,11 @@ PADDING = 62
 # the leaderboard's micro-sector strips so the two views agree.
 DOMINANCE_SEGMENTS = 15
 
+# A full-session trace holds every lap (~300 km, tens of thousands of points)
+# and is drawn three times over. Resampling at uniform distance keeps the
+# shape while bounding the SVG the browser has to parse.
+MAX_OUTLINE_POINTS = 1500
+
 
 def rotate_points(xy: np.ndarray, angle_degrees: float) -> np.ndarray:
     """Rotate an (N, 2) array of coordinates about the origin.
@@ -64,6 +69,16 @@ def _trace_distance(reference: pd.DataFrame, track: np.ndarray) -> np.ndarray:
             return values
     steps = np.hypot(*np.diff(track, axis=0).T)
     return np.concatenate([[0.0], np.cumsum(np.nan_to_num(steps))])
+
+
+def _decimate(
+    track: np.ndarray, distance: np.ndarray, limit: int = MAX_OUTLINE_POINTS
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Resample a trace to at most ``limit`` points, uniformly by distance."""
+    if len(track) <= limit:
+        return track, distance
+    keep = np.unique(segment_boundaries(distance, limit))
+    return track[keep], distance[keep]
 
 
 def _fit_transform(points: np.ndarray) -> Tuple[float, float, float]:
@@ -132,9 +147,10 @@ def build_track_svg(
 
     rotation = float((circuit_info or {}).get("rotation") or 0.0)
     track = rotate_points(reference[["X", "Y"]].to_numpy(float), rotation)
+    distance = _trace_distance(reference, track)
+    track, distance = _decimate(track, distance)
     scale, dx, dy = _fit_transform(track)
     projected = _project(track.copy(), scale, dx, dy)
-    distance = _trace_distance(reference, track)
 
     layers: List[str] = []
 

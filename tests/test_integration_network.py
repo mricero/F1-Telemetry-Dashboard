@@ -304,3 +304,44 @@ class TestRaceClassificationOnRealSession:
         results = session["results"]
         assert not results.empty
         assert {"Abbreviation", "Position", "Status"} <= set(results.columns)
+
+
+class TestScopeIndependenceOfTheDashboard:
+    """DASH-05 acceptance: the dashboard is scope-invariant on a real race."""
+
+    @staticmethod
+    def _race(scope: str):
+        from data.source_manager import DataSourceManager
+
+        return DataSourceManager().get_session_data(
+            source="fastf1",
+            year=2023,
+            gp="Bahrain Grand Prix",
+            session_type="R",
+            telemetry_scope=scope,
+        )
+
+    def test_same_dominance_and_micro_sectors_in_both_scopes(self):
+        from processing.timing import build_timing_rows, dashboard_frames, micro_sector_times
+        from ui.track_map import dominance_segments
+
+        def fingerprint(session):
+            telemetry, _ = dashboard_frames(session)
+            micro = {
+                code: times
+                for code, frame in telemetry.items()
+                if (times := micro_sector_times(frame)) is not None
+            }
+            rows = build_timing_rows(session)
+            return dominance_segments(micro), [r["sectors"][0]["segments"] for r in rows]
+
+        assert fingerprint(self._race("fastest")) == fingerprint(self._race("session"))
+
+    def test_full_session_scope_still_yields_a_small_svg(self):
+        from ui.dashboard import map_panel_html
+        from processing.timing import build_timing_rows
+
+        session = self._race("session")
+        markup = map_panel_html(session, build_timing_rows(session))
+
+        assert len(markup.encode("utf-8")) < 150 * 1024

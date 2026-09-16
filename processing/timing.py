@@ -10,7 +10,7 @@ position, with Gap/Interval as race time behind the leader and the car ahead
 lap, where Gap and Interval are lap-time deltas.
 """
 
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -181,6 +181,21 @@ def _status(laps: pd.DataFrame, is_live: bool) -> str:
     if in_pit is not None and pd.notna(in_pit) and (out_pit is None or pd.isna(out_pit)):
         return "IN PIT"
     return "ON TRACK"
+
+
+def dashboard_frames(session_data: dict) -> Tuple[dict, dict]:
+    """The telemetry and location frames the dashboard should read.
+
+    The charts honour the user's telemetry scope, but the tower's
+    micro-sectors and the map's dominance layer are only meaningful over a
+    single lap: with ``scope='session'`` a race's Distance runs to ~300 km.
+    Sources that can provide them put per-driver fastest-lap frames under
+    ``dashboard_telemetry``/``dashboard_location``; everything else falls
+    back to the chart frames.
+    """
+    telemetry = session_data.get("dashboard_telemetry") or session_data.get("telemetry") or {}
+    location = session_data.get("dashboard_location") or session_data.get("location") or {}
+    return telemetry, location
 
 
 def segment_boundaries(distance: np.ndarray, segments: int) -> np.ndarray:
@@ -498,7 +513,7 @@ def build_timing_rows(session_data: dict) -> List[dict]:
 
     is_live = bool(session_data.get("is_live"))
     meta = _driver_meta(session_data.get("drivers"))
-    telemetry = session_data.get("telemetry") or {}
+    telemetry, _ = dashboard_frames(session_data)
 
     # Micro-sector heat strips come from each driver's own telemetry trace.
     per_driver_segments = {}

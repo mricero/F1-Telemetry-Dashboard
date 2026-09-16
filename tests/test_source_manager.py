@@ -337,3 +337,46 @@ class TestMostRecentCompletedRace:
             "gp": config.default_gp,
             "session_type": config.default_session,
         }
+
+
+class TestDashboardFrameRoundTrip:
+    """DASH-05: fastest-lap frames survive a replay without doubling its size."""
+
+    @staticmethod
+    def _session_with_scope(scope: str) -> dict:
+        data = _sample_session()
+        data["session_info"]["telemetry_scope"] = scope
+        if scope == "session":
+            data["dashboard_telemetry"] = {
+                "HAM": pd.DataFrame({"Distance": [0.0, 10.0], "Speed": [280.5, 300.0]})
+            }
+            data["dashboard_location"] = {"HAM": pd.DataFrame({"X": [1.0], "Y": [2.0]})}
+        else:
+            data["dashboard_telemetry"] = data["telemetry"]
+            data["dashboard_location"] = data["location"]
+        return data
+
+    def test_fastest_scope_does_not_duplicate_the_frames(self, manager):
+        path = manager.save_replay(self._session_with_scope("fastest"), "Bahrain_R")
+        raw = pickle.load(open(path, "rb"))["data"]
+
+        assert "dashboard_telemetry" not in raw
+        assert "dashboard_location" not in raw
+
+    def test_session_scope_stores_the_fastest_lap_frames(self, manager):
+        path = manager.save_replay(self._session_with_scope("session"), "Bahrain_R")
+        loaded = manager._load_replay(path)
+
+        assert "dashboard_telemetry" in loaded
+        assert isinstance(loaded["dashboard_telemetry"]["HAM"], pd.DataFrame)
+        assert isinstance(loaded["dashboard_location"]["HAM"], pd.DataFrame)
+
+    def test_older_replays_fall_back_to_the_chart_frames(self, manager):
+        from processing.timing import dashboard_frames
+
+        path = manager.save_replay(_sample_session(), "Bahrain_R")
+        loaded = manager._load_replay(path)
+
+        telemetry, location = dashboard_frames(loaded)
+        assert telemetry is loaded["telemetry"]
+        assert location is loaded["location"]

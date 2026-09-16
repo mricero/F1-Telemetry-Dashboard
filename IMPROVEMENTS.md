@@ -360,17 +360,18 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Derive sector boundary distances per circuit from FastF1: for the fastest lap, find the distance at `LapStartTime + Sector1Time` and `+ Sector1Time + Sector2Time` via telemetry `SessionTime`; split each real sector into N equal-distance mini-sectors; compute mini-sector times for all valid laps (or at least each driver's top-3 laps); colour purple/green/yellow/grey per the convention. Live: use `TimingData.Sectors[i].Segments[j].Status` codes directly (these are the official mini-sector colours; 2048 = yellow, 2049 = green, 2051 = purple, 2064 = pit lane — confirm on a recording).
   - Acceptance: unit test on synthetic data where driver A's personal-best mini-sector is slower than B's → A green, B purple, A's other slices yellow.
 
-- [x] **DASH-04** · P1 · S — **Dominance map colours are drawn in the wrong places** — done in <pending>
+- [x] **DASH-04** · P1 · S — **Dominance map colours are drawn in the wrong places** — done in ee39248
   - Files: `ui/track_map.py:138-154` (`bounds = np.linspace(0, len(projected), …)` at 141), `processing/timing.py:112-144`.
   - Problem: `micro_sector_times` splits the lap into equal **distance** slices, but `build_track_svg` splits the projected polyline into equal **point-count** slices. Telemetry is sampled in time (~4 Hz car / interpolated), so points are much denser in slow corners — slice *k* on the map covers a different stretch of track than slice *k* in the data.
   - Fix: Keep the reference trace's `Distance` column through projection and split at `np.searchsorted(distance, np.linspace(d0, d1, n+1))`. Share one `segment_boundaries(distance, n)` helper between timing and map (and DASH-03's real sector boundaries).
   - Acceptance: synthetic trace with 90 % of points in the first 10 % of distance → first slice covers ~10 % of the path length, not 90 %.
 
-- [ ] **DASH-05** · P1 · S — **"Full session" scope breaks the dashboard**
+- [x] **DASH-05** · P1 · S — **"Full session" scope breaks the dashboard** — done in <pending>
   - Files: `ui/dashboard.py:301-340`, `processing/timing.py:229-234`, `ui/track_map.py:42-51`.
   - Problem: With `telemetry_scope="session"`, `micro_sector_times` slices the *whole race* (~300 km) into 15 pieces, the dominance map is meaningless, and `_reference_trace` picks the longest trace (all laps) → an SVG path with tens of thousands of `L` commands, drawn three times (casing, ribbon, dominance). Page weight and render time spike.
   - Fix: The dashboard always uses per-driver fastest-lap frames (compute them independently of the chart scope); decimate the outline to ≤1 500 points (Ramer–Douglas–Peucker or uniform distance resampling).
   - Acceptance: session scope on a race renders the dashboard with the same mini-sector/dominance output as fastest scope; SVG size < 150 KB.
+  - Note: verified on the real 2023 Bahrain race in both scopes. Adds `dashboard_telemetry`/`dashboard_location` to the unified dict (**`REPLAY_SCHEMA_VERSION` 5**), stored in replays only when they differ from the chart frames. Under session scope this costs a second per-driver merge; HIST-08's session cache makes that cheap.
 
 - [ ] **DASH-06** · P2 · S — **"Theoretical best" isn't**
   - Files: `processing/timing.py:198-210, 252-268, 310-315`, `ui/dashboard.py:329-339`.

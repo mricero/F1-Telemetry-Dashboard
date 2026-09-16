@@ -107,6 +107,20 @@ class DataSourceManager:
             if not trail.empty:
                 location[driver] = trail
 
+        # The dashboard's micro-sectors and dominance map only mean anything
+        # over a single lap, so they always read fastest-lap frames - which
+        # are the same objects unless the user asked for full-session charts.
+        if telemetry_scope == SCOPE_FASTEST:
+            dashboard_telemetry, dashboard_location = telemetry, location
+        else:
+            dashboard_telemetry, dashboard_location = {}, {}
+            for driver in drivers:
+                channels, trail = self.fastf1.get_driver_frames(session, driver, SCOPE_FASTEST)
+                if not channels.empty:
+                    dashboard_telemetry[driver] = channels
+                if not trail.empty:
+                    dashboard_location[driver] = trail
+
         return {
             "session_info": {
                 "year": year,
@@ -117,6 +131,8 @@ class DataSourceManager:
                 "telemetry_scope": telemetry_scope,
             },
             "telemetry": telemetry,
+            "dashboard_telemetry": dashboard_telemetry,
+            "dashboard_location": dashboard_location,
             "laps": self.fastf1.get_laps(session),
             "stints": self.fastf1.get_stints(session),
             "results": self.fastf1.get_results(session),
@@ -584,9 +600,11 @@ class DataSourceManager:
     # schemas with a clear message instead of failing deep inside pickle.
     # v2 added 'race_control' and 'compound_colors'; v3 added 'circuit_info'
     # (corner markers + track rotation); v4 added 'results' (official
-    # classification, needed to order a race by finishing position). Older
-    # replays simply lack those keys and load with empty defaults.
-    REPLAY_SCHEMA_VERSION = 4
+    # classification, needed to order a race by finishing position); v5 added
+    # 'dashboard_telemetry'/'dashboard_location' (fastest-lap frames, stored
+    # only when the charts use a different scope). Older replays simply lack
+    # those keys and load with empty defaults.
+    REPLAY_SCHEMA_VERSION = 5
 
     def save_replay(self, data: dict, name: str) -> str:
         """Save session data for offline replay.
@@ -596,8 +614,14 @@ class DataSourceManager:
         """
         filepath = self.replay_dir / f"{name}_{datetime.now():%Y%m%d_%H%M%S}.pkl"
         save_data = {}
+        frame_dicts = ("telemetry", "location", "dashboard_telemetry", "dashboard_location")
         for k, v in data.items():
-            if k in ("telemetry", "location"):
+            # Same objects under fastest scope: no point storing them twice.
+            if k == "dashboard_telemetry" and v is data.get("telemetry"):
+                continue
+            if k == "dashboard_location" and v is data.get("location"):
+                continue
+            if k in frame_dicts:
                 save_data[k] = (
                     {dk: dv.to_dict("records") for dk, dv in v.items()}
                     if isinstance(v, dict)
@@ -659,8 +683,9 @@ class DataSourceManager:
         for k in ["laps", "stints", "results", "weather", "drivers", "race_control"]:
             if k in data:
                 data[k] = pd.DataFrame(data[k])
-        data["telemetry"] = {k: pd.DataFrame(v) for k, v in data.get("telemetry", {}).items()}
-        data["location"] = {k: pd.DataFrame(v) for k, v in data.get("location", {}).items()}
+        for key in ("telemetry", "location", "dashboard_telemetry", "dashboard_location"):
+            if key in data:
+                data[key] = {k: pd.DataFrame(v) for k, v in data[key].items()}
         data["source"] = "replay"
         return data
 

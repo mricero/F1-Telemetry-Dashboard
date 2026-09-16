@@ -471,3 +471,38 @@ class TestDominancePlacement:
         covered = self._path_lengths(svg, "#3671c6")
         outline = self._path_lengths(svg, "#000000")
         assert covered >= outline * 0.95
+
+
+class TestOutlineDecimation:
+    """DASH-05: a full-session trace must not ship a 20 000-point path."""
+
+    @staticmethod
+    def _long_trace(points: int = 20000) -> pd.DataFrame:
+        angle = np.linspace(0, 2 * np.pi * 50, points)  # 50 laps
+        return pd.DataFrame(
+            {
+                "Distance": np.linspace(0.0, 300_000.0, points),
+                "X": np.cos(angle) * 1000,
+                "Y": np.sin(angle) * 600,
+            }
+        )
+
+    def test_svg_stays_small(self):
+        svg = build_track_svg({"VER": self._long_trace()})
+
+        assert svg is not None
+        assert len(svg.encode("utf-8")) < 150 * 1024
+
+    def test_outline_is_decimated_to_the_cap(self):
+        from ui.track_map import MAX_OUTLINE_POINTS
+
+        svg = build_track_svg({"VER": self._long_trace()})
+        outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#000000"', svg).group(1)
+
+        assert outline.count("L") <= MAX_OUTLINE_POINTS
+
+    def test_short_traces_are_untouched(self, location):
+        svg = build_track_svg(location)
+        outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#000000"', svg).group(1)
+
+        assert outline.count("L") == len(location["VER"]) - 1

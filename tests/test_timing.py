@@ -531,3 +531,59 @@ class TestSegmentBoundaries:
 
         assert len(bounds) == 5
         assert bounds[0] == 0 and bounds[-1] == 19
+
+
+class TestDashboardFrames:
+    """DASH-05: the dashboard reads fastest-lap frames whatever the chart scope."""
+
+    @staticmethod
+    def _frames(distance_end: float) -> dict:
+        trace = pd.DataFrame(
+            {
+                "Distance": np.linspace(0.0, distance_end, 200),
+                "Time": pd.to_timedelta(np.linspace(0, 90, 200), unit="s"),
+                "Speed": np.full(200, 200.0),
+            }
+        )
+        return {"VER": trace}
+
+    def test_falls_back_to_the_chart_frames(self):
+        from processing.timing import dashboard_frames
+
+        session = {"telemetry": self._frames(5000), "location": {"VER": pd.DataFrame()}}
+
+        telemetry, location = dashboard_frames(session)
+
+        assert telemetry is session["telemetry"]
+        assert location is session["location"]
+
+    def test_prefers_the_dedicated_fastest_lap_frames(self):
+        from processing.timing import dashboard_frames
+
+        session = {
+            "telemetry": self._frames(300_000),  # full-session distances
+            "location": {},
+            "dashboard_telemetry": self._frames(5000),
+            "dashboard_location": {"VER": pd.DataFrame({"X": [1.0]})},
+        }
+
+        telemetry, location = dashboard_frames(session)
+
+        assert telemetry is session["dashboard_telemetry"]
+        assert location is session["dashboard_location"]
+
+    def test_timing_rows_use_the_fastest_lap_micro_sectors(self):
+        session = {
+            "session_info": {"session_type": "FP1"},
+            "laps": _laps(_lap_rows("VER", [92.0], (30.0, 31.0, 31.0))),
+            "drivers": _drivers(("VER", "Red Bull Racing", "#3671c6")),
+            # A whole race's worth of distance would make the strips meaningless.
+            "telemetry": self._frames(300_000),
+            "dashboard_telemetry": self._frames(5000),
+            "is_live": False,
+        }
+
+        rows = build_timing_rows(session)
+        segments = rows[0]["sectors"][0]["segments"]
+
+        assert segments != ["NONE"] * SEGMENTS_PER_SECTOR

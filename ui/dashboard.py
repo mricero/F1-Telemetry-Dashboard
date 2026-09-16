@@ -15,6 +15,7 @@ import streamlit as st
 
 from processing.timing import (
     build_timing_rows,
+    dashboard_frames,
     format_lap,
     micro_sector_times,
     sector_leaders,
@@ -313,8 +314,7 @@ def _last_positions(location: Dict[str, pd.DataFrame], rows: Sequence[dict]) -> 
 
 def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     """Track map with dominance colouring, corners and a benchmark overlay."""
-    location = session_data.get("location") or {}
-    telemetry = session_data.get("telemetry") or {}
+    telemetry, location = dashboard_frames(session_data)
 
     micro = {}
     for code, frame in telemetry.items():
