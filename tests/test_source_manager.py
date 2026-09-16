@@ -168,7 +168,9 @@ class TestGpsDistances:
             {
                 "DriverNo": "44",
                 "Utc": f"2026-05-01T12:00:{i:02d}Z",
-                "X": i * 100.0,
+                # Starts away from the origin: an exact (0,0,0) is the
+                # garage placeholder the live parser now filters (LIVE-14).
+                "X": (i + 1) * 100.0,
                 "Y": 0.0,
                 "Z": 0,
             }

@@ -435,16 +435,30 @@ class LiveDataProcessor:
 
     @staticmethod
     def parse_position_data(raw_records: List[Dict]) -> pd.DataFrame:
-        """Position.z records -> DataFrame[driver_number, timestamp, X, Y, Z]."""
+        """Position.z records -> DataFrame[driver_number, timestamp, X, Y, Z].
+
+        Samples the car is not actually on track are dropped: entries carry a
+        ``Status`` (``OnTrack``/``OffTrack``) and a car in the garage reports
+        ``0,0,0``. Keeping them drew a straight line to the origin across the
+        map and added a circuit's width to the distance on every pit stop.
+        """
         rows = []
         for r in raw_records or []:
+            status = r.get("Status")
+            if status is not None and str(status) != "OnTrack":
+                continue
+            x = pd.to_numeric(r.get("X"), errors="coerce")
+            y = pd.to_numeric(r.get("Y"), errors="coerce")
+            z = pd.to_numeric(r.get("Z"), errors="coerce")
+            if (x == 0 and y == 0) and (pd.isna(z) or z == 0):
+                continue  # garage placeholder, not a position on the circuit
             rows.append(
                 {
                     "driver_number": r.get("DriverNo"),
                     "timestamp": r.get("Utc", r.get("timestamp")),
-                    "X": pd.to_numeric(r.get("X"), errors="coerce"),
-                    "Y": pd.to_numeric(r.get("Y"), errors="coerce"),
-                    "Z": pd.to_numeric(r.get("Z"), errors="coerce"),
+                    "X": x,
+                    "Y": y,
+                    "Z": z,
                 }
             )
         return pd.DataFrame(rows)

@@ -259,7 +259,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Segment live telemetry into laps using lap-completion events (`TimingData.NumberOfLaps` changes, with timestamps) and reset distance per lap; expose "current lap" and "last completed lap" per driver; compute comparisons only on completed laps.
   - Acceptance: fixture replay: each completed lap trace starts near 0 m and ends within ±3 % of the circuit length.
 
-- [ ] **LIVE-14** · P2 · S — **Off-track / garage GPS samples pollute trails**
+- [x] **LIVE-14** · P2 · S — **Off-track / garage GPS samples pollute trails** — done in <pending>
   - Files: `data/live_adapter.py:297-310`, `data/source_manager.py:317-333`.
   - Problem: Position entries carry `Status` (`OnTrack` / `OffTrack`) and cars in the garage report `0,0,0`. They're kept, producing spikes in distance and straight lines to the origin on the map outline.
   - Fix: Drop `Status != "OnTrack"` and exact-zero triples before building trails/distances.
