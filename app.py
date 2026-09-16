@@ -204,7 +204,10 @@ def main():
     render_dashboard(session_data)
 
     # Metrics label + persistent record keeping (survives app restarts)
-    metrics_label = MetricsStore.make_label({**info, **selection})
+    # The selection only overrides the session's own identity where it says
+    # something: a replay selects a file, leaving year/GP/session unset.
+    chosen = {k: v for k, v in selection.items() if v is not None}
+    metrics_label = MetricsStore.make_label({**info, **chosen})
     if not laps_processed.empty:
         metrics_store.update_laps(metrics_label, laps_processed)
     if telemetry_processed:

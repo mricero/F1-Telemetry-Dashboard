@@ -551,7 +551,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Files: many `except Exception: return pd.DataFrame()` / `return {}` (e.g. `data/fastf1_adapter.py:238-241, 256-259, 278-283`, `data/source_manager.py:86-91, 501-530`).
   - Fix: `logging.getLogger(__name__)` everywhere; log at WARNING with the exception when degrading; feed UX-11 status. Configure log level via env.
 
-- [x] **REPO-12** · P2 · S — **HTML injection surface in `st.html`** — done in <pending>
+- [x] **REPO-12** · P2 · S — **HTML injection surface in `st.html`** — done in 3868dda
   - Files: `ui/dashboard.py:179-181, 212, 228, 257-258`, `ui/track_map.py:147-152, 203-206`.
   - Problem: Team colours from the feed / FastF1 are interpolated unescaped into `style="…"` and SVG `stroke`/`fill` attributes. Low risk with FastF1, higher with third-party replays or a future hosted mode.
   - Fix: `safe_hex(colour)` that only accepts `^#?[0-9A-Fa-f]{6}$`; everything else → fallback grey. Unit test with `"red;background:url(x)"`.
@@ -569,7 +569,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Commit a small **recorded** live timing fixture (a few minutes of a real session from the public static archive `https://livetiming.formula1.com/static/<year>/<meeting>/<session>/<Topic>.jsonStream`, which is what FastF1 uses for historical loads) into `tests/fixtures/live/`, and build tests that replay it through the real ingest handler. Add a `scripts/capture_fixture.py` to refresh it. Keep fixtures tiny (<2 MB) — gzip them.
   - Acceptance: LIVE-03…06 each have a failing test on the recorded fixture before their fix.
 
-- [ ] **TEST-02** · P1 · S — **No UI-to-loader tests per source**
+- [x] **TEST-02** · P1 · S — **No UI-to-loader tests per source** — done in <pending>
   - Problem: The Replay path is broken end-to-end (HIST-01) yet green, because nothing drives the selector → loader → dashboard path with a mocked manager.
   - Fix: `AppTest` per source (`fastf1` with a stub session dict, `replay` with a temp dir, `live` with primed state, `livef1` stub) that asserts no exception and key panels render.
 
