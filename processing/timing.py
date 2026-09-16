@@ -10,7 +10,7 @@ position, with Gap/Interval as race time behind the leader and the car ahead
 lap, where Gap and Interval are lap-time deltas.
 """
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -23,9 +23,10 @@ SEGMENTS_PER_SECTOR = 5
 SECTORS = 3
 TOTAL_SEGMENTS = SEGMENTS_PER_SECTOR * SECTORS
 
-# A driver within this fraction of the best micro-sector time shows green
-# rather than yellow. Purple is reserved for the outright fastest.
-GREEN_TOLERANCE = 0.02
+# Official timing-screen convention (layout.md section 3.8): purple for the
+# session best through a slice, green for the driver's own best, yellow when
+# they were slower than their own best, grey when there is no usable time.
+SEGMENT_TOLERANCE = 1e-6
 
 # Sessions classified by finishing position rather than by best lap. Both the
 # short codes the selector uses and FastF1's session names are accepted.
@@ -223,6 +224,31 @@ def _status(laps: pd.DataFrame, is_live: bool) -> str:
     return "ON TRACK"
 
 
+def fastest_lap_row(laps_df: pd.DataFrame, driver: str) -> Optional[pd.Series]:
+    """The driver's quickest lap, or None when they never set a time."""
+    if laps_df is None or laps_df.empty or "Driver" not in laps_df.columns:
+        return None
+    own = laps_df[laps_df["Driver"].astype(str) == str(driver)]
+    if own.empty or "LapTime" not in own.columns:
+        return None
+    seconds = own["LapTime"].map(to_seconds)
+    if seconds.dropna().empty:
+        return None
+    return own.loc[seconds.idxmin()]
+
+
+def sector_bounds_for_driver(
+    laps_df: pd.DataFrame, driver: str, telemetry: pd.DataFrame
+) -> Optional[List[float]]:
+    """Real sector-boundary distances for the lap the strips display."""
+    lap = fastest_lap_row(laps_df, driver)
+    if lap is None:
+        return None
+    return sector_boundary_distances(
+        telemetry, [lap.get(f"Sector{i}Time") for i in range(1, SECTORS + 1)]
+    )
+
+
 def dashboard_frames(session_data: dict) -> Tuple[dict, dict]:
     """The telemetry and location frames the dashboard should read.
 
@@ -259,14 +285,8 @@ def segment_boundaries(distance: np.ndarray, segments: int) -> np.ndarray:
     return np.maximum.accumulate(bounds)
 
 
-def micro_sector_times(
-    telemetry: pd.DataFrame, segments: int = TOTAL_SEGMENTS
-) -> Optional[np.ndarray]:
-    """Time (s) spent in each equal-length slice of one lap.
-
-    Distance is normalised across the trace so drivers whose fastest laps
-    differ slightly in measured length still line up slice for slice.
-    """
+def _distance_and_elapsed(telemetry: pd.DataFrame) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Sorted (distance, elapsed-seconds) arrays for one lap trace."""
     if telemetry is None or telemetry.empty:
         return None
     if not {"Distance", "Time"}.issubset(telemetry.columns):
@@ -281,42 +301,145 @@ def micro_sector_times(
     elapsed = pd.to_numeric(elapsed, errors="coerce")
 
     ok = distance.notna() & elapsed.notna()
-    if int(ok.sum()) < segments * 2:
+    if int(ok.sum()) < 2:
         return None
-    distance, elapsed = distance[ok].to_numpy(float), elapsed[ok].to_numpy(float)
-    order = np.argsort(distance, kind="stable")
-    distance, elapsed = distance[order], elapsed[order]
+    values, seconds = distance[ok].to_numpy(float), elapsed[ok].to_numpy(float)
+    order = np.argsort(values, kind="stable")
+    values, seconds = values[order], seconds[order]
+    if values[-1] - values[0] <= 0:
+        return None
+    return values, seconds
 
-    if distance[-1] - distance[0] <= 0:
+
+def sector_boundary_distances(
+    telemetry: pd.DataFrame, sector_times: Sequence[Optional[float]]
+) -> Optional[List[float]]:
+    """Distances (m) where each sector ends on this lap.
+
+    Sector boundaries are nowhere near 1/3 and 2/3 of a lap, so the strip
+    under "Sector 1" is only sector 1 if the split comes from the timing: the
+    distance reached at ``Sector1Time`` and at ``Sector1Time + Sector2Time``.
+    Falls back to equal thirds when the sector times are unusable.
+    """
+    frames = _distance_and_elapsed(telemetry)
+    if frames is None:
         return None
-    marks = np.interp(np.linspace(distance[0], distance[-1], segments + 1), distance, elapsed)
-    times = np.diff(marks)
+    distance, elapsed = frames
+    start, end = float(distance[0]), float(distance[-1])
+    thirds = [start, start + (end - start) / 3, start + 2 * (end - start) / 3, end]
+
+    raw = [to_seconds(value) for value in sector_times[:SECTORS]]
+    if len(raw) < SECTORS or any(value is None or pd.isna(value) for value in raw):
+        return thirds
+    seconds = [float(value) for value in raw if value is not None]
+
+    lap_time = float(elapsed[-1] - elapsed[0])
+    total = float(sum(seconds))
+    if total <= 0 or lap_time <= 0:
+        return thirds
+    # Sector times are measured from the line; telemetry Time starts at the
+    # lap's first sample, so scale to the trace's own elapsed span.
+    scale = lap_time / total
+
+    bounds = [start]
+    cumulative = 0.0
+    for value in seconds[:-1]:
+        cumulative += value * scale
+        bounds.append(float(np.interp(elapsed[0] + cumulative, elapsed, distance)))
+    bounds.append(end)
+    return bounds if all(b <= n for b, n in zip(bounds, bounds[1:])) else thirds
+
+
+def micro_sector_marks(
+    sector_bounds: Optional[Sequence[float]], segments: int = TOTAL_SEGMENTS
+) -> Optional[List[float]]:
+    """Distance marks splitting each real sector into equal mini-sectors.
+
+    Returns ``segments + 1`` distances, or None when the sector boundaries
+    are unusable - shared by the timing strips and the map so the two views
+    colour the same stretches of track.
+    """
+    if sector_bounds is None or len(sector_bounds) != SECTORS + 1:
+        return None
+    per_sector = segments // SECTORS
+    marks = [float(sector_bounds[0])]
+    for index in range(SECTORS):
+        edges = np.linspace(sector_bounds[index], sector_bounds[index + 1], per_sector + 1)
+        marks.extend(float(edge) for edge in edges[1:])
+    return marks
+
+
+def micro_sector_times(
+    telemetry: pd.DataFrame,
+    segments: int = TOTAL_SEGMENTS,
+    sector_bounds: Optional[Sequence[float]] = None,
+) -> Optional[np.ndarray]:
+    """Time (s) spent in each mini-sector of one lap.
+
+    With ``sector_bounds`` (from :func:`sector_boundary_distances`) each real
+    sector is split into equal-distance mini-sectors, so slice *k* of the
+    strip sits under the sector it belongs to. Without them the whole lap is
+    split evenly, which is only an approximation.
+    """
+    frames = _distance_and_elapsed(telemetry)
+    if frames is None:
+        return None
+    distance, elapsed = frames
+    if len(distance) < segments * 2:
+        return None
+
+    marks = micro_sector_marks(sector_bounds, segments)
+    if marks is None:
+        marks = list(np.linspace(distance[0], distance[-1], segments + 1))
+
+    times = np.diff(np.interp(np.asarray(marks, dtype=float), distance, elapsed))
     return times if np.all(np.isfinite(times)) and np.all(times >= 0) else None
 
 
 def segment_states(
-    per_driver_times: Dict[str, np.ndarray], tolerance: float = GREEN_TOLERANCE
+    per_driver_laps: Dict[str, Union[np.ndarray, Sequence[np.ndarray]]],
 ) -> Dict[str, List[str]]:
-    """Colour each driver's micro-sectors against the session best.
+    """Colour each driver's displayed mini-sectors, F1 convention.
 
-    PURPLE for the outright fastest through a slice, GREEN within
-    ``tolerance`` of it, YELLOW otherwise - the timing-screen encoding from
-    ``layout.md`` section 3.8.
+    PURPLE = the session best through that slice, GREEN = the driver's own
+    best, YELLOW = slower than their own best, NONE = no usable time
+    (``layout.md`` section 3.8). "Personal best" needs more than one lap, so
+    each value may be a sequence of laps: the **first** is the lap on screen
+    and the rest only contribute to that driver's own best.
     """
-    if not per_driver_times:
+    if not per_driver_laps:
         return {}
-    stacked = np.vstack(list(per_driver_times.values()))
-    best = np.nanmin(stacked, axis=0)
+
+    laps_by_driver = {
+        driver: ([laps] if isinstance(laps, np.ndarray) else [np.asarray(x) for x in laps])
+        for driver, laps in per_driver_laps.items()
+    }
+    laps_by_driver = {driver: laps for driver, laps in laps_by_driver.items() if laps}
+    if not laps_by_driver:
+        return {}
+
+    def _column_min(stack: List[np.ndarray]) -> np.ndarray:
+        """Per-slice minimum. Non-finite entries are ignored, and a slice with
+        no usable time comes back NaN (np.nanmin would warn on an all-NaN
+        column)."""
+        values = np.vstack(stack).astype(float)
+        values = np.where(np.isfinite(values), values, np.inf)
+        best = values.min(axis=0)
+        return np.where(np.isfinite(best), best, np.nan)
+
+    personal_best = {driver: _column_min(laps) for driver, laps in laps_by_driver.items()}
+    session_best = _column_min(list(personal_best.values()))
 
     states: Dict[str, List[str]] = {}
-    for driver, times in per_driver_times.items():
+    for driver, laps in laps_by_driver.items():
+        shown, own = laps[0], personal_best[driver]
         row = []
-        for value, fastest in zip(times, best):
-            if not np.isfinite(value) or not np.isfinite(fastest) or fastest <= 0:
+        for value, mine, best in zip(shown, own, session_best):
+            if not np.isfinite(value) or not np.isfinite(best) or best <= 0:
                 row.append("NONE")
-            elif np.isclose(value, fastest):
+            elif value <= best + SEGMENT_TOLERANCE:
                 row.append("PURPLE")
-            elif value <= fastest * (1.0 + tolerance):
+            elif value <= mine + SEGMENT_TOLERANCE:
                 row.append("GREEN")
             else:
                 row.append("YELLOW")
@@ -553,12 +676,15 @@ def build_timing_rows(session_data: dict) -> List[dict]:
     meta = _driver_meta(session_data.get("drivers"))
     telemetry, _ = dashboard_frames(session_data)
 
-    # Micro-sector heat strips come from each driver's own telemetry trace.
-    per_driver_segments = {}
+    # Micro-sector heat strips come from each driver's own telemetry trace,
+    # split at that lap's real sector boundaries rather than at 1/3 and 2/3.
+    per_driver_segments: Dict[str, Union[np.ndarray, Sequence[np.ndarray]]] = {}
     for code, frame in telemetry.items():
-        times = micro_sector_times(frame)
+        times = micro_sector_times(
+            frame, sector_bounds=sector_bounds_for_driver(laps_df, str(code), frame)
+        )
         if times is not None:
-            per_driver_segments[code] = times
+            per_driver_segments[str(code)] = times
     states = segment_states(per_driver_segments)
 
     rows = []

@@ -17,7 +17,9 @@ from processing.timing import (
     build_timing_rows,
     dashboard_frames,
     format_lap,
+    micro_sector_marks,
     micro_sector_times,
+    sector_bounds_for_driver,
     sector_leaders,
     theoretical_best,
 )
@@ -29,7 +31,12 @@ from ui.theme import (
     segment_color,
     team_color,
 )
-from ui.track_map import build_track_svg, dominance_legend, dominance_segments
+from ui.track_map import (
+    build_track_svg,
+    dominance_legend,
+    dominance_segments,
+    reference_driver,
+)
 
 # Column headers for the leaderboard matrix (spec section 3).
 TOWER_COLUMNS = [
@@ -324,14 +331,28 @@ def _last_positions(location: Dict[str, pd.DataFrame], rows: Sequence[dict]) -> 
 def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     """Track map with dominance colouring, corners and a benchmark overlay."""
     telemetry, location = dashboard_frames(session_data)
+    laps = session_data.get("laps")
 
     micro = {}
     for code, frame in telemetry.items():
-        times = micro_sector_times(frame)
+        times = micro_sector_times(
+            frame, sector_bounds=sector_bounds_for_driver(laps, str(code), frame)
+        )
         if times is not None:
             micro[code] = times
     dominance = dominance_segments(micro)
     meta = _driver_meta(rows)
+
+    # The outline comes from one driver's trace, so the slice boundaries are
+    # that driver's real sectors - keeping the map aligned with the strips.
+    outline_driver = reference_driver(location)
+    segment_distances = (
+        micro_sector_marks(
+            sector_bounds_for_driver(laps, str(outline_driver), telemetry.get(outline_driver))
+        )
+        if outline_driver is not None
+        else None
+    )
 
     markers = _last_positions(location, rows) if session_data.get("is_live") else []
     svg = build_track_svg(
@@ -340,6 +361,7 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
         driver_meta=meta,
         dominance=dominance,
         markers=markers,
+        segment_distances=segment_distances,
     )
     if svg is None:
         return (

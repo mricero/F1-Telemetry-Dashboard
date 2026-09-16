@@ -45,16 +45,24 @@ def rotate_points(xy: np.ndarray, angle_degrees: float) -> np.ndarray:
     return np.matmul(np.asarray(xy, dtype=float), matrix)
 
 
-def _reference_trace(location: Dict[str, pd.DataFrame]) -> Optional[pd.DataFrame]:
-    """Pick the GPS trace that best describes the circuit outline."""
-    best, best_len = None, 0
-    for frame in (location or {}).values():
+def reference_driver(location: Dict[str, pd.DataFrame]) -> Optional[str]:
+    """Whose GPS trace the outline is drawn from (the most complete one)."""
+    best_code, best_len = None, 0
+    for code, frame in (location or {}).items():
         if frame is None or frame.empty or not {"X", "Y"}.issubset(frame.columns):
             continue
-        usable = frame.dropna(subset=["X", "Y"])
-        if len(usable) > best_len:
-            best, best_len = usable, len(usable)
-    return best
+        usable = len(frame.dropna(subset=["X", "Y"]))
+        if usable > best_len:
+            best_code, best_len = code, usable
+    return best_code
+
+
+def _reference_trace(location: Dict[str, pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """Pick the GPS trace that best describes the circuit outline."""
+    code = reference_driver(location)
+    if code is None:
+        return None
+    return location[code].dropna(subset=["X", "Y"])
 
 
 def _trace_distance(reference: pd.DataFrame, track: np.ndarray) -> np.ndarray:
@@ -134,12 +142,16 @@ def build_track_svg(
     driver_meta: Optional[Dict[str, dict]] = None,
     dominance: Optional[Sequence[Optional[str]]] = None,
     markers: Optional[Sequence[dict]] = None,
+    segment_distances: Optional[Sequence[float]] = None,
 ) -> Optional[str]:
     """Render the circuit to an SVG string.
 
     ``dominance`` colours each mini-sector by the fastest driver's team.
-    ``markers`` places driver nodes: ``[{'code','x','y','team_colour'}]``.
-    Returns None when there is no usable GPS data.
+    ``segment_distances`` are the distances those mini-sectors are split at
+    (from :func:`processing.timing.micro_sector_marks`), so the map and the
+    timing strips cover the same stretches; without them the lap is split
+    evenly. ``markers`` places driver nodes:
+    ``[{'code','x','y','team_colour'}]``. Returns None without usable GPS.
     """
     reference = _reference_trace(location)
     if reference is None or len(reference) < 10:
@@ -170,9 +182,13 @@ def build_track_svg(
     # tint each by the team colour of whoever was quickest through it.
     if dominance:
         meta = driver_meta or {}
-        # Equal-distance slices, matching how micro_sector_times splits the
+        # Distance-based slices, matching how micro_sector_times splits the
         # lap: an index split would place them where the samples are dense.
-        bounds = segment_boundaries(distance, len(dominance))
+        if segment_distances is not None and len(segment_distances) == len(dominance) + 1:
+            bounds = np.searchsorted(distance, np.asarray(segment_distances, dtype=float))
+            bounds = np.clip(bounds, 0, len(distance) - 1)
+        else:
+            bounds = segment_boundaries(distance, len(dominance))
         for index, code in enumerate(dominance):
             if not code:
                 continue

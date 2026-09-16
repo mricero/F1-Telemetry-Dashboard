@@ -522,3 +522,54 @@ class TestIdealLapDisplay:
         markup = tower_html([TestTowerPartitions._row(1)])
 
         assert "No personal ideal lap yet" in markup
+
+
+class TestMapFollowsRealSectors:
+    """DASH-03: the map's slices must line up with the timing strips."""
+
+    @staticmethod
+    def _straight_lap(points: int = 600) -> pd.DataFrame:
+        distance = np.linspace(0.0, 3000.0, points)
+        return pd.DataFrame(
+            {
+                "Distance": distance,
+                "X": distance,  # straight line: path length == distance
+                "Y": np.zeros(points),
+            }
+        )
+
+    def test_uneven_sectors_move_the_slice_boundaries(self):
+        from processing.timing import micro_sector_marks
+
+        location = {"VER": self._straight_lap()}
+        meta = {"VER": {"team_name": "Red Bull", "team_colour": "#3671c6"}}
+        # Sector 1 is only 600 m of a 3000 m lap.
+        marks = micro_sector_marks([0.0, 600.0, 2400.0, 3000.0])
+
+        svg = build_track_svg(
+            location,
+            driver_meta=meta,
+            dominance=["VER"] + [None] * 14,
+            segment_distances=marks,
+            circuit_info={"rotation": 0},
+        )
+
+        first_slice = TestDominancePlacement._path_lengths(svg, "#3671c6")
+        outline = TestDominancePlacement._path_lengths(svg, "#000000")
+        # One fifth of a 600 m sector = 120 m of a 3000 m lap = 4 %.
+        assert 0.02 < first_slice / outline < 0.07
+
+    def test_without_marks_the_split_stays_even(self):
+        location = {"VER": self._straight_lap()}
+        meta = {"VER": {"team_name": "Red Bull", "team_colour": "#3671c6"}}
+
+        svg = build_track_svg(
+            location,
+            driver_meta=meta,
+            dominance=["VER"] + [None] * 14,
+            circuit_info={"rotation": 0},
+        )
+
+        first_slice = TestDominancePlacement._path_lengths(svg, "#3671c6")
+        outline = TestDominancePlacement._path_lengths(svg, "#000000")
+        assert 0.05 < first_slice / outline < 0.08  # 1/15 of the lap

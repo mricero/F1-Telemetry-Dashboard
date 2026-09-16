@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from processing.timing import (
+    SECTORS,
     SEGMENTS_PER_SECTOR,
     TOTAL_SEGMENTS,
     build_timing_rows,
@@ -231,13 +232,8 @@ class TestMicroSectors:
         states = segment_states({"FAST": np.full(15, 1.0), "SLOW": np.full(15, 2.0)})
 
         assert states["FAST"] == ["PURPLE"] * 15
-        assert states["SLOW"] == ["YELLOW"] * 15
-
-    def test_close_driver_is_green_not_yellow(self):
-        # 1% off the best, inside the 2% green tolerance.
-        states = segment_states({"BEST": np.full(15, 1.0), "CLOSE": np.full(15, 1.01)})
-
-        assert states["CLOSE"] == ["GREEN"] * 15
+        # Their only lap *is* their personal best, so it is green, not yellow.
+        assert states["SLOW"] == ["GREEN"] * 15
 
     def test_states_split_evenly_across_sectors(self):
         session_states = segment_states({"VER": np.arange(1.0, 16.0)})
@@ -678,3 +674,142 @@ class TestIdealLap:
 
         assert all(r["personal_ideal"] is None for r in rows)
         assert theoretical_best(rows) is None
+
+
+class TestOfficialSegmentColours:
+    """DASH-03: purple = session best, green = personal best, yellow = slower."""
+
+    def test_personal_best_is_green_and_session_best_purple(self):
+        from processing.timing import segment_states
+
+        # A's best first slice (1.1) is slower than B's (1.0); in the second
+        # slice A holds the session best (1.15) on a lap that is not shown.
+        states = segment_states(
+            {
+                "A": [np.array([1.1, 1.3]), np.array([1.2, 1.15])],
+                "B": [np.array([1.0, 1.2])],
+            }
+        )
+
+        # A's displayed lap matches their personal best in slice 0 only.
+        assert states["A"] == ["GREEN", "YELLOW"]
+        assert states["B"] == ["PURPLE", "GREEN"]
+
+    def test_slower_than_personal_best_is_yellow(self):
+        from processing.timing import segment_states
+
+        states = segment_states({"A": [np.array([1.5]), np.array([1.0])]})
+
+        assert states["A"] == ["YELLOW"]
+
+    def test_a_driver_can_hold_the_session_best_on_a_slower_lap(self):
+        from processing.timing import segment_states
+
+        # A's displayed lap is not their best here, so no purple for A.
+        states = segment_states({"A": [np.array([1.4]), np.array([0.9])], "B": [np.array([1.0])]})
+
+        assert states["A"] == ["YELLOW"]
+        assert states["B"] == ["GREEN"]  # B's own best, but 0.9 is the session best
+
+    def test_unusable_values_are_neutral(self):
+        from processing.timing import segment_states
+
+        states = segment_states({"A": [np.array([np.nan, 1.0])], "B": [np.array([1.0, 1.0])]})
+
+        assert states["A"][0] == "NONE"
+
+
+class TestRealSectorBoundaries:
+    """DASH-03: the strip under 'Sector 1' must cover the real sector 1."""
+
+    @staticmethod
+    def _constant_speed_lap(length=3000.0, seconds=90.0, points=600) -> pd.DataFrame:
+        distance = np.linspace(0.0, length, points)
+        return pd.DataFrame(
+            {
+                "Distance": distance,
+                "Time": pd.to_timedelta(distance / length * seconds, unit="s"),
+            }
+        )
+
+    def test_equal_sectors_split_the_lap_in_thirds(self):
+        from processing.timing import sector_boundary_distances
+
+        bounds = sector_boundary_distances(self._constant_speed_lap(), [30.0, 30.0, 30.0])
+
+        assert bounds == pytest.approx([0.0, 1000.0, 2000.0, 3000.0], abs=10.0)
+
+    def test_uneven_sectors_do_not_land_on_thirds(self):
+        from processing.timing import sector_boundary_distances
+
+        # 20 s / 40 s / 30 s at constant speed -> 2/9 and 2/3 of the lap.
+        bounds = sector_boundary_distances(self._constant_speed_lap(), [20.0, 40.0, 30.0])
+
+        assert bounds == pytest.approx([0.0, 666.7, 2000.0, 3000.0], abs=10.0)
+
+    def test_missing_sector_times_fall_back_to_thirds(self):
+        from processing.timing import sector_boundary_distances
+
+        bounds = sector_boundary_distances(self._constant_speed_lap(), [30.0, None, 30.0])
+
+        assert bounds == pytest.approx([0.0, 1000.0, 2000.0, 3000.0], abs=10.0)
+
+    def test_micro_sectors_follow_the_real_sector_split(self):
+        from processing.timing import micro_sector_times
+
+        lap = self._constant_speed_lap()
+        times = micro_sector_times(lap, sector_bounds=[0.0, 600.0, 2400.0, 3000.0])
+
+        assert times is not None and len(times) == TOTAL_SEGMENTS
+        # Sector 1 is 600 m of a 3000 m lap = 20 % of a 90 s lap.
+        assert times[:SEGMENTS_PER_SECTOR].sum() == pytest.approx(18.0, abs=0.2)
+        assert times[SEGMENTS_PER_SECTOR : 2 * SEGMENTS_PER_SECTOR].sum() == pytest.approx(
+            54.0, abs=0.2
+        )
+
+    def test_without_bounds_the_lap_is_split_evenly(self):
+        from processing.timing import micro_sector_times
+
+        times = micro_sector_times(self._constant_speed_lap())
+
+        assert np.allclose(times, times[0])
+
+
+class TestSectorStripsCoverTheirSector:
+    """DASH-03 end-to-end: the strip under 'Sector 1' is really sector 1."""
+
+    @staticmethod
+    def _session(sector_times) -> dict:
+        total = sum(sector_times)
+        points = 600
+        distance = np.linspace(0.0, 3000.0, points)
+        trace = pd.DataFrame(
+            {
+                "Distance": distance,
+                "Time": pd.to_timedelta(distance / 3000.0 * total, unit="s"),
+                "Speed": np.full(points, 120.0),
+            }
+        )
+        return {
+            "session_info": {"session_type": "FP1"},
+            "laps": _laps(_lap_rows("VER", [total], tuple(sector_times))),
+            "drivers": _drivers(("VER", "Red Bull Racing", "#3671c6")),
+            "telemetry": {"VER": trace},
+            "is_live": False,
+        }
+
+    def test_short_first_sector_gets_a_short_strip(self):
+        from processing.timing import sector_bounds_for_driver
+
+        session = self._session([18.0, 54.0, 18.0])
+        bounds = sector_bounds_for_driver(session["laps"], "VER", session["telemetry"]["VER"])
+
+        # 18 s of a 90 s constant-speed lap = 600 m of 3000 m, not 1000 m.
+        assert bounds == pytest.approx([0.0, 600.0, 2400.0, 3000.0], abs=15.0)
+
+    def test_rows_still_render_with_real_bounds(self):
+        rows = build_timing_rows(self._session([18.0, 54.0, 18.0]))
+
+        assert len(rows[0]["sectors"]) == SECTORS
+        assert all(len(s["segments"]) == SEGMENTS_PER_SECTOR for s in rows[0]["sectors"])
+        assert rows[0]["sectors"][0]["segments"] != ["NONE"] * SEGMENTS_PER_SECTOR

@@ -351,7 +351,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Acceptance: 2026 quali fixture → 10/6/6 split with correct headings; race → no KO styling.
   - Note: the partition follows the *official position*, not "last segment with a time" - 2023 Bahrain HUL reached Q3, set no lap there, and keeps a Q2 time that beats a Q3 time. Verified on the real session (10/5/5). The meaningless `cutoff` parameter was dropped from `build_timing_rows`/`tower_html`/`render_dashboard`. Live `SessionPart`/`KnockedOut` handling stays with LIVE-05/LIVE-10.
 
-- [ ] **DASH-03** · P1 · M — **Mini-sector colours don't follow the F1 convention; sector strips assume equal thirds**
+- [x] **DASH-03** · P1 · M — **Mini-sector colours don't follow the F1 convention; sector strips assume equal thirds** — done in <pending>
   - Files: `processing/timing.py:112-174, 252-268`, `ui/theme.py:97-104`.
   - Problem:
     1. Official convention (and `layout.md` §3.8, formula-timer, f1telemetry.com): **purple = session best, green = personal best, yellow = slower than personal best** (f1telemetry.com adds blue = in pit). The code makes green "within 2 % of the session best" (`GREEN_TOLERANCE`), which has nothing to do with personal bests.
@@ -359,6 +359,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
     3. The 15 slices are equal-distance fifths of equal thirds of the lap, but the real sector boundaries are not at 1/3 and 2/3 of the lap; the strip under "Sector 1" is not sector 1.
   - Fix: Derive sector boundary distances per circuit from FastF1: for the fastest lap, find the distance at `LapStartTime + Sector1Time` and `+ Sector1Time + Sector2Time` via telemetry `SessionTime`; split each real sector into N equal-distance mini-sectors; compute mini-sector times for all valid laps (or at least each driver's top-3 laps); colour purple/green/yellow/grey per the convention. Live: use `TimingData.Sectors[i].Segments[j].Status` codes directly (these are the official mini-sector colours; 2048 = yellow, 2049 = green, 2051 = purple, 2064 = pit lane — confirm on a recording).
   - Acceptance: unit test on synthetic data where driver A's personal-best mini-sector is slower than B's → A green, B purple, A's other slices yellow.
+  - Note: (1) and (3) are done — purple/green/yellow now mean session best / personal best / slower than personal best, and both the strips and the map split at the lap's **real** sector boundaries (`sector_boundary_distances` → `micro_sector_marks`, shared by `processing.timing` and `ui.track_map`). For (2), `segment_states` now accepts *several laps per driver* and the acceptance test exercises that, but the loader still supplies one lap each (the fastest), so today every displayed slice is either purple or green. Feeding more laps needs per-lap telemetry, which waits on **HIST-08**'s cached session. Live `Segments[j].Status` codes wait on LIVE-05.
 
 - [x] **DASH-04** · P1 · S — **Dominance map colours are drawn in the wrong places** — done in ee39248
   - Files: `ui/track_map.py:138-154` (`bounds = np.linspace(0, len(projected), …)` at 141), `processing/timing.py:112-144`.
@@ -373,7 +374,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Acceptance: session scope on a race renders the dashboard with the same mini-sector/dominance output as fastest scope; SVG size < 150 KB.
   - Note: verified on the real 2023 Bahrain race in both scopes. Adds `dashboard_telemetry`/`dashboard_location` to the unified dict (**`REPLAY_SCHEMA_VERSION` 5**), stored in replays only when they differ from the chart frames. Under session scope this costs a second per-driver merge; HIST-08's session cache makes that cheap.
 
-- [x] **DASH-06** · P2 · S — **"Theoretical best" isn't** — done in <pending>
+- [x] **DASH-06** · P2 · S — **"Theoretical best" isn't** — done in 1f42cfc
   - Files: `processing/timing.py:198-210, 252-268, 310-315`, `ui/dashboard.py:329-339`.
   - Problem: Sector times per row come from the driver's **fastest lap**; `theoretical_best` sums the minimum of those. The true ideal lap is the sum of each sector's best across **all** laps (and per driver, the driver's own best sectors). "Diff" is therefore misleading.
   - Fix: Compute `best_s1/s2/s3` per driver over all valid laps (exclude deleted laps: FastF1 `Deleted` column / `IsAccurate`); session ideal = min over drivers; show both "personal ideal" and "session ideal".
