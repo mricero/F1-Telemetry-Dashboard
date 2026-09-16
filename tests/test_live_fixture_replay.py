@@ -170,14 +170,69 @@ class TestRealTyreStintShape:
         assert partial, "the feed does send compound-less stint updates"
         assert any("TotalLaps" in fields for fields in partial)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="LIVE-05: parse_tyre_stints drops compound-less updates instead "
-        "of merging them into per-driver state",
-    )
-    def test_compound_less_updates_are_not_dropped(self):
-        records = []
-        for _, payload in live_fixtures.messages("TyreStintSeries"):
-            records.extend(LiveDataProcessor.parse_tyre_stints(payload))
+    def test_the_record_parser_cannot_read_these_messages(self):
+        """Why LIVE-05 exists: the per-message parser never saw this shape.
 
-        assert records, "every recorded stint message was discarded"
+        ``parse_tyre_stints`` expects a flat list of records that already
+        carry a ``Compound``; handed the feed's actual ``{"Stints": {...}}``
+        payload it finds nothing to work with. Kept as a record of what the
+        state layer replaced - the parser itself goes with LIVE-16.
+        """
+        payload = live_fixtures.first_payload("TyreStintSeries")
+
+        with pytest.raises(AttributeError):
+            LiveDataProcessor.parse_tyre_stints(payload)
+
+    def test_the_state_layer_keeps_them(self):
+        from data.live_state import LiveState
+
+        state = LiveState()
+        for _, payload in live_fixtures.messages("TyreStintSeries"):
+            state.update("TyreStintSeries", payload)
+
+        frame = LiveDataProcessor.stints_from_state(state.get("TyreStintSeries"), {})
+
+        assert not frame.empty
+        assert set(frame["Compound"]) <= {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"}
+
+
+class TestEndToEndReplay:
+    """Recorded messages -> adapter -> the unified session dict."""
+
+    @staticmethod
+    def _primed_manager(monkeypatch):
+        monkeypatch.setattr(
+            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+        )
+        from data.source_manager import DataSourceManager
+
+        manager = DataSourceManager()
+        for topic in ("SessionInfo", "DriverList", "TimingData", "TyreStintSeries"):
+            for timestamp, payload in live_fixtures.messages(topic):
+                manager.live.handle_message(topic, payload, timestamp)
+        return manager
+
+    def test_the_snapshot_names_the_grand_prix(self, monkeypatch):
+        snapshot = self._primed_manager(monkeypatch).poll_live_data()
+
+        assert snapshot["session_info"]["gp"] == "Bahrain Grand Prix"
+
+    def test_drivers_come_through_with_acronyms(self, monkeypatch):
+        snapshot = self._primed_manager(monkeypatch).poll_live_data()
+        drivers = snapshot["drivers"]
+
+        assert len(drivers) >= 20
+        assert "VER" in set(drivers["name_acronym"])
+
+    def test_stints_are_no_longer_empty(self, monkeypatch):
+        snapshot = self._primed_manager(monkeypatch).poll_live_data()
+
+        assert not snapshot["stints"].empty
+        assert set(snapshot["stints"]["DriverAcronym"]) & {"VER", "LEC", "HAM"}
+
+    def test_the_snapshot_keeps_the_unified_shape(self, monkeypatch):
+        snapshot = self._primed_manager(monkeypatch).poll_live_data()
+
+        for key in ("session_info", "telemetry", "laps", "stints", "location", "drivers"):
+            assert key in snapshot
+        assert snapshot["is_live"] is True

@@ -310,12 +310,32 @@ class DataSourceManager:
 
         car_df = LiveDataProcessor.parse_car_data(adapter.get_buffered_data("CarData.z"))
         pos_df = LiveDataProcessor.parse_position_data(adapter.get_buffered_data("Position.z"))
-        timing_df = LiveDataProcessor.parse_timing_data(adapter.get_buffered_data("TimingData"))
         weather_df = LiveDataProcessor.parse_weather_data(adapter.get_buffered_data("WeatherData"))
-        stints_df = LiveDataProcessor.parse_tyre_stints(
-            adapter.get_buffered_data("TyreStintSeries")
+
+        # Keyframe+delta topics come from the merged state when it has been
+        # fed (LIVE-05); the legacy livef1 callback path still delivers
+        # pre-parsed records, so those buffers remain the fallback.
+        timing_state = adapter.state.get("TimingData")
+        driver_state = adapter.state.get("DriverList")
+        stint_state = adapter.state.get("TyreStintSeries")
+
+        drivers_df = (
+            LiveDataProcessor.drivers_from_state(driver_state)
+            if driver_state
+            else LiveDataProcessor.parse_driver_list(adapter.get_buffered_data("DriverList"))
         )
-        drivers_df = LiveDataProcessor.parse_driver_list(adapter.get_buffered_data("DriverList"))
+        timing_df = (
+            LiveDataProcessor.timing_from_state(timing_state)
+            if timing_state
+            else LiveDataProcessor.parse_timing_data(adapter.get_buffered_data("TimingData"))
+        )
+        stints_df = (
+            LiveDataProcessor.stints_from_state(
+                stint_state, LiveDataProcessor.acronyms_from_state(driver_state)
+            )
+            if stint_state
+            else LiveDataProcessor.parse_tyre_stints(adapter.get_buffered_data("TyreStintSeries"))
+        )
 
         # Fall back to timing-feed driver numbers if DriverList is empty
         if drivers_df.empty and not timing_df.empty:
@@ -389,8 +409,14 @@ class DataSourceManager:
                 ]
                 telemetry[name] = d[keep]
 
-        # --- laps from timing feed (true lap numbers via NumberOfLaps) ---
-        laps_df = self._laps_from_timing(timing_df, acr_by_num)
+        # --- laps: recorded completions when the state layer is fed, else
+        # the legacy reconstruction from buffered TimingData records ---
+        if adapter.lap_history or timing_state:
+            laps_df = LiveDataProcessor.laps_from_history(
+                adapter.lap_history, timing_state, acr_by_num
+            )
+        else:
+            laps_df = self._laps_from_timing(timing_df, acr_by_num)
 
         # --- ensure stint chart columns exist ---
         if not stints_df.empty:
@@ -535,7 +561,9 @@ class DataSourceManager:
             "circuit_key": None,
             "gmt_offset": "",
         }
-        si = adapter.get_latest_data("SessionInfo") or {}
+        # Merged state first (LIVE-05); the legacy buffer is the fallback for
+        # the livef1 callback path, which delivers pre-parsed records.
+        si = adapter.state.get("SessionInfo") or adapter.get_latest_data("SessionInfo") or {}
 
         meeting = si.get("Meeting")
         if isinstance(meeting, dict):
@@ -560,7 +588,9 @@ class DataSourceManager:
             if pd.notna(year):
                 info["year"] = int(year.year)
 
-        status = adapter.get_latest_data("SessionStatus") or {}
+        status = (
+            adapter.state.get("SessionStatus") or adapter.get_latest_data("SessionStatus") or {}
+        )
         info["status"] = status.get("Status", "")
         return info
 

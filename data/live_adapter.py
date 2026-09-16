@@ -31,6 +31,7 @@ from collections import defaultdict
 
 # Position.z shares FastF1's 1/10 m position units - one definition, both paths.
 from data.fastf1_adapter import POSITION_UNITS_PER_METRE
+from data.live_state import STATE_TOPICS, LiveState, as_list
 
 
 def decode_zipped(text: str) -> Any:
@@ -105,6 +106,20 @@ def decode_topic_payload(topic: str, payload: Any) -> List[Dict]:
     return records
 
 
+def _as_bool(value: Any) -> Optional[bool]:
+    """The feed sends booleans as "true"/"false" strings as often as bools."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "1", "yes"):
+        return True
+    if text in ("false", "0", "no"):
+        return False
+    return None
+
+
 # Official CarData.z channel ids (verified against LiveF1 channel_name_map)
 CAR_CHANNELS = {"0": "rpm", "2": "speed", "3": "n_gear", "4": "throttle", "5": "brake", "45": "drs"}
 
@@ -151,11 +166,73 @@ class SignalRLiveAdapter:
         self.use_livef1 = use_livef1
         self.buffer_limit = max(int(buffer_limit), 100)
         self.client = None
+        # Merged per-topic state for keyframe+delta topics (LIVE-05). Time
+        # series still go to _data_buffer.
+        self.state = LiveState()
+        # Lap completions are a true time series and must outlive the telemetry
+        # cap: losing them would erase the first half of a race from the lap
+        # chart. Kept separately, and only one small row per completed lap.
+        self.lap_history: List[Dict] = []
+        self._lap_counter: Dict[str, int] = {}
         self._data_buffer: Dict[str, List[Dict]] = defaultdict(list)
         self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._thread_error: Optional[BaseException] = None
+
+    def handle_message(self, topic: str, payload: Any, timestamp: Optional[str] = None) -> None:
+        """Ingest one raw feed message.
+
+        State topics are deep-merged into :attr:`state`; time series are
+        appended to the bounded buffers. This is the entry point a SignalR
+        Core client (LIVE-01) and the fixture replay both use - the legacy
+        livef1 callback path still delivers pre-parsed records to
+        :meth:`_buffer_topic`.
+        """
+        if topic in STATE_TOPICS:
+            if topic == "TimingData":
+                self._record_lap_progress(payload)
+            self.state.update(topic, payload)
+            return
+        self._buffer_topic(topic, payload)
+
+    def _record_lap_progress(self, payload: Any) -> None:
+        """Note completed laps as TimingData messages arrive.
+
+        ``NumberOfLaps`` and ``LastLapTime`` usually come in separate partial
+        messages, so the lap counter is tracked per driver and a lap time is
+        attributed to whatever lap the driver had reached.
+        """
+        if not isinstance(payload, dict):
+            return
+        for number, line in (payload.get("Lines") or {}).items():
+            if not isinstance(line, dict):
+                continue
+            driver = str(number)
+            laps = line.get("NumberOfLaps")
+            if laps is not None:
+                try:
+                    self._lap_counter[driver] = int(laps)
+                except (TypeError, ValueError):
+                    pass
+
+            last_lap = line.get("LastLapTime")
+            value = last_lap.get("Value") if isinstance(last_lap, dict) else None
+            lap_number = self._lap_counter.get(driver)
+            if not value or not lap_number:
+                continue
+            if any(
+                entry["driver_number"] == driver and entry["LapNumber"] == lap_number
+                for entry in reversed(self.lap_history[-40:])
+            ):
+                continue  # the same completion repeated in a later message
+            self.lap_history.append(
+                {"driver_number": driver, "LapNumber": lap_number, "LapTime": value}
+            )
+
+    def seed_state(self, snapshot: Dict[str, Any]) -> None:
+        """Apply a subscription snapshot: ``{topic: full_state}``."""
+        self.state.seed(snapshot)
 
     def _buffer_topic(self, topic: str, records: Any):
         """Append parsed records to a topic buffer, dropping the oldest
@@ -252,6 +329,9 @@ class SignalRLiveAdapter:
             self._data_buffer[topic] = []
         else:
             self._data_buffer.clear()
+            self.state.clear()
+            self.lap_history.clear()
+            self._lap_counter.clear()
 
     def is_running(self) -> bool:
         """Check if client is running."""
@@ -372,6 +452,203 @@ class LiveDataProcessor:
                 if col not in df.columns:
                     df[col] = None
         return df
+
+    # -- state-derived frames (LIVE-05) ---------------------------------
+    #
+    # These read the *merged* LiveState rather than a list of messages, so a
+    # field set once in the keyframe survives and a partial update lands on
+    # the entry it belongs to.
+
+    @staticmethod
+    def timing_from_state(timing_state: Dict) -> pd.DataFrame:
+        """``TimingData`` state -> one row per driver, current values.
+
+        ``Sectors``, ``Segments`` and ``Speeds`` are index-addressed, so they
+        are normalised back to ordered lists before flattening: in a delta,
+        key ``"1"`` is sector **2**.
+        """
+        rows = []
+        for number, line in (timing_state or {}).get("Lines", {}).items():
+            if not isinstance(line, dict):
+                continue
+            row: Dict[str, Any] = {"driver_number": str(number)}
+            for key, value in line.items():
+                if key in ("Sectors", "Speeds"):
+                    for index, entry in enumerate(as_list(value), start=1):
+                        if isinstance(entry, dict):
+                            for field, inner in entry.items():
+                                if field == "Segments":
+                                    continue
+                                row[f"{key}_{index}_{field}"] = inner
+                elif isinstance(value, dict):
+                    for field, inner in value.items():
+                        if not isinstance(inner, (dict, list)):
+                            row[f"{key}_{field}"] = inner
+                elif not isinstance(value, list):
+                    row[key] = value
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def stints_from_state(
+        stint_state: Dict, acronyms: Optional[Dict[str, str]] = None
+    ) -> pd.DataFrame:
+        """``TyreStintSeries`` state -> the tyre strategy chart's frame.
+
+        The feed has no LapStart/LapEnd: it reports ``TotalLaps`` (the tyre's
+        age) and ``StartLaps`` (laps already on it when fitted), so the lap
+        window is accumulated across a driver's stints. Rows are keyed by the
+        driver's acronym, which is what the colour maps and charts use - the
+        racing number was never going to match them.
+        """
+        acronyms = acronyms or {}
+        rows = []
+        for number, stints in (stint_state or {}).get("Stints", {}).items():
+            lap_cursor = 1
+            for index, stint in enumerate(as_list(stints), start=1):
+                if not isinstance(stint, dict):
+                    continue
+                compound = stint.get("Compound")
+                total = pd.to_numeric(pd.Series([stint.get("TotalLaps")]), errors="coerce").iloc[0]
+                start = pd.to_numeric(pd.Series([stint.get("StartLaps")]), errors="coerce").iloc[0]
+                # TotalLaps counts the tyre's age; laps run this stint is the
+                # part of that age accumulated since it was fitted.
+                laps_this_stint = 0
+                if pd.notna(total):
+                    laps_this_stint = int(total) - (int(start) if pd.notna(start) else 0)
+                acronym = acronyms.get(str(number), str(number))
+                rows.append(
+                    {
+                        "Driver": acronym,
+                        "DriverAcronym": acronym,
+                        "driver_number": str(number),
+                        "Stint": index,
+                        "Compound": str(compound).upper() if compound else None,
+                        "New": _as_bool(stint.get("New")),
+                        "TyreAge": int(total) if pd.notna(total) else None,
+                        "LapStart": lap_cursor,
+                        # A 10-lap stint starting at lap 1 ends at lap 10.
+                        "LapEnd": lap_cursor + max(laps_this_stint - 1, 0),
+                        "LapCount": max(laps_this_stint, 0),
+                    }
+                )
+                lap_cursor += max(laps_this_stint, 0)
+        frame = pd.DataFrame(rows)
+        if not frame.empty:
+            frame = frame.dropna(subset=["Compound"]).reset_index(drop=True)
+        return frame
+
+    @staticmethod
+    def laps_from_history(
+        lap_history: Sequence[Dict],
+        timing_state: Optional[Dict] = None,
+        acronyms: Optional[Dict[str, str]] = None,
+    ) -> pd.DataFrame:
+        """Completed laps (plus the lap in progress) for the unified dict.
+
+        Lap times come from the recorded completions, not from re-reading a
+        buffer of messages, so the start of a long race survives. Sector
+        times and the driver-state flags are the *current* values from the
+        merged state.
+        """
+        acronyms = acronyms or {}
+        lines = (timing_state or {}).get("Lines", {})
+        rows = []
+        seen_drivers = set()
+
+        for entry in lap_history or []:
+            driver = str(entry.get("driver_number"))
+            seen_drivers.add(driver)
+            rows.append(
+                {
+                    "Driver": acronyms.get(driver, f"#{driver}"),
+                    "driver_number": driver,
+                    "LapNumber": entry.get("LapNumber"),
+                    "LapTime": entry.get("LapTime"),
+                    "IsPitOutLap": False,
+                    "IsInProgress": False,
+                }
+            )
+
+        for number, line in lines.items():
+            driver = str(number)
+            if not isinstance(line, dict):
+                continue
+            flags = {
+                "InPit": _as_bool(line.get("InPit")) or False,
+                "PitOut": _as_bool(line.get("PitOut")) or False,
+                "Retired": _as_bool(line.get("Retired")) or False,
+                "Stopped": _as_bool(line.get("Stopped")) or False,
+            }
+            sectors = {}
+            for index, sector in enumerate(as_list(line.get("Sectors")), start=1):
+                if isinstance(sector, dict):
+                    sectors[f"Sector{index}Time"] = sector.get("Value") or None
+
+            completed = pd.to_numeric(pd.Series([line.get("NumberOfLaps")]), errors="coerce").iloc[
+                0
+            ]
+            current_lap = int(completed) + 1 if pd.notna(completed) else 1
+            rows.append(
+                {
+                    "Driver": acronyms.get(driver, f"#{driver}"),
+                    "driver_number": driver,
+                    "LapNumber": current_lap,
+                    "LapTime": None,
+                    "IsPitOutLap": False,
+                    "IsInProgress": True,
+                    **sectors,
+                    **flags,
+                }
+            )
+            seen_drivers.add(driver)
+
+        frame = pd.DataFrame(rows)
+        if frame.empty:
+            return frame
+        # The state flags describe the driver, not one lap: apply them to all
+        # of that driver's rows so the tower latches retirement correctly.
+        for column in ("InPit", "PitOut", "Retired", "Stopped"):
+            if column in frame.columns:
+                frame[column] = frame.groupby("driver_number")[column].transform(
+                    lambda values: values.ffill().bfill()
+                )
+        return frame.sort_values(["Driver", "LapNumber"]).reset_index(drop=True)
+
+    @staticmethod
+    def drivers_from_state(driver_state: Dict) -> pd.DataFrame:
+        """``DriverList`` state -> the unified drivers table.
+
+        Reads the merged entry, so colours and names that arrived in a later
+        message are not lost to a first-seen-wins rule.
+        """
+        rows = []
+        for number, entry in (driver_state or {}).items():
+            if not isinstance(entry, dict) or not str(number).isdigit():
+                continue
+            first = entry.get("FirstName") or ""
+            last = entry.get("LastName") or ""
+            full = entry.get("FullName") or f"{first} {last}".strip()
+            colour = entry.get("TeamColour") or "888888"
+            rows.append(
+                {
+                    "driver_number": str(entry.get("RacingNumber") or number),
+                    "name_acronym": entry.get("Tla") or str(last)[:3].upper(),
+                    "team_colour": str(colour) if str(colour).startswith("#") else f"#{colour}",
+                    "team_name": entry.get("TeamName", ""),
+                    "full_name": full,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def acronyms_from_state(driver_state: Dict) -> Dict[str, str]:
+        """Racing number -> three-letter acronym, from merged DriverList."""
+        mapping = {}
+        for number, entry in (driver_state or {}).items():
+            if isinstance(entry, dict) and entry.get("Tla"):
+                mapping[str(number)] = str(entry["Tla"])
+        return mapping
 
     @staticmethod
     def parse_race_control(raw_records: List[Dict]) -> pd.DataFrame:

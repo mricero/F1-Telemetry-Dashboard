@@ -172,7 +172,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: test with a snapshot followed by a delta for sector index `"1"` yields S1 unchanged and S2 updated.
   - Depends on: LIVE-05.
 
-- [ ] **LIVE-05** · P0 · L — **Treat delta topics as state, not as independent records**
+- [x] **LIVE-05** · P0 · L — **Treat delta topics as state, not as independent records** — done in <pending>
   - Files: `data/live_adapter.py` (whole `LiveDataProcessor`), `data/source_manager.py:281-491`.
   - Problem: Most topics are "keyframe + partial update" streams. The subscription completion returns the full state; subsequent `feed` messages carry only changed fields, sometimes with `_deleted` markers. The current design appends each parsed message to a list and later builds DataFrames row-by-row, so:
     - `TyreStintSeries`: the snapshot (per-driver **list** of stints) is silently dropped by livef1 (`if isinstance(stint, dict)` only); deltas like `{"TotalLaps": 12}` have no `Compound` and are dropped by `parse_tyre_stints` (`data/live_adapter.py:348`). `LapStart`/`LapEnd` never exist in the feed (it has `StartLaps`, `TotalLaps`, `New`, `TyresNotChanged`). Result: live stints are mostly empty or wrong.
@@ -198,6 +198,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     ```
     Normalise index-keyed dicts back to ordered lists when reading (`Sectors`, `Segments`, `Stints`). Keep **append-only history** only for true time series: `CarData.z`, `Position.z`, `RaceControlMessages`, `TeamRadio`, `LapCount`, lap completions derived from `TimingData.NumberOfLaps`, and `WeatherData` samples.
   - Acceptance: replaying a recorded session (TEST-01) produces, at the end, the same classification / stints / best laps as the FastF1 historical load of the same session (tolerances documented in the test).
+  - Note: the state layer landed as `data/live_state.py` (`deep_merge` with `_deleted`, index-keyed-dict -> list normalisation, `LiveState` with a lock and a version counter), plus state-derived builders `timing_from_state` / `stints_from_state` / `drivers_from_state` / `laps_from_history`. Stints now carry a real lap window from `TotalLaps`/`StartLaps` and are keyed by acronym, `DriverList` updates are no longer first-seen-wins, and lap completions are recorded as they arrive so the start of a race cannot be evicted by the telemetry cap. The full acceptance (comparing a whole replayed session against a FastF1 load) still needs a **full-session** recording and the LIVE-01 client; the recorded 60-message slice is asserted end to end instead: `poll_live_data()` yields the GP name, 20+ drivers and non-empty stints.
 
 - [x] **LIVE-06** · P0 · S — **SessionInfo parsed wrongly → header shows "Race" instead of the GP name** — done in b368085
   - Files: `data/source_manager.py:479-491`.
@@ -571,7 +572,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 
 ## 9. P2 — Tests
 
-- [x] **TEST-01** · P1 · M — **Live fixtures repeat the "mocks diverge from reality" mistake** — done in <pending>
+- [x] **TEST-01** · P1 · M — **Live fixtures repeat the "mocks diverge from reality" mistake** — done in be9d283
   - Files: `tests/test_live_parsing.py:125-260`, `tests/test_source_manager.py:100-190`.
   - Problem: Hand-written records encode the code's assumptions, not the feed: `SessionInfo {"Meeting": "Bahrain"}` (real: nested dict), stints always with `Compound` and `LapStart: None` (real: `StartLaps`/`TotalLaps`, compound-less deltas, list snapshots), only 1-based `Sectors_N_Value` (real deltas are 0-based), X/Y treated as metres. That's why LIVE-03/04/05/06 pass CI.
   - Fix: Commit a small **recorded** live timing fixture (a few minutes of a real session from the public static archive `https://livetiming.formula1.com/static/<year>/<meeting>/<session>/<Topic>.jsonStream`, which is what FastF1 uses for historical loads) into `tests/fixtures/live/`, and build tests that replay it through the real ingest handler. Add a `scripts/capture_fixture.py` to refresh it. Keep fixtures tiny (<2 MB) — gzip them.
