@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from processing.timing import segment_boundaries
 from ui.theme import BORDER, TEXT_DIM, safe_hex, team_color
 
 # Viewport the SVG is drawn into; the track is scaled to fit with padding.
@@ -49,6 +50,20 @@ def _reference_trace(location: Dict[str, pd.DataFrame]) -> Optional[pd.DataFrame
         if len(usable) > best_len:
             best, best_len = usable, len(usable)
     return best
+
+
+def _trace_distance(reference: pd.DataFrame, track: np.ndarray) -> np.ndarray:
+    """Distance along the reference trace, for equal-distance slicing.
+
+    Prefers the frame's own ``Distance`` channel (FastF1 integrates it from
+    speed); falls back to the GPS arc length, which is proportional to it.
+    """
+    if "Distance" in reference.columns:
+        values = pd.to_numeric(reference["Distance"], errors="coerce").to_numpy(float)
+        if np.isfinite(values).all() and np.all(np.diff(values) >= 0) and values[-1] > values[0]:
+            return values
+    steps = np.hypot(*np.diff(track, axis=0).T)
+    return np.concatenate([[0.0], np.cumsum(np.nan_to_num(steps))])
 
 
 def _fit_transform(points: np.ndarray) -> Tuple[float, float, float]:
@@ -119,6 +134,7 @@ def build_track_svg(
     track = rotate_points(reference[["X", "Y"]].to_numpy(float), rotation)
     scale, dx, dy = _fit_transform(track)
     projected = _project(track.copy(), scale, dx, dy)
+    distance = _trace_distance(reference, track)
 
     layers: List[str] = []
 
@@ -138,11 +154,13 @@ def build_track_svg(
     # tint each by the team colour of whoever was quickest through it.
     if dominance:
         meta = driver_meta or {}
-        bounds = np.linspace(0, len(projected), len(dominance) + 1).astype(int)
+        # Equal-distance slices, matching how micro_sector_times splits the
+        # lap: an index split would place them where the samples are dense.
+        bounds = segment_boundaries(distance, len(dominance))
         for index, code in enumerate(dominance):
             if not code:
                 continue
-            start, end = bounds[index], min(bounds[index + 1] + 1, len(projected))
+            start, end = int(bounds[index]), min(int(bounds[index + 1]) + 1, len(projected))
             if end - start < 2:
                 continue
             info = meta.get(code, {})

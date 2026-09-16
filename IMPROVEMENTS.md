@@ -344,7 +344,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Acceptance: 2023 Bahrain **R** tower P1 = VER, P2 = PER, P3 = ALO (actual result); gaps match `results.Time` within 0.1 s. Update the network test that currently asserts lap-time ordering for all sessions.
   - Note: verified against the real session (`F1_NETWORK_TESTS=1`, 15/15 network tests green). This added `results` to the unified session dict, so `REPLAY_SCHEMA_VERSION` went to **4**. Live race ordering from `TimingData` stays with LIVE-05/LIVE-10; qualifying segments with DASH-02.
 
-- [x] **DASH-02** · P1 · M — **Knock-out partition is hard-coded "top 10" for all sessions** — done in <pending>
+- [x] **DASH-02** · P1 · M — **Knock-out partition is hard-coded "top 10" for all sessions** — done in 9cb2acd
   - Files: `processing/timing.py:213, 308`, `ui/dashboard.py:195-247, 343`.
   - Problem: `cutoff=10` marks P11+ as `KO`, dims them and prints "Outside the top 10" in races and practice. In qualifying, the real rule is by segment: with **22 cars (2026)** Q1 eliminates 6 and Q2 eliminates 6 (10 in Q3); with 20 cars (2018–2025) 5 and 5. The row's best time should be from the segment they were eliminated in, not their session best.
   - Fix: Only for `Q`/`SQ`: use `session.results` `Q1/Q2/Q3` columns (or `laps.split_qualifying_sessions()`) to assign segment; partitions `Q3 / Eliminated in Q2 / Eliminated in Q1` with headings; cut-offs derived from car count. Live: `TimingData.SessionPart` plus the per-line `KnockedOut` and cut-off flags (confirm exact key names on a recording).
@@ -360,7 +360,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Derive sector boundary distances per circuit from FastF1: for the fastest lap, find the distance at `LapStartTime + Sector1Time` and `+ Sector1Time + Sector2Time` via telemetry `SessionTime`; split each real sector into N equal-distance mini-sectors; compute mini-sector times for all valid laps (or at least each driver's top-3 laps); colour purple/green/yellow/grey per the convention. Live: use `TimingData.Sectors[i].Segments[j].Status` codes directly (these are the official mini-sector colours; 2048 = yellow, 2049 = green, 2051 = purple, 2064 = pit lane — confirm on a recording).
   - Acceptance: unit test on synthetic data where driver A's personal-best mini-sector is slower than B's → A green, B purple, A's other slices yellow.
 
-- [ ] **DASH-04** · P1 · S — **Dominance map colours are drawn in the wrong places**
+- [x] **DASH-04** · P1 · S — **Dominance map colours are drawn in the wrong places** — done in <pending>
   - Files: `ui/track_map.py:138-154` (`bounds = np.linspace(0, len(projected), …)` at 141), `processing/timing.py:112-144`.
   - Problem: `micro_sector_times` splits the lap into equal **distance** slices, but `build_track_svg` splits the projected polyline into equal **point-count** slices. Telemetry is sampled in time (~4 Hz car / interpolated), so points are much denser in slow corners — slice *k* on the map covers a different stretch of track than slice *k* in the data.
   - Fix: Keep the reference trace's `Distance` column through projection and split at `np.searchsorted(distance, np.linspace(d0, d1, n+1))`. Share one `segment_boundaries(distance, n)` helper between timing and map (and DASH-03's real sector boundaries).

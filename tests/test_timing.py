@@ -491,3 +491,43 @@ class TestQualifyingSegments:
         rows = build_timing_rows(session)
 
         assert sum(1 for r in rows if not r["knocked_out"]) == 10
+
+
+class TestSegmentBoundaries:
+    """DASH-04: slices are equal in distance, not in point count."""
+
+    def test_uniform_sampling_splits_evenly(self):
+        from processing.timing import segment_boundaries
+
+        distance = np.linspace(0.0, 100.0, 101)
+
+        assert segment_boundaries(distance, 4).tolist() == [0, 25, 50, 75, 100]
+
+    def test_dense_sampling_does_not_skew_the_split(self):
+        from processing.timing import segment_boundaries
+
+        # 90 samples in the first 10 % of the lap, 10 over the remaining 90 %.
+        distance = np.concatenate([np.linspace(0.0, 100.0, 90), np.linspace(100.0, 1000.0, 10)])
+
+        bounds = segment_boundaries(distance, 10)
+
+        # The first tenth of the lap ends where the dense section ends.
+        assert bounds[0] == 0
+        assert 85 <= bounds[1] <= 90
+        assert bounds[-1] == len(distance) - 1
+
+    def test_boundaries_are_monotonic_and_sized(self):
+        from processing.timing import segment_boundaries
+
+        bounds = segment_boundaries(np.linspace(0.0, 5000.0, 512), 15)
+
+        assert len(bounds) == 16
+        assert bounds.tolist() == sorted(bounds.tolist())
+
+    def test_degenerate_distance_returns_evenly_spaced_indices(self):
+        from processing.timing import segment_boundaries
+
+        bounds = segment_boundaries(np.zeros(20), 4)
+
+        assert len(bounds) == 5
+        assert bounds[0] == 0 and bounds[-1] == 19

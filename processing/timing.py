@@ -183,6 +183,27 @@ def _status(laps: pd.DataFrame, is_live: bool) -> str:
     return "ON TRACK"
 
 
+def segment_boundaries(distance: np.ndarray, segments: int) -> np.ndarray:
+    """Sample indices that split a trace into equal-**distance** slices.
+
+    Telemetry is sampled in time, so points bunch up in slow corners: slicing
+    by point index puts slice *k* over a different stretch of track than slice
+    *k* of the timing data. Returns ``segments + 1`` indices into ``distance``.
+    """
+    values = np.asarray(distance, dtype=float)
+    if len(values) < 2:
+        return np.zeros(segments + 1, dtype=int)
+    span = values[-1] - values[0]
+    if not np.isfinite(span) or span <= 0:
+        # Degenerate (constant or unusable) distance: fall back to index split.
+        return np.linspace(0, len(values) - 1, segments + 1).astype(int)
+    marks = np.linspace(values[0], values[-1], segments + 1)
+    bounds = np.searchsorted(values, marks, side="left")
+    bounds[0] = 0
+    bounds[-1] = len(values) - 1
+    return np.maximum.accumulate(bounds)
+
+
 def micro_sector_times(
     telemetry: pd.DataFrame, segments: int = TOTAL_SEGMENTS
 ) -> Optional[np.ndarray]:

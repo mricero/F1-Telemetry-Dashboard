@@ -406,3 +406,68 @@ class TestTowerPartitions:
         markup = tower_html([self._row(1), self._row(2)])
 
         assert "f1-split" not in markup
+
+
+class TestDominancePlacement:
+    """DASH-04: dominance slices follow distance, not point index."""
+
+    @staticmethod
+    def _skewed_trace() -> pd.DataFrame:
+        """A lap whose samples bunch up in its first tenth."""
+        dense = np.linspace(0.0, 100.0, 180)
+        sparse = np.linspace(100.0, 1000.0, 20)
+        distance = np.concatenate([dense, sparse])
+        return pd.DataFrame(
+            {
+                "Distance": distance,
+                "X": distance,  # a straight line, so path length == distance
+                "Y": np.zeros(len(distance)),
+            }
+        )
+
+    @staticmethod
+    def _path_lengths(svg: str, colour: str) -> float:
+        """Total length of the polyline drawn in `colour`."""
+        total = 0.0
+        for match in re.finditer(r'<path d="([^"]+)" fill="none" stroke="([^"]+)"', svg):
+            data, stroke = match.groups()
+            if stroke.lower() != colour.lower():
+                continue
+            points = [
+                (float(x), float(y))
+                for x, y in re.findall(r"[ML] (-?\d+\.?\d*) (-?\d+\.?\d*)", data)
+            ]
+            total += sum(
+                float(np.hypot(b[0] - a[0], b[1] - a[1])) for a, b in zip(points, points[1:])
+            )
+        return total
+
+    def test_first_slice_covers_its_share_of_the_track(self):
+        location = {"VER": self._skewed_trace()}
+        dominance = ["VER"] + [None] * 9
+        meta = {"VER": {"team_name": "Red Bull", "team_colour": "#3671c6"}}
+
+        svg = build_track_svg(
+            location, driver_meta=meta, dominance=dominance, circuit_info={"rotation": 0}
+        )
+
+        first_slice = self._path_lengths(svg, "#3671c6")
+        outline = self._path_lengths(svg, "#000000")
+        # 90 % of the samples sit in the first 10 % of the lap; the slice must
+        # follow the distance, so it covers about a tenth of the path.
+        assert 0.05 < first_slice / outline < 0.2
+
+    def test_all_slices_together_cover_the_lap(self):
+        location = {"VER": self._skewed_trace()}
+        meta = {"VER": {"team_name": "Red Bull", "team_colour": "#3671c6"}}
+
+        svg = build_track_svg(
+            location,
+            driver_meta=meta,
+            dominance=["VER"] * 10,
+            circuit_info={"rotation": 0},
+        )
+
+        covered = self._path_lengths(svg, "#3671c6")
+        outline = self._path_lengths(svg, "#000000")
+        assert covered >= outline * 0.95
