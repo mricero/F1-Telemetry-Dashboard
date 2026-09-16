@@ -17,6 +17,7 @@ from processing.timing import (
     format_delta,
     format_lap,
     micro_sector_times,
+    qualifying_cutoffs,
     segment_states,
     sector_leaders,
     theoretical_best,
@@ -128,11 +129,11 @@ class TestClassification:
         assert rows[0]["last_lap"] == "1:30.500"  # lap 2
         assert rows[1]["last_lap"] == "1:32.500"
 
-    def test_cutoff_marks_knocked_out_rows(self, session):
-        rows = build_timing_rows(session, cutoff=1)
+    def test_practice_marks_nobody_knocked_out(self, session):
+        """DASH-02: only a knock-out session eliminates anyone."""
+        rows = build_timing_rows(session)
 
-        assert rows[0]["knocked_out"] is False
-        assert rows[1]["knocked_out"] is True
+        assert [r["knocked_out"] for r in rows] == [False, False]
 
     def test_completed_session_is_classified(self, session):
         assert {r["status"] for r in build_timing_rows(session)} == {"CLASSIFIED"}
@@ -384,3 +385,109 @@ class TestRaceClassification:
         rows = build_timing_rows(session)
 
         assert [r["code"] for r in rows] == ["VER", "HAM"]
+
+
+def _quali_results(*entries) -> pd.DataFrame:
+    """FastF1-shaped qualifying results: per-segment times, NaT if absent."""
+    rows = []
+    for position, (code, q1, q2, q3) in enumerate(entries, start=1):
+        rows.append(
+            {
+                "Abbreviation": code,
+                "Position": float(position),
+                "Status": "",
+                "TeamName": "",
+                "Q1": timedelta(seconds=q1) if q1 else pd.NaT,
+                "Q2": timedelta(seconds=q2) if q2 else pd.NaT,
+                "Q3": timedelta(seconds=q3) if q3 else pd.NaT,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _quali_session(car_count: int = 22) -> dict:
+    """A 2026-style qualifying: 22 cars, 6 out in Q1 and 6 in Q2."""
+    codes = [f"D{i:02d}" for i in range(1, car_count + 1)]
+    q2_places, q3_places = qualifying_cutoffs(car_count)
+    entries, lap_groups = [], []
+    for index, code in enumerate(codes):
+        q1 = 90.0 + index * 0.1
+        q2 = 89.0 + index * 0.1 if index < q2_places else None
+        q3 = 88.0 + index * 0.1 if index < q3_places else None
+        entries.append((code, q1, q2, q3))
+        lap_groups.append(_lap_rows(code, [q1, q2 or q1, q3 or q1], (30.0, 30.0, 30.0)))
+    return {
+        "session_info": {"session_type": "Q", "gp": "Madrid", "year": 2026},
+        "laps": _laps(*lap_groups),
+        "results": _quali_results(*entries),
+        "drivers": _drivers(*[(c, "Team", "#3671c6") for c in codes]),
+        "telemetry": {},
+        "is_live": False,
+    }
+
+
+class TestQualifyingSegments:
+    """DASH-02: the knock-out split follows the segments, not a fixed top 10."""
+
+    def test_2026_quali_splits_ten_six_six(self):
+        rows = build_timing_rows(_quali_session(22))
+
+        segments = [r["segment"] for r in rows]
+        assert segments.count("Q3") == 10
+        assert segments.count("Q2") == 6
+        assert segments.count("Q1") == 6
+
+    def test_twenty_car_grid_splits_ten_five_five(self):
+        rows = build_timing_rows(_quali_session(20))
+
+        segments = [r["segment"] for r in rows]
+        assert [segments.count(s) for s in ("Q3", "Q2", "Q1")] == [10, 5, 5]
+
+    def test_partition_headings_name_the_segment(self):
+        rows = build_timing_rows(_quali_session(22))
+
+        headings = [r["partition"] for r in rows if r.get("partition")]
+        assert headings == ["Q3", "Eliminated in Q2", "Eliminated in Q1"]
+
+    def test_only_q3_drivers_survive_the_knockout(self):
+        rows = build_timing_rows(_quali_session(22))
+
+        assert [r["knocked_out"] for r in rows[:10]] == [False] * 10
+        assert all(r["knocked_out"] for r in rows[10:])
+
+    def test_row_time_is_from_the_segment_they_went_out_in(self):
+        rows = build_timing_rows(_quali_session(22))
+
+        # D17 was eliminated in Q1, so the Q1 time is the one that counts.
+        eliminated_q1 = next(r for r in rows if r["code"] == "D17")
+        assert eliminated_q1["segment"] == "Q1"
+        assert eliminated_q1["best_seconds"] == pytest.approx(90.0 + 16 * 0.1)
+
+    def test_races_have_no_knockout_styling(self, race_session):
+        rows = build_timing_rows(race_session)
+
+        assert not any(r["knocked_out"] for r in rows)
+        assert not any(r.get("partition") for r in rows)
+
+    def test_practice_has_no_knockout_styling(self, race_session):
+        race_session["session_info"]["session_type"] = "FP2"
+
+        rows = build_timing_rows(race_session)
+
+        assert not any(r["knocked_out"] for r in rows)
+
+    def test_sprint_qualifying_uses_the_same_rules(self):
+        session = _quali_session(22)
+        session["session_info"]["session_type"] = "SQ"
+
+        rows = build_timing_rows(session)
+
+        assert [r["segment"] for r in rows].count("Q3") == 10
+
+    def test_quali_without_results_falls_back_to_derived_cutoffs(self):
+        session = _quali_session(22)
+        session["results"] = pd.DataFrame()
+
+        rows = build_timing_rows(session)
+
+        assert sum(1 for r in rows if not r["knocked_out"]) == 10

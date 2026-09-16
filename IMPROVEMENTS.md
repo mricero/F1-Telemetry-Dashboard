@@ -333,7 +333,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
 
 The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `ui/track_map.py`) is visually close to the reference sites but several numbers mean something different from what the labels say.
 
-- [x] **DASH-01** · P1 · M — **Every session is classified by best lap** — done in <pending>
+- [x] **DASH-01** · P1 · M — **Every session is classified by best lap** — done in c05cefd
   - Files: `processing/timing.py:213-316` (`timed.sort` at 291; gap/interval at 294-306), `tests/test_integration_network.py:167-180` (asserts this behaviour).
   - Problem: For races and sprints, position is the running/finishing order, `Gap` is time behind the leader on the road and `Interval` is time to the car ahead. The tower instead sorts by personal best lap and computes gaps as lap-time differences — a race winner who didn't set the fastest lap shows in P3, a lapped car can be P1.
   - Fix: Classification by session type:
@@ -344,11 +344,12 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Acceptance: 2023 Bahrain **R** tower P1 = VER, P2 = PER, P3 = ALO (actual result); gaps match `results.Time` within 0.1 s. Update the network test that currently asserts lap-time ordering for all sessions.
   - Note: verified against the real session (`F1_NETWORK_TESTS=1`, 15/15 network tests green). This added `results` to the unified session dict, so `REPLAY_SCHEMA_VERSION` went to **4**. Live race ordering from `TimingData` stays with LIVE-05/LIVE-10; qualifying segments with DASH-02.
 
-- [ ] **DASH-02** · P1 · M — **Knock-out partition is hard-coded "top 10" for all sessions**
+- [x] **DASH-02** · P1 · M — **Knock-out partition is hard-coded "top 10" for all sessions** — done in <pending>
   - Files: `processing/timing.py:213, 308`, `ui/dashboard.py:195-247, 343`.
   - Problem: `cutoff=10` marks P11+ as `KO`, dims them and prints "Outside the top 10" in races and practice. In qualifying, the real rule is by segment: with **22 cars (2026)** Q1 eliminates 6 and Q2 eliminates 6 (10 in Q3); with 20 cars (2018–2025) 5 and 5. The row's best time should be from the segment they were eliminated in, not their session best.
   - Fix: Only for `Q`/`SQ`: use `session.results` `Q1/Q2/Q3` columns (or `laps.split_qualifying_sessions()`) to assign segment; partitions `Q3 / Eliminated in Q2 / Eliminated in Q1` with headings; cut-offs derived from car count. Live: `TimingData.SessionPart` plus the per-line `KnockedOut` and cut-off flags (confirm exact key names on a recording).
   - Acceptance: 2026 quali fixture → 10/6/6 split with correct headings; race → no KO styling.
+  - Note: the partition follows the *official position*, not "last segment with a time" - 2023 Bahrain HUL reached Q3, set no lap there, and keeps a Q2 time that beats a Q3 time. Verified on the real session (10/5/5). The meaningless `cutoff` parameter was dropped from `build_timing_rows`/`tower_html`/`render_dashboard`. Live `SessionPart`/`KnockedOut` handling stays with LIVE-05/LIVE-10.
 
 - [ ] **DASH-03** · P1 · M — **Mini-sector colours don't follow the F1 convention; sector strips assume equal thirds**
   - Files: `processing/timing.py:112-174, 252-268`, `ui/theme.py:97-104`.

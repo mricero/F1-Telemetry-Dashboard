@@ -188,9 +188,14 @@ class TestTowerHtml:
         assert tower_html([_row()]).count('<span style="background') == 15
 
     def test_knocked_out_partition_is_announced(self):
-        html = tower_html([_row("VER", 1), _row("HAM", 11, knocked_out=True)], cutoff=10)
+        html = tower_html(
+            [
+                _row("VER", 1),
+                _row("HAM", 11, knocked_out=True, partition="Eliminated in Q2"),
+            ]
+        )
 
-        assert "Outside the top 10" in html and 'class="ko"' in html
+        assert "Eliminated in Q2" in html and 'class="ko"' in html
 
     def test_empty_rows_show_a_notice(self):
         assert "No timing data" in tower_html([])
@@ -359,3 +364,45 @@ class TestColourSanitising:
 
         assert 'onload="x' not in svg
         assert "#8a8a8a" in svg
+
+
+class TestTowerPartitions:
+    """DASH-02: the split row names the segment instead of 'top 10'."""
+
+    @staticmethod
+    def _row(position: int, **overrides) -> dict:
+        row = {
+            "position": position,
+            "code": f"D{position:02d}",
+            "team_name": "Team",
+            "team_colour": "#3671c6",
+            "status": "CLASSIFIED",
+            "last_lap": "1:31.2",
+            "best_lap": "1:31.2",
+            "interval": "—",
+            "gap": "—",
+            "diff": "—",
+            "speed_kmh": 320.0,
+            "sectors": [],
+            "tyre_history": [],
+            "knocked_out": False,
+        }
+        row.update(overrides)
+        return row
+
+    def test_partition_heading_is_used_when_present(self):
+        rows = [
+            self._row(1),
+            self._row(2, knocked_out=True, partition="Eliminated in Q2"),
+            self._row(3, knocked_out=True),
+        ]
+
+        markup = tower_html(rows)
+
+        assert "Eliminated in Q2" in markup
+        assert "Outside the top" not in markup
+
+    def test_no_split_row_without_partitions(self):
+        markup = tower_html([self._row(1), self._row(2)])
+
+        assert "f1-split" not in markup

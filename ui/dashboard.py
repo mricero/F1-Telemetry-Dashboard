@@ -204,22 +204,23 @@ def _status_html(status: str) -> str:
     return f'<span class="f1-badge {css}">{_esc(status)}</span>'
 
 
-def tower_html(rows: Sequence[dict], cutoff: int = 10) -> str:
+def tower_html(rows: Sequence[dict]) -> str:
     """The driver leaderboard matrix (spec section 3)."""
     if not rows:
         return '<div style="padding:24px;color:#8a8a8a">No timing data for this session.</div>'
 
     head = "".join(f"<th>{_esc(c)}</th>" for c in TOWER_COLUMNS)
     body: List[str] = []
-    split_emitted = False
 
     for row in rows:
-        if row.get("knocked_out") and not split_emitted:
+        # Only knock-out sessions carry a partition, and it names the segment
+        # ("Eliminated in Q2") rather than an invented top-ten boundary.
+        partition = row.get("partition")
+        if partition:
             body.append(
                 f'<tr><td colspan="{len(TOWER_COLUMNS)}" class="f1-split">'
-                f"Outside the top {cutoff}</td></tr>"
+                f"{_esc(partition)}</td></tr>"
             )
-            split_emitted = True
 
         accent = team_color(row.get("team_name"), row.get("team_colour"))
         best_class = "f1-time best" if row.get("is_overall_best") else "f1-time"
@@ -352,16 +353,16 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     return f'<div class="f1-map-wrap">{bench}{svg}</div>{dominance_legend(dominance, meta)}'
 
 
-def render_dashboard(session_data: dict, cutoff: int = 10) -> None:
+def render_dashboard(session_data: dict) -> None:
     """Render the full timing dashboard on the spec's 60/40 grid."""
     st.html(DASHBOARD_CSS)
 
-    rows = build_timing_rows(session_data, cutoff=cutoff)
+    rows = build_timing_rows(session_data)
     st.html(f'<div class="f1-dash">{header_html(session_data)}</div>')
 
     left, right = st.columns([6, 4], gap="small")
     with left:
-        st.html(f'<div class="f1-dash">{tower_html(rows, cutoff=cutoff)}</div>')
+        st.html(f'<div class="f1-dash">{tower_html(rows)}</div>')
     with right:
         st.html(f'<div class="f1-dash">{sector_cards_html(sector_leaders(rows))}</div>')
         st.html(f'<div class="f1-dash">{map_panel_html(session_data, rows)}</div>')

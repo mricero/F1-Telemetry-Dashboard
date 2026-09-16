@@ -31,6 +31,17 @@ GREEN_TOLERANCE = 0.02
 # short codes the selector uses and FastF1's session names are accepted.
 RACE_SESSION_TYPES = {"r", "s", "race", "sprint"}
 
+# Sessions run as knock-out segments. "Sprint Shootout" is the 2023 name.
+QUALIFYING_SESSION_TYPES = {"q", "sq", "qualifying", "sprint qualifying", "sprint shootout"}
+
+# Drivers who reach the final segment. Everyone else is eliminated in equal
+# halves across Q1 and Q2 (2026: 22 cars -> 6 and 6; 2018-25: 20 -> 5 and 5).
+Q3_PLACES = 10
+
+# Segment identifiers, fastest-progressing first, with their split headings.
+QUALIFYING_SEGMENTS = ("Q3", "Q2", "Q1")
+SEGMENT_HEADINGS = {"Q3": "Q3", "Q2": "Eliminated in Q2", "Q1": "Eliminated in Q1"}
+
 
 def format_lap(seconds: Optional[float]) -> str:
     """``93.456`` -> ``'1:33.456'``; missing values render as an em dash."""
@@ -66,6 +77,26 @@ def is_race_session(session_info: Optional[dict]) -> bool:
         if value and str(value).strip().lower() in RACE_SESSION_TYPES:
             return True
     return False
+
+
+def is_qualifying_session(session_info: Optional[dict]) -> bool:
+    """True for qualifying and sprint qualifying, which run in segments."""
+    info = session_info or {}
+    for key in ("session_type", "session_name"):
+        value = info.get(key)
+        if value and str(value).strip().lower() in QUALIFYING_SESSION_TYPES:
+            return True
+    return False
+
+
+def qualifying_cutoffs(car_count: int) -> List[int]:
+    """How many cars survive each segment, e.g. 22 cars -> ``[16, 10]``.
+
+    The regulations eliminate the same number after Q1 and Q2, so the count
+    follows the entry list rather than a hardcoded top ten.
+    """
+    eliminated = max((car_count - Q3_PLACES + 1) // 2, 0)
+    return [max(car_count - eliminated, Q3_PLACES), Q3_PLACES]
 
 
 def _results_index(results: Optional[pd.DataFrame]) -> Dict[str, dict]:
@@ -280,6 +311,96 @@ def _classify_by_best_lap(rows: List[dict]) -> List[dict]:
     return ordered
 
 
+def _classify_qualifying(rows: List[dict], results: Dict[str, dict]) -> List[dict]:
+    """Qualifying order: segment reached first, then time within it.
+
+    A driver's row shows the time from the segment they went out in, not
+    their session best, and the tower is split at the real elimination
+    boundaries rather than at a fixed top ten.
+    """
+    has_segment_times = any(
+        any(seg in entry and pd.notna(entry[seg]) for seg in QUALIFYING_SEGMENTS)
+        for entry in results.values()
+    )
+
+    if not has_segment_times:
+        # No per-segment times (live, or a source without results): fall back
+        # to best-lap order and the regulation cut-offs for the entry list.
+        ordered = _classify_by_best_lap(rows)
+        survivors = qualifying_cutoffs(len(ordered))[-1]
+        for index, row in enumerate(ordered):
+            row["knocked_out"] = index >= survivors
+        return ordered
+
+    q2_places, q3_places = qualifying_cutoffs(len(rows))
+    for row in rows:
+        entry = results.get(row["code"], {})
+
+        # The time that counts is the last segment the driver actually set
+        # one in - a Q2 lap for someone who reached Q3 without improving.
+        for segment in QUALIFYING_SEGMENTS:
+            seconds = to_seconds(entry.get(segment)) if segment in entry else None
+            if seconds is not None and pd.notna(seconds):
+                row["best_seconds"] = seconds
+                row["best_lap"] = format_lap(seconds)
+                break
+
+        # The segment a driver *reached* is what the partition shows, and the
+        # official position is the only thing that records it: a driver can
+        # make Q3 and set no lap there (2023 Bahrain, HUL).
+        position = entry.get("Position")
+        if position is not None and pd.notna(position):
+            row["official_position"] = float(position)
+            row["segment"] = (
+                "Q3"
+                if row["official_position"] <= q3_places
+                else "Q2" if row["official_position"] <= q2_places else "Q1"
+            )
+        else:
+            row["official_position"] = None
+            row["segment"] = next(
+                (
+                    segment
+                    for segment in QUALIFYING_SEGMENTS
+                    if segment in entry and pd.notna(entry[segment])
+                ),
+                None,
+            )
+
+    rank = {segment: index for index, segment in enumerate(QUALIFYING_SEGMENTS)}
+
+    def sort_key(row: dict):
+        """Official order when known, else segment reached then time in it."""
+        if row["official_position"] is not None:
+            return (0, row["official_position"], 0.0)
+        return (
+            1,
+            rank.get(row["segment"], len(QUALIFYING_SEGMENTS)),
+            row["best_seconds"] if row["best_seconds"] is not None else float("inf"),
+        )
+
+    ordered = sorted(rows, key=sort_key)
+
+    leader = ordered[0]["best_seconds"] if ordered else None
+    previous = None
+    seen_segments = set()
+    for row in ordered:
+        row["knocked_out"] = row["segment"] != "Q3"
+        if row["segment"] and row["segment"] not in seen_segments:
+            row["partition"] = SEGMENT_HEADINGS[row["segment"]]
+            seen_segments.add(row["segment"])
+        if row["best_seconds"] is None or leader is None:
+            row["gap"] = "----"
+            row["interval"] = "----"
+            continue
+        row["gap"] = "----" if row is ordered[0] else format_delta(row["best_seconds"] - leader)
+        row["interval"] = (
+            "----" if previous is None else format_delta(row["best_seconds"] - previous)
+        )
+        previous = row["best_seconds"]
+    return ordered
+
+
 def _race_gap_seconds(row: dict, results: Dict[str, dict]) -> Optional[float]:
     """Race time behind the winner, from results.Time where available.
 
@@ -343,12 +464,12 @@ def _classify_race(rows: List[dict], results: Dict[str, dict]) -> List[dict]:
     return ordered
 
 
-def build_timing_rows(session_data: dict, cutoff: int = 10) -> List[dict]:
+def build_timing_rows(session_data: dict) -> List[dict]:
     """Build the leaderboard rows for one session.
 
-    ``cutoff`` marks where the "knocked out" partition begins (spec section
-    3): in a qualifying segment the top 10 advance. Rows below it render
-    dimmed with a KO badge.
+    Ordering, gaps and the knock-out partition all depend on the session
+    type - see :func:`_classify_race`, :func:`_classify_qualifying` and
+    :func:`_classify_by_best_lap`.
     """
     laps_df = session_data.get("laps")
     if laps_df is None or laps_df.empty or "Driver" not in laps_df.columns:
@@ -416,24 +537,31 @@ def build_timing_rows(session_data: dict, cutoff: int = 10) -> List[dict]:
                 "speed_kmh": _speed_trap(driver_laps),
                 "laps_completed": int(len(driver_laps)),
                 "last_position": _last_position(driver_laps),
+                # Only a knock-out session sets these; see _classify_qualifying.
+                "knocked_out": False,
+                "segment": None,
+                "partition": None,
             }
         )
 
+    session_info = session_data.get("session_info")
     results = _results_index(session_data.get("results"))
-    if is_race_session(session_data.get("session_info")):
+    if is_race_session(session_info):
         ordered = _classify_race(rows, results)
+    elif is_qualifying_session(session_info):
+        ordered = _classify_qualifying(rows, results)
     else:
+        # Practice: everyone is simply ranked, nobody is knocked out.
         ordered = _classify_by_best_lap(rows)
 
     fastest = min(
-        (r for r in rows if r["best_seconds"] is not None),
+        (r for r in ordered if r["best_seconds"] is not None),
         key=lambda r: r["best_seconds"],
         default=None,
     )
     for position, row in enumerate(ordered, start=1):
         row["position"] = position
         row["is_overall_best"] = row is fastest
-        row["knocked_out"] = position > cutoff
 
     best_possible = theoretical_best(ordered)
     for row in ordered:

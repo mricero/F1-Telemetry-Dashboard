@@ -9,6 +9,7 @@ These exercise the real FastF1/Jolpica endpoints and are skipped unless
 import os
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -167,24 +168,55 @@ class TestDashboardOnRealSession:
         )
 
     def test_timing_rows_are_ranked_and_complete(self):
-        """Qualifying: fastest to slowest is the right classification here.
+        """Qualifying: the official order, which is by segment then by time.
 
-        Races are ordered by finishing position instead - see
-        ``TestRaceClassificationOnRealSession``.
+        It is *not* globally fastest-to-slowest: a driver who reaches Q3 and
+        sets no lap there keeps a Q2 time that can beat a Q3 time (2023
+        Bahrain, HUL P10). Races are ordered by finishing position instead -
+        see ``TestRaceClassificationOnRealSession``.
         """
         from processing.timing import build_timing_rows
 
-        rows = build_timing_rows(self._session())
+        session = self._session()
+        rows = build_timing_rows(session)
+        official = session["results"].sort_values("Position")["Abbreviation"].astype(str).tolist()
 
         assert len(rows) >= 15
-        times = [r["best_seconds"] for r in rows if r["best_seconds"] is not None]
-        assert times == sorted(times), "classification must run fastest to slowest"
+        assert [r["code"] for r in rows] == official
+
+        # Drivers who actually set a Q3 lap are in ascending Q3 order; one who
+        # reached Q3 without setting a time keeps a (possibly faster) Q2 lap
+        # and still classifies behind them.
+        from processing.time_utils import to_seconds
+
+        q3 = session["results"].set_index("Abbreviation")["Q3"]
+        set_a_q3_lap = [
+            to_seconds(q3.get(r["code"]))
+            for r in rows[:10]
+            if r["code"] in q3.index and pd.notna(q3.get(r["code"]))
+        ]
+        assert set_a_q3_lap == sorted(set_a_q3_lap)
         assert rows[0]["gap"] == "----" and rows[0]["is_overall_best"]
         assert rows[1]["gap"].startswith("+")
         # Every timed row carries a team, a speed trap reading and tyre history.
         leader = rows[0]
         assert leader["team_name"] and leader["speed_kmh"] > 100
         assert leader["tyre_history"]
+
+    def test_qualifying_partitions_follow_the_segments(self):
+        """DASH-02: 20 cars in 2023 -> 10 / 5 / 5, with named headings."""
+        from processing.timing import build_timing_rows
+
+        rows = build_timing_rows(self._session())
+        segments = [r["segment"] for r in rows]
+
+        assert [segments.count(s) for s in ("Q3", "Q2", "Q1")] == [10, 5, 5]
+        assert [r["partition"] for r in rows if r.get("partition")] == [
+            "Q3",
+            "Eliminated in Q2",
+            "Eliminated in Q1",
+        ]
+        assert not any(r["knocked_out"] for r in rows[:10])
 
     def test_track_map_svg_is_wellformed_with_corners(self):
         import xml.etree.ElementTree as ET
