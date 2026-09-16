@@ -152,7 +152,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: With buffers holding only `TimingData` + `RaceControlMessages` + `WeatherData`, the live fragment renders the timing table, race control and weather, plus the auth banner (AppTest).
   - Depends on: LIVE-01 (the list of gated topics should be re-confirmed live).
 
-- [ ] **LIVE-03** · P0 · S — **Live GPS distance is 10× too large**
+- [x] **LIVE-03** · P0 · S — **Live GPS distance is 10× too large** — done in <pending>
   - Files: `data/live_adapter.py:438-466` (`distance_at`, line 457), `data/fastf1_adapter.py:12, 185-199`.
   - Problem: `Position.z` X/Y/Z are in **1/10 m** (same feed FastF1 parses; FastF1's own adapter here divides by `POSITION_UNITS_PER_METRE`). `LiveDataProcessor.distance_at` uses the raw arc length, so live "Distance" is decimetres labelled as metres. Every live telemetry x-axis, and anything integrating over it, is off by 10×.
   - Evidence: script — a straight 10 000-unit X track returned `10000.0` "metres" (should be 1000).
@@ -272,7 +272,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
 ---
 ## 4. P0/P1 — Historical & replay sources
 
-- [x] **HIST-01** · P0 · S — **Replay source can't load files picked in the UI** — done in <pending>
+- [x] **HIST-01** · P0 · S — **Replay source can't load files picked in the UI** — done in beac86a
   - Files: `ui/layout.py:156-165`, `data/source_manager.py:569-599`.
   - Problem: `get_available_replays()` returns `f.name` (bare filenames); `get_session_data(source="replay", replay_file=name)` → `_load_replay(name)` → `open(name)` relative to the process CWD, not `replay_dir`. Tests pass because they call `_load_replay` with a full path.
   - Evidence: script → `FileNotFoundError: [Errno 2] No such file or directory: 'x_20260916_113438.pkl'`.

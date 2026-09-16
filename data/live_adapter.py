@@ -29,6 +29,9 @@ import pandas as pd
 from typing import Dict, List, Callable, Optional, Any, Sequence
 from collections import defaultdict
 
+# Position.z shares FastF1's 1/10 m position units - one definition, both paths.
+from data.fastf1_adapter import POSITION_UNITS_PER_METRE
+
 
 def decode_zipped(text: str) -> Any:
     """Decode an F1 SignalR zipped payload: base64 -> raw-deflate -> JSON.
@@ -442,6 +445,10 @@ class LiveDataProcessor:
         own GPS trajectory (Position.z X/Y), i.e. real meters driven - a far
         better comparison axis than an index-based pseudo-distance.
 
+        ``Position.z`` reports X/Y/Z in 1/10 m - the same feed and the same
+        units FastF1 parses - so the arc length is divided by
+        :data:`~data.fastf1_adapter.POSITION_UNITS_PER_METRE`.
+
         Returns None when there is not enough usable GPS data.
         """
         if pos_df is None or len(pos_df) < 3 or car_timestamps is None:
@@ -455,7 +462,7 @@ class LiveDataProcessor:
         t_num = t_num[order]
         xy = pos_df.loc[ok, ["X", "Y"]].to_numpy(dtype=float)[order]
         seg = np.hypot(*np.diff(xy, axis=0).T)
-        dist = np.concatenate([[0.0], np.cumsum(seg)])
+        dist = np.concatenate([[0.0], np.cumsum(seg)]) / POSITION_UNITS_PER_METRE
 
         ct = pd.to_datetime(
             pd.Series(list(car_timestamps)), utc=True, format="ISO8601", errors="coerce"

@@ -181,8 +181,40 @@ class TestGpsDistances:
         tel = snap["telemetry"]["HAM"]
         dist = tel["Distance"].to_numpy()
         assert np.all(np.diff(dist) >= -1e-6)  # monotonic metres
-        assert dist[-1] > 1000  # real scale, not idx*10
+        # 40 samples 100 position-units apart = 3900 units = 390 m (1/10 m feed).
+        assert dist[-1] == pytest.approx(390.0)
         assert "Distance" in snap["location"]["HAM"].columns
+
+    def test_gps_distance_is_metres_not_decimetres(self):
+        """LIVE-03: Position.z X/Y/Z are in 1/10 m, exactly like FastF1's."""
+        from data.live_adapter import LiveDataProcessor
+
+        # A straight 10 000-unit run along X is 1 000 m of track.
+        pos = pd.DataFrame(
+            {
+                "timestamp": [f"2026-05-01T12:00:{i:02d}Z" for i in range(11)],
+                "X": np.linspace(0.0, 10000.0, 11),
+                "Y": np.zeros(11),
+            }
+        )
+        dist = LiveDataProcessor.distance_at(pos, pos["timestamp"])
+
+        assert dist is not None
+        assert dist[-1] == pytest.approx(1000.0)
+
+    def test_live_and_fastf1_gps_distance_agree(self):
+        """Both paths read the same feed, so both must use the same scale."""
+        from data.fastf1_adapter import FastF1Adapter
+        from data.live_adapter import LiveDataProcessor
+
+        xy = {"X": np.array([0.0, 300.0, 300.0]), "Y": np.array([0.0, 0.0, 400.0])}
+        pos = pd.DataFrame({"timestamp": [f"2026-05-01T12:00:0{i}Z" for i in range(3)], **xy})
+
+        live = LiveDataProcessor.distance_at(pos, pos["timestamp"])
+        historical = FastF1Adapter.distance_from_positions(pd.DataFrame(xy))
+
+        assert np.allclose(live, historical)
+        assert live[-1] == pytest.approx(70.0)  # (300 + 400) units / 10
 
     def test_falls_back_without_gps(self, manager):
         self._prime_driver_list(manager.live)
