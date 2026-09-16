@@ -159,7 +159,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Divide by `POSITION_UNITS_PER_METRE` (import the constant; don't duplicate it). Add a test asserting 1000 m for that input.
   - Acceptance: new unit test passes; existing `test_source_manager` distance tests updated to real units.
 
-- [ ] **LIVE-04** · P0 · S — **TimingData sector keys collide between snapshot and delta**
+- [x] **LIVE-04** · P0 · S — **TimingData sector keys collide between snapshot and delta** — done in <pending>
   - Files: `data/source_manager.py:473-476`, `data/live_adapter.py:313-327`.
   - Problem: livef1's `parse_timing_data` flattens a **list** (`"Sectors": [ {...}, {...}, {...} ]`, the snapshot form) as `Sectors_{index+1}_Value`, but a **dict** (`"Sectors": {"1": {...}}`, the delta form, 0-based keys) as `Sectors_1_Value` via its recursive prefix path. So in deltas `Sectors_1_Value` is sector **2**. The app reads `Sectors_{i}_Value` for i=1..3 as S1..S3.
   - Evidence (run against installed livef1):
@@ -170,9 +170,10 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     Same issue applies to `Segments` (mini-sectors) and `Speeds`.
   - Fix: Parse raw `TimingData` yourself into a merged state (LIVE-05) where `Sectors` is normalised to a 3-element list, indexing by the numeric key of dict deltas.
   - Acceptance: test with a snapshot followed by a delta for sector index `"1"` yields S1 unchanged and S2 updated.
+  - Note: resolved structurally by LIVE-05's merge - `Sectors` is held as an index-addressed list and flattened to 1-based `Sectors_N_Value` on read, so a 0-based delta lands on the sector it names. The acceptance test is `TestSectorIndexing` in `tests/test_live_state.py`. The legacy livef1 record path cannot be fixed (livef1 flattens both shapes onto the same names) and is documented as such pending LIVE-16.
   - Depends on: LIVE-05.
 
-- [x] **LIVE-05** · P0 · L — **Treat delta topics as state, not as independent records** — done in <pending>
+- [x] **LIVE-05** · P0 · L — **Treat delta topics as state, not as independent records** — done in 6e09a10
   - Files: `data/live_adapter.py` (whole `LiveDataProcessor`), `data/source_manager.py:281-491`.
   - Problem: Most topics are "keyframe + partial update" streams. The subscription completion returns the full state; subsequent `feed` messages carry only changed fields, sometimes with `_deleted` markers. The current design appends each parsed message to a list and later builds DataFrames row-by-row, so:
     - `TyreStintSeries`: the snapshot (per-driver **list** of stints) is silently dropped by livef1 (`if isinstance(stint, dict)` only); deltas like `{"TotalLaps": 12}` have no `Compound` and are dropped by `parse_tyre_stints` (`data/live_adapter.py:348`). `LapStart`/`LapEnd` never exist in the feed (it has `StartLaps`, `TotalLaps`, `New`, `TyresNotChanged`). Result: live stints are mostly empty or wrong.

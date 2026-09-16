@@ -465,6 +465,12 @@ class DataSourceManager:
         """Build a laps DataFrame from TimingData records with real lap
         numbers.
 
+        Legacy path, used only when nothing has fed the state layer (the
+        livef1 callback client). It cannot resolve the LIVE-04 sector
+        ambiguity - livef1 flattens the snapshot list and the 0-based delta
+        dict onto the same ``Sectors_N_Value`` names - so prefer
+        :meth:`LiveDataProcessor.laps_from_history`. Removed with LIVE-16.
+
         TimingData snapshots carry ``NumberOfLaps`` (completed-lap counter)
         and, once a lap is completed, ``LastLapTime_Value``. Each completed
         (lap, time) pair becomes one row; the in-progress lap is appended

@@ -233,3 +233,100 @@ class TestStateDerivedFrames:
         assert not frame.empty
         assert frame["driver_number"].is_unique
         assert isinstance(frame, pd.DataFrame)
+
+
+class TestSectorIndexing:
+    """LIVE-04: a delta keyed "1" is sector **2**, not sector 1.
+
+    livef1 flattened the snapshot list as ``Sectors_1_Value`` (sector 1) and
+    the 0-based delta dict as ``Sectors_1_Value`` (sector 2) through the same
+    name, so the two collided. Merging into an index-addressed list first
+    removes the ambiguity.
+    """
+
+    @staticmethod
+    def _snapshot() -> dict:
+        return {
+            "Lines": {
+                "1": {
+                    "Sectors": [
+                        {"Value": "30.100"},
+                        {"Value": "31.000"},
+                        {"Value": "25.000"},
+                    ]
+                }
+            }
+        }
+
+    def test_a_delta_for_index_one_updates_the_second_sector(self):
+        from data.live_adapter import LiveDataProcessor
+
+        state = LiveState()
+        state.update("TimingData", self._snapshot())
+        state.update("TimingData", {"Lines": {"1": {"Sectors": {"1": {"Value": "30.900"}}}}})
+
+        frame = LiveDataProcessor.timing_from_state(state.get("TimingData"))
+        row = frame.iloc[0]
+
+        assert row["Sectors_1_Value"] == "30.100", "sector 1 must be untouched"
+        assert row["Sectors_2_Value"] == "30.900", "the delta belongs to sector 2"
+        assert row["Sectors_3_Value"] == "25.000"
+
+    def test_a_delta_for_index_zero_updates_the_first_sector(self):
+        from data.live_adapter import LiveDataProcessor
+
+        state = LiveState()
+        state.update("TimingData", self._snapshot())
+        state.update("TimingData", {"Lines": {"1": {"Sectors": {"0": {"Value": "29.800"}}}}})
+
+        row = LiveDataProcessor.timing_from_state(state.get("TimingData")).iloc[0]
+
+        assert row["Sectors_1_Value"] == "29.800"
+        assert row["Sectors_2_Value"] == "31.000"
+
+    def test_columns_are_one_based_for_display(self):
+        from data.live_adapter import LiveDataProcessor
+
+        state = LiveState()
+        state.update("TimingData", self._snapshot())
+
+        columns = LiveDataProcessor.timing_from_state(state.get("TimingData")).columns
+
+        assert "Sectors_1_Value" in columns and "Sectors_0_Value" not in columns
+
+    def test_lap_rows_carry_the_sectors_in_order(self):
+        from data.live_adapter import LiveDataProcessor
+
+        state = LiveState()
+        state.update("TimingData", self._snapshot())
+        state.update("TimingData", {"Lines": {"1": {"Sectors": {"1": {"Value": "30.900"}}}}})
+
+        laps = LiveDataProcessor.laps_from_history([], state.get("TimingData"), {"1": "VER"})
+        row = laps.iloc[0]
+
+        assert row["Sector1Time"] == "30.100"
+        assert row["Sector2Time"] == "30.900"
+        assert row["Sector3Time"] == "25.000"
+
+    def test_segments_do_not_leak_into_sector_columns(self):
+        from data.live_adapter import LiveDataProcessor
+
+        state = LiveState()
+        state.update(
+            "TimingData",
+            {
+                "Lines": {
+                    "1": {
+                        "Sectors": [
+                            {"Value": "30.1", "Segments": [{"Status": 2051}]},
+                            {"Value": "31.0", "Segments": [{"Status": 2049}]},
+                            {"Value": "25.0", "Segments": [{"Status": 2048}]},
+                        ]
+                    }
+                }
+            },
+        )
+
+        columns = LiveDataProcessor.timing_from_state(state.get("TimingData")).columns
+
+        assert not any("Segments" in column for column in columns)
