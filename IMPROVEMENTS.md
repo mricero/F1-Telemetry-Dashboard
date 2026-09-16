@@ -199,7 +199,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     Normalise index-keyed dicts back to ordered lists when reading (`Sectors`, `Segments`, `Stints`). Keep **append-only history** only for true time series: `CarData.z`, `Position.z`, `RaceControlMessages`, `TeamRadio`, `LapCount`, lap completions derived from `TimingData.NumberOfLaps`, and `WeatherData` samples.
   - Acceptance: replaying a recorded session (TEST-01) produces, at the end, the same classification / stints / best laps as the FastF1 historical load of the same session (tolerances documented in the test).
 
-- [x] **LIVE-06** · P0 · S — **SessionInfo parsed wrongly → header shows "Race" instead of the GP name** — done in <pending>
+- [x] **LIVE-06** · P0 · S — **SessionInfo parsed wrongly → header shows "Race" instead of the GP name** — done in b368085
   - Files: `data/source_manager.py:479-491`.
   - Problem: `SessionInfo.Meeting` is a **nested dict** (`{"Name": "Italian Grand Prix", "Location": "Monza", "Country": {...}, "Circuit": {...}}`), and `Name` is the *session* name. The loop assigns `str(Meeting)` to `gp` and then overwrites it with `Name`.
   - Evidence: script with `{"Meeting": {"Name": "Italian Grand Prix"}, "Name": "Race", "Type": "Race"}` → `{'gp': 'Race', 'session_type': 'Race', ...}`. The existing test fixture uses `{"Meeting": "Bahrain"}` (a string), which is not the real shape (TEST-01).
@@ -375,7 +375,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Compute `best_s1/s2/s3` per driver over all valid laps (exclude deleted laps: FastF1 `Deleted` column / `IsAccurate`); session ideal = min over drivers; show both "personal ideal" and "session ideal".
   - Acceptance: synthetic laps where a driver's best S1 is on a slower lap → ideal uses it.
 
-- [ ] **DASH-07** · P1 · S — **Wind speed unit is wrong in the header**
+- [x] **DASH-07** · P1 · S — **Wind speed unit is wrong in the header** — done in <pending>
   - Files: `ui/dashboard.py:135-140`, `ui/layout.py:591`.
   - Problem: FastF1 `WindSpeed` is **m/s**. The weather tab labels it m/s; the header prints the same number as "km/h" (3.6× understatement). `layout.md` asks for km/h.
   - Fix: Convert `× 3.6` in the header (and in the tab if you standardise on km/h); unit test.

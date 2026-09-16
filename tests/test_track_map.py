@@ -226,7 +226,8 @@ class TestHeaderAndSectors:
 
         assert "Dutch GP" in html and "Qualifying" in html
         assert "30.2 &deg;C" in html  # latest track temp
-        assert "6.0 km/h E" in html  # wind speed + cardinal
+        # FastF1 WindSpeed is m/s; 6.0 m/s = 21.6 km/h (DASH-07).
+        assert "21.6 km/h E" in html
         assert "60:00" in html  # one-hour session clock
 
     def test_header_without_weather_uses_placeholders(self):
@@ -261,3 +262,34 @@ class TestHeaderAndSectors:
         assert html.count("f1-sector-card") == 3
         assert "Sector 1" in html and "24.300" in html
         assert "No data" in html  # empty sectors still render a card
+
+
+class TestWindUnits:
+    """DASH-07: FastF1 reports WindSpeed in m/s; the header labels it km/h."""
+
+    def test_ms_to_kmh_conversion(self):
+        from ui.dashboard import wind_kmh
+
+        assert wind_kmh(0.0) == pytest.approx(0.0)
+        assert wind_kmh(1.0) == pytest.approx(3.6)
+        assert wind_kmh(6.0) == pytest.approx(21.6)
+
+    def test_missing_wind_speed_is_none(self):
+        from ui.dashboard import wind_kmh
+
+        assert wind_kmh(None) is None
+        assert wind_kmh(float("nan")) is None
+
+    def test_header_converts_before_labelling_kmh(self):
+        weather = pd.DataFrame(
+            {
+                "Time": pd.to_timedelta([0], unit="s"),
+                "WindSpeed": [10.0],  # m/s
+                "WindDirection": [180],
+            }
+        )
+
+        html = header_html({"session_info": {}, "weather": weather, "is_live": False})
+
+        assert "36.0 km/h S" in html
+        assert "10.0 km/h" not in html

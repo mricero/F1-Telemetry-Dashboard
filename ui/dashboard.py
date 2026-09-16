@@ -61,6 +61,18 @@ def _esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
 
+# FastF1 (and the SignalR WeatherData feed) report WindSpeed in m/s, but the
+# header and the weather panel present km/h, which is what layout.md asks for.
+MS_TO_KMH = 3.6
+
+
+def wind_kmh(wind_speed) -> Optional[float]:
+    """Wind speed in km/h from the feed's m/s, or None when unavailable."""
+    if wind_speed is None or pd.isna(wind_speed):
+        return None
+    return float(wind_speed) * MS_TO_KMH
+
+
 def _flag_state(session_data: dict) -> str:
     """Current flag condition from track status, else the last flag message."""
     info = session_data.get("session_info") or {}
@@ -132,10 +144,10 @@ def header_html(session_data: dict) -> str:
 
     rain = latest.get("Rainfall")
     rain_yes = bool(rain) and not pd.isna(rain)
-    wind_speed = latest.get("WindSpeed")
+    wind_speed = wind_kmh(latest.get("WindSpeed"))
     wind = (
-        f"{float(wind_speed):.1f} km/h {_cardinal(latest.get('WindDirection'))}".strip()
-        if wind_speed is not None and not pd.isna(wind_speed)
+        f"{wind_speed:.1f} km/h {_cardinal(latest.get('WindDirection'))}".strip()
+        if wind_speed is not None
         else "--"
     )
 

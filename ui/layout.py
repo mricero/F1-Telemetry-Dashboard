@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
+from ui.dashboard import wind_kmh
 from processing.time_utils import format_m_s, seconds_series
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
@@ -590,15 +591,18 @@ def render_weather(weather_df: pd.DataFrame):
 
     latest = weather_df.iloc[-1]
     cols = st.columns(5)
+    # Wind arrives in m/s and is shown in km/h, matching the dashboard header.
     readings = [
-        ("🌡️ Air", "AirTemp", "°C"),
-        ("🛣️ Track", "TrackTemp", "°C"),
-        ("💧 Humidity", "Humidity", "%"),
-        ("🌬️ Wind", "WindSpeed", "m/s"),
-        ("🔽 Pressure", "Pressure", "mbar"),
+        ("🌡️ Air", "AirTemp", "°C", None),
+        ("🛣️ Track", "TrackTemp", "°C", None),
+        ("💧 Humidity", "Humidity", "%", None),
+        ("🌬️ Wind", "WindSpeed", "km/h", wind_kmh),
+        ("🔽 Pressure", "Pressure", "mbar", None),
     ]
-    for col, (label, key, unit) in zip(cols, readings):
+    for col, (label, key, unit, convert) in zip(cols, readings):
         value = latest.get(key)
+        if convert is not None:
+            value = convert(value)
         col.metric(label, f"{value:g} {unit}" if pd.notna(value) else "--")
 
     if "Rainfall" in weather_df.columns and bool(weather_df["Rainfall"].any()):
