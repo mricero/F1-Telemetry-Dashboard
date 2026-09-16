@@ -117,9 +117,24 @@ def render_session_selector(data_manager) -> dict:
         live_session = True
 
     telemetry_scope = SCOPE_LABELS["Fastest lap (comparable)"]
+    is_replay = source == "Replay (Saved)"
+
+    # A replay carries its own session identity, so Season/GP/Session/Scope
+    # would only mislead: the file is the whole selection.
+    if is_replay:
+        years = None
+        gp = None
+        session_type = None
+        with col2:
+            replays = data_manager.get_available_replays()
+            if replays:
+                replay_file = st.selectbox("Replay File", replays)
+            else:
+                st.info("No replay files available")
+                replay_file = None
 
     # Historical selection
-    if not live_session or "Replay" in source:
+    elif not live_session:
         with col2:
             this_year = datetime.now().year
             years = st.selectbox("Season", [this_year, this_year - 1, this_year - 2], index=0)
@@ -153,16 +168,7 @@ def render_session_selector(data_manager) -> dict:
         if gp is None:
             st.warning("No completed events for this season - pick another season.")
 
-        # Replay file selection
-        if "Replay" in source:
-            replays = data_manager.get_available_replays()
-            if replays:
-                replay_file = st.selectbox("Replay File", replays)
-            else:
-                st.info("No replay files available")
-                replay_file = None
-        else:
-            replay_file = None
+        replay_file = None
     else:
         years = None
         gp = None

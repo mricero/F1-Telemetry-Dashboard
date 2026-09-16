@@ -222,3 +222,33 @@ class TestBufferCap:
     def test_minimum_limit_enforced(self):
         a = SignalRLiveAdapter(buffer_limit=-5)
         assert a.buffer_limit >= 100
+
+
+class TestReplayFileResolution:
+    """HIST-01: the sidebar hands the manager a bare filename, not a path."""
+
+    def test_get_session_data_accepts_a_name_from_get_available_replays(self, manager):
+        manager.save_replay(_sample_session(), "Bahrain_R")
+        name = manager.get_available_replays()[0]
+        assert "/" not in name and "\\" not in name  # the selector's value
+
+        loaded = manager.get_session_data(source="replay", replay_file=name)
+
+        assert loaded["source"] == "replay"
+        assert loaded["session_info"]["gp"] == "Bahrain"
+
+    def test_full_paths_still_work(self, manager):
+        path = manager.save_replay(_sample_session(), "Bahrain_R")
+        loaded = manager.get_session_data(source="replay", replay_file=path)
+        assert loaded["source"] == "replay"
+
+    def test_missing_replay_reports_the_name_not_a_bare_oserror(self, manager):
+        with pytest.raises(FileNotFoundError, match="nope.pkl"):
+            manager.get_session_data(source="replay", replay_file="nope.pkl")
+
+    def test_path_traversal_is_confined_to_the_replay_dir(self, manager, tmp_path):
+        outside = tmp_path.parent / "outside.pkl"
+        outside.write_bytes(pickle.dumps({"session_info": {}}))
+
+        with pytest.raises(FileNotFoundError):
+            manager.get_session_data(source="replay", replay_file="../outside.pkl")

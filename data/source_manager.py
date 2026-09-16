@@ -566,8 +566,26 @@ class DataSourceManager:
             pickle.dump(payload, f)
         return str(filepath)
 
+    def _resolve_replay(self, replay_file: str) -> Path:
+        """Resolve a replay reference to a file inside ``replay_dir``.
+
+        The sidebar offers the bare names from :meth:`get_available_replays`,
+        so a relative name must not be opened against the process CWD. Only
+        the basename is honoured, which also confines traversal attempts
+        (``../secrets.pkl``) to the replay directory.
+        """
+        candidate = Path(replay_file)
+        if candidate.is_absolute() and candidate.is_file():
+            return candidate
+        path = self.replay_dir / candidate.name
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Replay file not found: {replay_file} (looked in {self.replay_dir})"
+            )
+        return path
+
     def _load_replay(self, filepath: str) -> dict:
-        with open(filepath, "rb") as f:
+        with open(self._resolve_replay(filepath), "rb") as f:
             payload = pickle.load(f)
 
         # Schema header (current) vs bare session dict (legacy replays)

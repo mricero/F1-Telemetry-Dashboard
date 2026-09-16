@@ -272,7 +272,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
 ---
 ## 4. P0/P1 — Historical & replay sources
 
-- [ ] **HIST-01** · P0 · S — **Replay source can't load files picked in the UI**
+- [x] **HIST-01** · P0 · S — **Replay source can't load files picked in the UI** — done in <pending>
   - Files: `ui/layout.py:156-165`, `data/source_manager.py:569-599`.
   - Problem: `get_available_replays()` returns `f.name` (bare filenames); `get_session_data(source="replay", replay_file=name)` → `_load_replay(name)` → `open(name)` relative to the process CWD, not `replay_dir`. Tests pass because they call `_load_replay` with a full path.
   - Evidence: script → `FileNotFoundError: [Errno 2] No such file or directory: 'x_20260916_113438.pkl'`.
@@ -499,7 +499,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 ---
 ## 8. P2 — Code quality, tooling & repo hygiene
 
-- [x] **REPO-01** · P1 · S — **A virtualenv is committed** — done in <pending>
+- [x] **REPO-01** · P1 · S — **A virtualenv is committed** — done in 969eff8
   - Files: `.venv311/` (46 tracked files: `Scripts/*.exe` Windows launchers, `pyvenv.cfg`, jupyter extensions JS).
   - Problem: `.venv311/` is in `.gitignore` but was committed before; the `.git` directory is 7.6 MB largely for this. Windows binaries in a Python repo also trip security scanners. The project's sync config already has to exclude it.
   - Fix: `git rm -r --cached .venv311 && git commit`; optionally purge from history with `git filter-repo --path .venv311 --invert-paths` (coordinate with collaborators — it rewrites history).

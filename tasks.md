@@ -234,3 +234,4 @@ Items from `IMPROVEMENTS.md` (2026-09-16 audit), worked one per commit in the §
 ### M0 — Quick correctness wins
 
 - **REPO-01** — Untracked the committed `.venv311/` virtualenv (46 files, incl. Windows `.exe` launchers) from the git index; added `tests/test_repo_hygiene.py` asserting no `venv` paths are tracked and that the ignore rules are in place.
+- **HIST-01** — Replay files picked in the sidebar now load: `DataSourceManager._resolve_replay` resolves a bare name against `replay_dir` (confining `../` traversal) and raises a named `FileNotFoundError`; the Season/GP/Session/Scope widgets are hidden for the Replay source. New `tests/test_session_selector.py` drives the selector through an offline `AppTest`.
