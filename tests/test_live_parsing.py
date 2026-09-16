@@ -244,7 +244,7 @@ class TestPollPipeline:
                 "TeamName": "Ferrari",
             }
         ]
-        adapter._data_buffer["SessionInfo"] = [{"Meeting": "Bahrain", "Type": "Race"}]
+        adapter._data_buffer["SessionInfo"] = [REAL_SESSION_INFO]
 
     def test_poll_shapes_match_unified_dict(self, manager):
         self._prime_buffers(manager.live)
@@ -259,7 +259,7 @@ class TestPollPipeline:
         assert {"X", "Y"} <= set(snap["location"]["HAM"].columns)
         assert snap["stints"]["Compound"].iloc[0] == "HARD"
         assert snap["drivers"]["name_acronym"].iloc[0] == "HAM"
-        assert snap["session_info"]["gp"] == "Bahrain"
+        assert snap["session_info"]["gp"] == "Italian Grand Prix"
 
     def test_poll_laps_feed_metrics_store(self, manager):
         from processing.metrics_store import MetricsStore
@@ -281,3 +281,71 @@ class TestPollPipeline:
     def test_adapter_start_async_rejects_double_start(self, manager):
         manager.live._running = True  # pretend a stream is already up
         manager.live.start_async()  # must be a no-op, no crash
+
+
+# The real SessionInfo payload: Meeting is a nested dict and the top-level
+# "Name" is the *session* name, not the Grand Prix (LIVE-06 / TEST-01).
+REAL_SESSION_INFO = {
+    "Meeting": {
+        "Key": 1259,
+        "Name": "Italian Grand Prix",
+        "OfficialName": "FORMULA 1 PIRELLI GRAN PREMIO D'ITALIA 2026",
+        "Location": "Monza",
+        "Country": {"Key": 13, "Code": "ITA", "Name": "Italy"},
+        "Circuit": {"Key": 39, "ShortName": "Monza"},
+    },
+    "ArchiveStatus": {"Status": "Complete"},
+    "Key": 9693,
+    "Type": "Race",
+    "Name": "Race",
+    "StartDate": "2026-09-06T15:00:00",
+    "EndDate": "2026-09-06T17:00:00",
+    "GmtOffset": "02:00:00",
+    "Path": "2026/2026-09-06_Italian_Grand_Prix/2026-09-06_Race/",
+}
+
+
+class TestSessionInfoParsing:
+    """LIVE-06: SessionInfo.Meeting is a dict; Name is the session, not the GP."""
+
+    @pytest.fixture
+    def manager(self, monkeypatch):
+        monkeypatch.setattr(
+            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+        )
+        from data.source_manager import DataSourceManager
+
+        return DataSourceManager()
+
+    @staticmethod
+    def _info(manager, payload):
+        manager.live._data_buffer["SessionInfo"] = [payload]
+        return manager._session_info_from_feed(manager.live)
+
+    def test_gp_comes_from_the_nested_meeting_name(self, manager):
+        info = self._info(manager, REAL_SESSION_INFO)
+        assert info["gp"] == "Italian Grand Prix"
+
+    def test_session_name_and_type_are_distinct_from_the_gp(self, manager):
+        info = self._info(manager, REAL_SESSION_INFO)
+        assert info["session_type"] == "Race"
+        assert info["session_name"] == "Race"
+
+    def test_year_comes_from_start_date(self, manager):
+        info = self._info(manager, REAL_SESSION_INFO)
+        assert info["year"] == 2026
+
+    def test_circuit_key_and_gmt_offset_are_exposed(self, manager):
+        info = self._info(manager, REAL_SESSION_INFO)
+        assert info["circuit_key"] == 39
+        assert info["gmt_offset"] == "02:00:00"
+
+    def test_partial_payload_does_not_raise(self, manager):
+        info = self._info(manager, {"Name": "Practice 1", "Type": "Practice"})
+        assert info["session_type"] == "Practice"
+        assert info["session_name"] == "Practice 1"
+        assert info["gp"] == "Live Session"  # unknown, not the session name
+
+    def test_no_session_info_keeps_the_placeholder(self, manager):
+        info = self._info(manager, {})
+        assert info["gp"] == "Live Session"

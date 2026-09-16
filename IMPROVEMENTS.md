@@ -152,7 +152,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: With buffers holding only `TimingData` + `RaceControlMessages` + `WeatherData`, the live fragment renders the timing table, race control and weather, plus the auth banner (AppTest).
   - Depends on: LIVE-01 (the list of gated topics should be re-confirmed live).
 
-- [x] **LIVE-03** · P0 · S — **Live GPS distance is 10× too large** — done in <pending>
+- [x] **LIVE-03** · P0 · S — **Live GPS distance is 10× too large** — done in 59a13b7
   - Files: `data/live_adapter.py:438-466` (`distance_at`, line 457), `data/fastf1_adapter.py:12, 185-199`.
   - Problem: `Position.z` X/Y/Z are in **1/10 m** (same feed FastF1 parses; FastF1's own adapter here divides by `POSITION_UNITS_PER_METRE`). `LiveDataProcessor.distance_at` uses the raw arc length, so live "Distance" is decimetres labelled as metres. Every live telemetry x-axis, and anything integrating over it, is off by 10×.
   - Evidence: script — a straight 10 000-unit X track returned `10000.0` "metres" (should be 1000).
@@ -199,7 +199,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     Normalise index-keyed dicts back to ordered lists when reading (`Sectors`, `Segments`, `Stints`). Keep **append-only history** only for true time series: `CarData.z`, `Position.z`, `RaceControlMessages`, `TeamRadio`, `LapCount`, lap completions derived from `TimingData.NumberOfLaps`, and `WeatherData` samples.
   - Acceptance: replaying a recorded session (TEST-01) produces, at the end, the same classification / stints / best laps as the FastF1 historical load of the same session (tolerances documented in the test).
 
-- [ ] **LIVE-06** · P0 · S — **SessionInfo parsed wrongly → header shows "Race" instead of the GP name**
+- [x] **LIVE-06** · P0 · S — **SessionInfo parsed wrongly → header shows "Race" instead of the GP name** — done in <pending>
   - Files: `data/source_manager.py:479-491`.
   - Problem: `SessionInfo.Meeting` is a **nested dict** (`{"Name": "Italian Grand Prix", "Location": "Monza", "Country": {...}, "Circuit": {...}}`), and `Name` is the *session* name. The loop assigns `str(Meeting)` to `gp` and then overwrites it with `Name`.
   - Evidence: script with `{"Meeting": {"Name": "Italian Grand Prix"}, "Name": "Race", "Type": "Race"}` → `{'gp': 'Race', 'session_type': 'Race', ...}`. The existing test fixture uses `{"Meeting": "Bahrain"}` (a string), which is not the real shape (TEST-01).

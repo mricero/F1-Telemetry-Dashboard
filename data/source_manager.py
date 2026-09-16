@@ -477,15 +477,46 @@ class DataSourceManager:
 
     @staticmethod
     def _session_info_from_feed(adapter: SignalRLiveAdapter) -> dict:
-        """Best-effort session metadata from SessionInfo / SessionStatus."""
-        info = {"gp": "Live Session", "session_type": "", "year": None}
+        """Session metadata from SessionInfo / SessionStatus.
+
+        ``SessionInfo.Meeting`` is a **nested dict** holding the Grand Prix
+        (``Name``, ``Location``, ``Country``, ``Circuit``); the top-level
+        ``Name`` is the *session* name ("Race", "Practice 1"). Reading them
+        the other way round put "Race" in the header where the GP belongs.
+        """
+        info: Dict[str, Any] = {
+            "gp": "Live Session",
+            "session_type": "",
+            "session_name": "",
+            "year": None,
+            "circuit_key": None,
+            "gmt_offset": "",
+        }
         si = adapter.get_latest_data("SessionInfo") or {}
-        for key, target in (("Meeting", "gp"), ("Name", "gp"), ("Type", "session_type")):
-            val = si.get(key)
-            if val and target == "gp":
-                info["gp"] = str(val)
-            elif val:
-                info[target] = str(val)
+
+        meeting = si.get("Meeting")
+        if isinstance(meeting, dict):
+            if meeting.get("Name"):
+                info["gp"] = str(meeting["Name"])
+            circuit = meeting.get("Circuit")
+            if isinstance(circuit, dict):
+                info["circuit_key"] = circuit.get("Key")
+        elif meeting:  # defensive: a bare string is not the documented shape
+            info["gp"] = str(meeting)
+
+        if si.get("Name"):
+            info["session_name"] = str(si["Name"])
+        if si.get("Type"):
+            info["session_type"] = str(si["Type"])
+        if si.get("GmtOffset"):
+            info["gmt_offset"] = str(si["GmtOffset"])
+
+        start = si.get("StartDate")
+        if start:
+            year = pd.to_datetime(start, errors="coerce")
+            if pd.notna(year):
+                info["year"] = int(year.year)
+
         status = adapter.get_latest_data("SessionStatus") or {}
         info["status"] = status.get("Status", "")
         return info
