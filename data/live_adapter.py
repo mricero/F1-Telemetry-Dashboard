@@ -175,6 +175,10 @@ class SignalRLiveAdapter:
         self.lap_history: List[Dict] = []
         self._lap_counter: Dict[str, int] = {}
         self._data_buffer: Dict[str, List[Dict]] = defaultdict(list)
+        # The client runs on its own thread while Streamlit polls from the
+        # script thread: without this, trimming a buffer shifted the reader's
+        # slice underneath it and records were skipped or duplicated.
+        self._buffer_lock = threading.RLock()
         self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -221,14 +225,17 @@ class SignalRLiveAdapter:
             lap_number = self._lap_counter.get(driver)
             if not value or not lap_number:
                 continue
+            with self._buffer_lock:
+                recent = self.lap_history[-40:]
             if any(
                 entry["driver_number"] == driver and entry["LapNumber"] == lap_number
-                for entry in reversed(self.lap_history[-40:])
+                for entry in recent
             ):
                 continue  # the same completion repeated in a later message
-            self.lap_history.append(
-                {"driver_number": driver, "LapNumber": lap_number, "LapTime": value}
-            )
+            with self._buffer_lock:
+                self.lap_history.append(
+                    {"driver_number": driver, "LapNumber": lap_number, "LapTime": value}
+                )
 
     def seed_state(self, snapshot: Dict[str, Any]) -> None:
         """Apply a subscription snapshot: ``{topic: full_state}``."""
@@ -237,14 +244,15 @@ class SignalRLiveAdapter:
     def _buffer_topic(self, topic: str, records: Any):
         """Append parsed records to a topic buffer, dropping the oldest
         entries beyond ``buffer_limit`` to keep memory bounded."""
-        buf = self._data_buffer[topic]
-        if isinstance(records, list):
-            buf.extend(records)
-        else:
-            buf.append(records)
-        overflow = len(buf) - self.buffer_limit
-        if overflow > 0:
-            del buf[:overflow]
+        with self._buffer_lock:
+            buf = self._data_buffer[topic]
+            if isinstance(records, list):
+                buf.extend(records)
+            else:
+                buf.append(records)
+            overflow = len(buf) - self.buffer_limit
+            if overflow > 0:
+                del buf[:overflow]
 
     def start_livef1_client(self, topics: List[str] = None, log_file: str = None):
         """Start LiveF1 RealF1Client with async callbacks.
@@ -314,24 +322,37 @@ class SignalRLiveAdapter:
         """Register callback for a topic."""
         self._callbacks[topic].append(callback)
 
+    def recorded_laps(self) -> List[Dict]:
+        """A snapshot copy of the recorded lap completions."""
+        with self._buffer_lock:
+            return list(self.lap_history)
+
     def get_buffered_data(self, topic: str) -> List[Dict]:
-        """Get buffered data for a topic."""
-        return self._data_buffer.get(topic, [])
+        """A snapshot copy of a topic's buffer.
+
+        A copy, not the live list: the client thread keeps appending and
+        trimming, and a reader iterating the real list would see records shift
+        under it.
+        """
+        with self._buffer_lock:
+            return list(self._data_buffer.get(topic, []))
 
     def get_latest_data(self, topic: str) -> Optional[Dict]:
         """Get most recent record for a topic."""
-        data = self._data_buffer.get(topic, [])
-        return data[-1] if data else None
+        with self._buffer_lock:
+            data = self._data_buffer.get(topic, [])
+            return data[-1] if data else None
 
     def clear_buffer(self, topic: str = None):
         """Clear buffered data."""
-        if topic:
-            self._data_buffer[topic] = []
-        else:
-            self._data_buffer.clear()
-            self.state.clear()
-            self.lap_history.clear()
-            self._lap_counter.clear()
+        with self._buffer_lock:
+            if topic:
+                self._data_buffer[topic] = []
+            else:
+                self._data_buffer.clear()
+                self.state.clear()
+                self.lap_history.clear()
+                self._lap_counter.clear()
 
     def is_running(self) -> bool:
         """Check if client is running."""

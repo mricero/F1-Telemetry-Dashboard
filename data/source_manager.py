@@ -413,7 +413,7 @@ class DataSourceManager:
         # the legacy reconstruction from buffered TimingData records ---
         if adapter.lap_history or timing_state:
             laps_df = LiveDataProcessor.laps_from_history(
-                adapter.lap_history, timing_state, acr_by_num
+                adapter.recorded_laps(), timing_state, acr_by_num
             )
         else:
             laps_df = self._laps_from_timing(timing_df, acr_by_num)

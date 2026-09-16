@@ -159,7 +159,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Divide by `POSITION_UNITS_PER_METRE` (import the constant; don't duplicate it). Add a test asserting 1000 m for that input.
   - Acceptance: new unit test passes; existing `test_source_manager` distance tests updated to real units.
 
-- [x] **LIVE-04** · P0 · S — **TimingData sector keys collide between snapshot and delta** — done in <pending>
+- [x] **LIVE-04** · P0 · S — **TimingData sector keys collide between snapshot and delta** — done in 78176ec
   - Files: `data/source_manager.py:473-476`, `data/live_adapter.py:313-327`.
   - Problem: livef1's `parse_timing_data` flattens a **list** (`"Sectors": [ {...}, {...}, {...} ]`, the snapshot form) as `Sectors_{index+1}_Value`, but a **dict** (`"Sectors": {"1": {...}}`, the delta form, 0-based keys) as `Sectors_1_Value` via its recursive prefix path. So in deltas `Sectors_1_Value` is sector **2**. The app reads `Sectors_{i}_Value` for i=1..3 as S1..S3.
   - Evidence (run against installed livef1):
@@ -208,11 +208,12 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: `gp = si["Meeting"]["Name"]`, `session_name = si["Name"]`, `session_type = si["Type"]`, `circuit_key = si["Meeting"]["Circuit"]["Key"]`, `year` from `StartDate`, `gmt_offset = si["GmtOffset"]`.
   - Acceptance: unit test with the real nested shape.
 
-- [ ] **LIVE-07** · P0 · S — **Buffers are not thread-safe**
+- [x] **LIVE-07** · P0 · S — **Buffers are not thread-safe** — done in <pending>
   - Files: `data/live_adapter.py:157-167, 237-251`.
   - Problem: The client thread `extend`s and `del buf[:overflow]` on lists that the Streamlit script thread is iterating (`get_buffered_data` returns the *same* list object). Python won't raise for list mutation during iteration, but slices shift under the reader → skipped/duplicated rows, and `defaultdict` insertion during `.get` on another thread is a data race.
   - Fix: `threading.Lock` around writes; readers get `list(buf)` copies or, better, an immutable snapshot object published atomically after each merge (§12). Use `collections.deque(maxlen=...)` for bounded series.
   - Acceptance: a stress test with a writer thread appending 100k records while a reader polls 1000 times never sees non-monotonic timestamps within a driver.
+  - Note: an `RLock` guards every buffer write, trim and read; `get_buffered_data`/`recorded_laps` hand back copies, and `LiveState` already had its own lock. The stress test runs a writer thread against a polling reader and asserts the reader never observes out-of-order records.
 
 - [ ] **LIVE-08** · P0 · M — **"Stop Live" doesn't stop; no reconnect, no heartbeat, no staleness detection**
   - Files: `data/live_adapter.py:210-231, 253-266`, `ui/layout.py:851-853`.
