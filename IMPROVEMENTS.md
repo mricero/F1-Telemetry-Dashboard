@@ -296,13 +296,13 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Either (a) remove the source from the selector until fixed, or (b) write a proper adapter with explicit column maps, lap-relative distance for the fastest lap (filter `LapNo == fastest`), and resolve the meeting via `meeting_key/session_key` from `Index.json`/FastF1 schedule instead of name heuristics. Mark as experimental in the UI.
   - Acceptance: network test (`F1_NETWORK_TESTS=1`) loads 2025 Bahrain Q via livef1 and gets ≥18 drivers with non-empty telemetry, location and laps; offline unit test with a captured silver-table sample.
 
-- [x] **HIST-04** · P1 · S — **Auto fallback is stuck in 2025** — done in <pending>
+- [x] **HIST-04** · P1 · S — **Auto fallback is stuck in 2025** — done in 5ae2645
   - Files: `data/fastf1_adapter.py:27-36`, `data/source_manager.py:493-499`.
   - Problem: `get_available_sessions(years=None)` defaults to `[2023, 2024, 2025]`; `_get_most_recent_completed_race()` calls it without years, so in September 2026 "most recent completed race" is the 2025 finale. The hard fallback is "2024 Abu Dhabi". `config.default_year` (`DEFAULT_YEAR`) exists but is never read.
   - Fix: `years = [now.year, now.year - 1]`; pick the latest event whose **race session end** is in the past (use `Session5DateUtc`). Use config defaults only when the schedule is unavailable.
   - Acceptance: frozen-clock test on 2026-09-16 returns the most recent 2026 round.
 
-- [ ] **HIST-05** · P1 · S — **Session list ignores the weekend format**
+- [x] **HIST-05** · P1 · S — **Session list ignores the weekend format** — done in <pending>
   - Files: `ui/layout.py:136-137`.
   - Problem: Static `["FP1","FP2","FP3","Q","S","R"]`: sprint weekends have no FP2/FP3 but do have **Sprint Qualifying ("SQ")**, which is missing entirely; normal weekends have no Sprint. Picking a non-existent session fails at load time with a FastF1 error.
   - Fix: Build the list from the event's `Session1..Session5` names (FastF1 `get_event_schedule`), mapping names → identifiers (`Practice 1`→`FP1`, `Sprint Qualifying`/`Sprint Shootout`→`SQ`, `Sprint`→`S`, `Qualifying`→`Q`, `Race`→`R`), and only include sessions that have started.

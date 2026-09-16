@@ -12,6 +12,7 @@ import streamlit as st
 from datetime import datetime
 from typing import Dict, Optional
 
+from data.fastf1_adapter import session_codes_for_event
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from ui.dashboard import wind_kmh
 from processing.time_utils import format_m_s, seconds_series
@@ -96,6 +97,22 @@ def _event_names_cached(_data_manager, year: int) -> list:
     return sorted(meetings["EventName"].dropna().unique().tolist())
 
 
+# Sprint weekends have no FP2/FP3 but do have SQ, so the session list comes
+# from the event's own schedule rather than a fixed six-entry list.
+FALLBACK_SESSION_TYPES = ["FP1", "FP2", "FP3", "Q", "S", "R"]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _session_codes_cached(_data_manager, year: int, gp: str) -> list:
+    meetings = _data_manager.fastf1.get_available_sessions(year)
+    if meetings is None or meetings.empty or "EventName" not in meetings.columns:
+        return []
+    matches = meetings[meetings["EventName"] == gp]
+    if matches.empty:
+        return []
+    return session_codes_for_event(matches.iloc[0])
+
+
 def render_session_selector(data_manager) -> dict:
     """Session selection with live detection."""
     # Check for live session
@@ -149,7 +166,9 @@ def render_session_selector(data_manager) -> dict:
                 st.selectbox("Grand Prix", ["No completed events"], disabled=True)
                 gp = None
 
-        session_types = ["FP1", "FP2", "FP3", "Q", "S", "R"]
+        session_types = (gp and _session_codes_cached(data_manager, years, gp)) or (
+            FALLBACK_SESSION_TYPES
+        )
         session_type = st.selectbox("Session", session_types, index=len(session_types) - 1)
 
         scope_label = st.radio(

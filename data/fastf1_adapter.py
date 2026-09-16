@@ -25,6 +25,51 @@ def _utcnow() -> pd.Timestamp:
     return pd.Timestamp.now(tz="UTC")
 
 
+# FastF1 schedule session names -> the identifiers `fastf1.get_session` takes.
+# Sprint weekends have no FP2/FP3 but do have a sprint qualifying session,
+# which F1 called "Sprint Shootout" in 2023 and "Sprint Qualifying" since.
+SESSION_NAME_TO_CODE = {
+    "Practice 1": "FP1",
+    "Practice 2": "FP2",
+    "Practice 3": "FP3",
+    "Sprint Qualifying": "SQ",
+    "Sprint Shootout": "SQ",
+    "Sprint": "S",
+    "Qualifying": "Q",
+    "Race": "R",
+}
+
+# FastF1 exposes at most five sessions per event.
+MAX_SESSIONS_PER_EVENT = 5
+
+
+def session_codes_for_event(event: pd.Series) -> list[str]:
+    """Session identifiers actually held at an event, in weekend order.
+
+    Built from the schedule's ``Session1..Session5`` names rather than a fixed
+    list, so sprint weekends offer SQ/S and conventional ones FP2/FP3. Only
+    sessions that have already started are included - picking a session that
+    has not run fails deep inside FastF1.
+    """
+    if event is None:
+        return []
+
+    now = _utcnow()
+    codes: list[str] = []
+    for i in range(1, MAX_SESSIONS_PER_EVENT + 1):
+        name = event.get(f"Session{i}")
+        if name is None or pd.isna(name):
+            continue
+        code = SESSION_NAME_TO_CODE.get(str(name).strip())
+        if code is None:  # testing days and anything F1 renames later
+            continue
+        start = pd.to_datetime(event.get(f"Session{i}DateUtc"), utc=True, errors="coerce")
+        if pd.notna(start) and start > now:
+            continue
+        codes.append(code)
+    return codes
+
+
 def latest_completed_event(schedule: pd.DataFrame) -> Optional[pd.Series]:
     """The most recently *finished* round in a schedule, or None.
 

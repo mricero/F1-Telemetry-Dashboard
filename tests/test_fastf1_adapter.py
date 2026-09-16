@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 from unittest.mock import Mock, patch
 import pandas as pd
-from data.fastf1_adapter import SCOPE_SESSION, FastF1Adapter, latest_completed_event
+from data.fastf1_adapter import (
+    SCOPE_SESSION,
+    FastF1Adapter,
+    latest_completed_event,
+    session_codes_for_event,
+)
 
 
 def _merged_telemetry_frame() -> pd.DataFrame:
@@ -408,3 +413,66 @@ class TestScheduleYears:
 
     def test_latest_completed_event_on_an_empty_schedule(self):
         assert latest_completed_event(pd.DataFrame()) is None
+
+
+class TestSessionCodes:
+    """HIST-05: the session list must follow the weekend's own format."""
+
+    @staticmethod
+    def _event(names, offsets_days, year=2025):
+        """A schedule row: Session1..Session5 names + naive-UTC dates."""
+        base = pd.Timestamp("2025-05-02T12:00:00")
+        row = {"EventName": "Test GP", "Year": year}
+        for i, (name, offset) in enumerate(zip(names, offsets_days), start=1):
+            row[f"Session{i}"] = name
+            row[f"Session{i}DateUtc"] = base + pd.Timedelta(offset, unit="h")
+        return pd.Series(row)
+
+    def _now(self, monkeypatch, when="2025-05-10T00:00:00"):
+        monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: pd.Timestamp(when, tz="UTC"))
+
+    def test_conventional_weekend(self, monkeypatch):
+        self._now(monkeypatch)
+        event = self._event(
+            ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"],
+            [0, 4, 24, 28, 48],
+        )
+
+        assert session_codes_for_event(event) == ["FP1", "FP2", "FP3", "Q", "R"]
+
+    def test_sprint_weekend_has_sq_and_no_fp2_fp3(self, monkeypatch):
+        self._now(monkeypatch)
+        event = self._event(
+            ["Practice 1", "Sprint Qualifying", "Sprint", "Qualifying", "Race"],
+            [0, 4, 24, 28, 48],
+        )
+
+        assert session_codes_for_event(event) == ["FP1", "SQ", "S", "Q", "R"]
+
+    def test_2023_sprint_shootout_maps_to_sq(self, monkeypatch):
+        self._now(monkeypatch)
+        event = self._event(
+            ["Practice 1", "Qualifying", "Sprint Shootout", "Sprint", "Race"],
+            [0, 4, 24, 28, 48],
+        )
+
+        assert session_codes_for_event(event) == ["FP1", "Q", "SQ", "S", "R"]
+
+    def test_sessions_that_have_not_started_are_excluded(self, monkeypatch):
+        # Friday evening: FP1/FP2 are done, the rest of the weekend is not.
+        self._now(monkeypatch, "2025-05-02T17:00:00")
+        event = self._event(
+            ["Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race"],
+            [0, 4, 24, 28, 48],
+        )
+
+        assert session_codes_for_event(event) == ["FP1", "FP2"]
+
+    def test_unknown_session_names_are_skipped(self, monkeypatch):
+        self._now(monkeypatch)
+        event = self._event(["Practice 1", "Test Day", "Race"], [0, 4, 48])
+
+        assert session_codes_for_event(event) == ["FP1", "R"]
+
+    def test_schedule_without_session_columns_returns_nothing(self):
+        assert session_codes_for_event(pd.Series({"EventName": "Test GP"})) == []
