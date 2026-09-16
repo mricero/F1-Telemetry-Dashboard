@@ -587,3 +587,94 @@ class TestDashboardFrames:
         segments = rows[0]["sectors"][0]["segments"]
 
         assert segments != ["NONE"] * SEGMENTS_PER_SECTOR
+
+
+class TestIdealLap:
+    """DASH-06: the ideal lap sums each sector's best over *all* laps."""
+
+    @staticmethod
+    def _session_with_split_bests() -> dict:
+        """VER's best S1 is on a slower lap than his best overall lap."""
+        laps = pd.DataFrame(
+            [
+                # lap, s1, s2, s3 -> lap time
+                {"Driver": "VER", "LapNumber": 1, "s": (29.0, 31.0, 31.0)},
+                {"Driver": "VER", "LapNumber": 2, "s": (30.0, 30.0, 30.0)},
+                {"Driver": "HAM", "LapNumber": 1, "s": (30.5, 30.5, 30.5)},
+            ]
+        )
+        rows = []
+        for _, row in laps.iterrows():
+            s1, s2, s3 = row["s"]
+            rows.append(
+                {
+                    "Driver": row["Driver"],
+                    "LapNumber": row["LapNumber"],
+                    "LapTime": timedelta(seconds=s1 + s2 + s3),
+                    "Sector1Time": timedelta(seconds=s1),
+                    "Sector2Time": timedelta(seconds=s2),
+                    "Sector3Time": timedelta(seconds=s3),
+                    "Compound": "SOFT",
+                    "Stint": 1,
+                    "SpeedST": 300.0,
+                }
+            )
+        return {
+            "session_info": {"session_type": "FP1"},
+            "laps": _laps(rows),
+            "drivers": _drivers(
+                ("VER", "Red Bull Racing", "#3671c6"), ("HAM", "Ferrari", "#e80020")
+            ),
+            "telemetry": {},
+            "is_live": False,
+        }
+
+    def test_personal_ideal_uses_the_best_sector_from_any_lap(self):
+        rows = build_timing_rows(self._session_with_split_bests())
+        ver = next(r for r in rows if r["code"] == "VER")
+
+        # Best lap is 90.0 (30/30/30) but S1 of 29.0 came on the 91.0 lap.
+        assert ver["best_seconds"] == pytest.approx(90.0)
+        assert ver["best_sectors"] == pytest.approx([29.0, 30.0, 30.0])
+        assert ver["personal_ideal"] == pytest.approx(89.0)
+
+    def test_session_ideal_takes_each_sector_from_whoever_was_quickest(self):
+        rows = build_timing_rows(self._session_with_split_bests())
+
+        assert theoretical_best(rows) == pytest.approx(89.0)
+
+    def test_diff_is_measured_against_the_session_ideal(self):
+        rows = build_timing_rows(self._session_with_split_bests())
+        ver = next(r for r in rows if r["code"] == "VER")
+
+        assert ver["diff"] == "+1.000"  # 90.0 vs the 89.0 ideal
+
+    def test_deleted_laps_do_not_set_sector_bests(self):
+        session = self._session_with_split_bests()
+        session["laps"]["Deleted"] = [True, False, False]
+
+        rows = build_timing_rows(session)
+        ver = next(r for r in rows if r["code"] == "VER")
+
+        assert ver["best_sectors"] == pytest.approx([30.0, 30.0, 30.0])
+        assert ver["personal_ideal"] == pytest.approx(90.0)
+
+    def test_inaccurate_laps_do_not_set_sector_bests(self):
+        session = self._session_with_split_bests()
+        session["laps"]["IsAccurate"] = [False, True, True]
+
+        rows = build_timing_rows(session)
+        ver = next(r for r in rows if r["code"] == "VER")
+
+        assert ver["best_sectors"] == pytest.approx([30.0, 30.0, 30.0])
+
+    def test_a_driver_without_sector_times_has_no_ideal(self):
+        session = self._session_with_split_bests()
+        session["laps"] = session["laps"].drop(
+            columns=["Sector1Time", "Sector2Time", "Sector3Time"]
+        )
+
+        rows = build_timing_rows(session)
+
+        assert all(r["personal_ideal"] is None for r in rows)
+        assert theoretical_best(rows) is None

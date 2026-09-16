@@ -230,6 +230,14 @@ def tower_html(rows: Sequence[dict]) -> str:
         )
         speed = row.get("speed_kmh")
         speed_text = f"{speed:.0f} km/h" if speed is not None and pd.notna(speed) else "—"
+        # Diff is measured against the session ideal; the driver's own ideal
+        # lap is the other half of the picture (spec section 3.12).
+        personal_ideal = row.get("personal_ideal")
+        ideal_hint = (
+            f"Personal ideal {format_lap(personal_ideal)}"
+            if personal_ideal is not None
+            else "No personal ideal lap yet"
+        )
 
         sector_cells = "".join(
             f'<td><span class="f1-time f1-mono">{_esc(s["display"])}</span>'
@@ -249,7 +257,8 @@ def tower_html(rows: Sequence[dict]) -> str:
             f'<td><span class="f1-time f1-mono f1-dim">{_esc(row["gap"])}</span></td>'
             f"{sector_cells}"
             f"<td>{_tyres_html(row['tyre_history'])}</td>"
-            f'<td><span class="f1-time f1-mono f1-dim">{_esc(row["diff"])}</span></td>'
+            f'<td><span class="f1-time f1-mono f1-dim" title="{_esc(ideal_hint)}">'
+            f'{_esc(row["diff"])}</span></td>'
             f'<td><span class="f1-time f1-mono">{_esc(speed_text)}</span></td>'
             "</tr>"
         )
@@ -342,7 +351,8 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     best = theoretical_best(rows)
     leader = rows[0]["best_lap"] if rows else "—"
     ideal = (
-        f'<div class="f1-bench-label" style="margin-top:4px">Ideal {format_lap(best)}</div>'
+        f'<div class="f1-bench-label" style="margin-top:4px">'
+        f"Session ideal {format_lap(best)}</div>"
         if best is not None
         else ""
     )

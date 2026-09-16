@@ -366,14 +366,14 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Keep the reference trace's `Distance` column through projection and split at `np.searchsorted(distance, np.linspace(d0, d1, n+1))`. Share one `segment_boundaries(distance, n)` helper between timing and map (and DASH-03's real sector boundaries).
   - Acceptance: synthetic trace with 90 % of points in the first 10 % of distance → first slice covers ~10 % of the path length, not 90 %.
 
-- [x] **DASH-05** · P1 · S — **"Full session" scope breaks the dashboard** — done in <pending>
+- [x] **DASH-05** · P1 · S — **"Full session" scope breaks the dashboard** — done in 0b3f047
   - Files: `ui/dashboard.py:301-340`, `processing/timing.py:229-234`, `ui/track_map.py:42-51`.
   - Problem: With `telemetry_scope="session"`, `micro_sector_times` slices the *whole race* (~300 km) into 15 pieces, the dominance map is meaningless, and `_reference_trace` picks the longest trace (all laps) → an SVG path with tens of thousands of `L` commands, drawn three times (casing, ribbon, dominance). Page weight and render time spike.
   - Fix: The dashboard always uses per-driver fastest-lap frames (compute them independently of the chart scope); decimate the outline to ≤1 500 points (Ramer–Douglas–Peucker or uniform distance resampling).
   - Acceptance: session scope on a race renders the dashboard with the same mini-sector/dominance output as fastest scope; SVG size < 150 KB.
   - Note: verified on the real 2023 Bahrain race in both scopes. Adds `dashboard_telemetry`/`dashboard_location` to the unified dict (**`REPLAY_SCHEMA_VERSION` 5**), stored in replays only when they differ from the chart frames. Under session scope this costs a second per-driver merge; HIST-08's session cache makes that cheap.
 
-- [ ] **DASH-06** · P2 · S — **"Theoretical best" isn't**
+- [x] **DASH-06** · P2 · S — **"Theoretical best" isn't** — done in <pending>
   - Files: `processing/timing.py:198-210, 252-268, 310-315`, `ui/dashboard.py:329-339`.
   - Problem: Sector times per row come from the driver's **fastest lap**; `theoretical_best` sums the minimum of those. The true ideal lap is the sum of each sector's best across **all** laps (and per driver, the driver's own best sectors). "Diff" is therefore misleading.
   - Fix: Compute `best_s1/s2/s3` per driver over all valid laps (exclude deleted laps: FastF1 `Deleted` column / `IsAccurate`); session ideal = min over drivers; show both "personal ideal" and "session ideal".

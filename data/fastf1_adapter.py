@@ -340,6 +340,10 @@ class FastF1Adapter:
             # Pit timestamps drive the IN PIT status badge.
             "PitInTime",
             "PitOutTime",
+            # Lap validity: a deleted or inaccurately timed lap must not set
+            # a sector best (see processing.timing._valid_laps).
+            "Deleted",
+            "IsAccurate",
         ]
         available = [c for c in cols if c in laps.columns]
         result = pd.DataFrame(laps[available]).reset_index(drop=True)

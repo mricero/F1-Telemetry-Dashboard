@@ -506,3 +506,19 @@ class TestOutlineDecimation:
         outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#000000"', svg).group(1)
 
         assert outline.count("L") == len(location["VER"]) - 1
+
+
+class TestIdealLapDisplay:
+    """DASH-06: both ideals are visible - session's on the map, driver's in the row."""
+
+    def test_diff_cell_carries_the_personal_ideal(self):
+        row = TestTowerPartitions._row(1, personal_ideal=89.5, diff="+1.000")
+
+        markup = tower_html([row])
+
+        assert "Personal ideal 1:29.500" in markup
+
+    def test_missing_personal_ideal_is_stated(self):
+        markup = tower_html([TestTowerPartitions._row(1)])
+
+        assert "No personal ideal lap yet" in markup

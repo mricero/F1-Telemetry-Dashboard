@@ -154,6 +154,46 @@ def _last_position(laps: pd.DataFrame) -> Optional[float]:
     return float(positions.iloc[-1]) if not positions.empty else None
 
 
+def _valid_laps(laps: pd.DataFrame) -> pd.DataFrame:
+    """Laps whose times may be used for records.
+
+    Excludes laps the stewards deleted (FastF1 ``Deleted``) and laps FastF1
+    flags as inaccurately timed (``IsAccurate``) - a deleted track-limits lap
+    must not set a sector best.
+    """
+    valid = laps
+    if "Deleted" in valid.columns:
+        valid = valid[~valid["Deleted"].fillna(False).astype(bool)]
+    if "IsAccurate" in valid.columns:
+        valid = valid[valid["IsAccurate"].fillna(True).astype(bool)]
+    return valid
+
+
+def _best_sectors(laps: pd.DataFrame) -> List[Optional[float]]:
+    """Each sector's quickest time across all of a driver's valid laps.
+
+    The fastest *lap* rarely contains the driver's fastest sectors, so the
+    ideal lap has to look wider than one lap.
+    """
+    valid = _valid_laps(laps)
+    bests: List[Optional[float]] = []
+    for index in range(1, SECTORS + 1):
+        column = f"Sector{index}Time"
+        if column not in valid.columns:
+            bests.append(None)
+            continue
+        seconds = valid[column].map(to_seconds).dropna()
+        bests.append(float(seconds.min()) if not seconds.empty else None)
+    return bests
+
+
+def _ideal_lap(best_sectors: Sequence[Optional[float]]) -> Optional[float]:
+    """Sum of sector bests, or None when any sector is missing."""
+    if any(value is None for value in best_sectors):
+        return None
+    return round(sum(float(value) for value in best_sectors if value is not None), 3)
+
+
 def _speed_trap(laps: pd.DataFrame) -> Optional[float]:
     """Best speed-trap reading across the driver's laps (km/h)."""
     for col in ("SpeedST", "SpeedFL", "SpeedI2", "SpeedI1"):
@@ -306,18 +346,16 @@ def sector_leaders(rows: Sequence[dict], top_n: int = 3) -> List[List[dict]]:
 
 
 def theoretical_best(rows: Sequence[dict]) -> Optional[float]:
-    """Sum of the fastest sector times set by anyone in the session."""
-    total = 0.0
+    """Session ideal: each sector's best from any driver, on any lap."""
+    session_bests: List[Optional[float]] = []
     for index in range(SECTORS):
         times = [
-            r["sectors"][index]["seconds"]
-            for r in rows
-            if r["sectors"][index]["seconds"] is not None
+            row["best_sectors"][index]
+            for row in rows
+            if row.get("best_sectors") and row["best_sectors"][index] is not None
         ]
-        if not times:
-            return None
-        total += min(times)
-    return round(total, 3)
+        session_bests.append(min(times) if times else None)
+    return _ideal_lap(session_bests)
 
 
 def _classify_by_best_lap(rows: List[dict]) -> List[dict]:
@@ -557,6 +595,7 @@ def build_timing_rows(session_data: dict) -> List[dict]:
                 }
             )
 
+        best_sectors = _best_sectors(driver_laps)
         info = meta.get(str(code), {})
         rows.append(
             {
@@ -569,6 +608,8 @@ def build_timing_rows(session_data: dict) -> List[dict]:
                 "best_lap": format_lap(best_seconds),
                 "last_lap": format_lap(last_seconds),
                 "sectors": sectors,
+                "best_sectors": best_sectors,
+                "personal_ideal": _ideal_lap(best_sectors),
                 "tyre_history": _tyre_history(driver_laps),
                 "speed_kmh": _speed_trap(driver_laps),
                 "laps_completed": int(len(driver_laps)),
