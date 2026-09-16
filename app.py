@@ -141,24 +141,26 @@ def ensure_driver_table(session_data: dict) -> pd.DataFrame:
     return drivers_df
 
 
-def main():
-    """Main Streamlit application."""
-    render_header()
+def init_browser_session() -> None:
+    """Per-browser-session setup, safe to call on every rerun.
 
-    # Wipe the in-memory cache once per app session. Streamlit re-executes this
-    # script on every interaction, so this must be guarded - resetting on each
-    # rerun would evict the sessions the cache exists to keep hot.
-    if not st.session_state.get("_runtime_cache_started"):
-        runtime_cache.begin_session()
-        st.session_state["_runtime_cache_started"] = True
-
-    # Initialize managers
+    ``st.session_state`` is per browser tab, so nothing process-wide belongs
+    here: the runtime cache used to be wiped from this spot, which meant a
+    second viewer evicted the first viewer's loaded sessions.
+    """
     if "data_manager" not in st.session_state:
         st.session_state.data_manager = DataSourceManager()
     if "processor" not in st.session_state:
         st.session_state.processor = TelemetryProcessor()
     if "metrics_store" not in st.session_state:
         st.session_state.metrics_store = MetricsStore()
+
+
+def main():
+    """Main Streamlit application."""
+    render_header()
+
+    init_browser_session()
 
     data_manager = st.session_state.data_manager
     processor = st.session_state.processor
@@ -222,8 +224,11 @@ def main():
             for line in at_lines:
                 st.markdown(f"- {line}")
         cache_stats = runtime_cache.stats()
+        used_mb = cache_stats["bytes"] / (1024 * 1024)
+        budget_mb = cache_stats["max_bytes"] / (1024 * 1024)
         st.caption(
             f"Runtime cache: {cache_stats['entries']} session(s) hot · "
+            f"{used_mb:.0f} / {budget_mb:.0f} MB · "
             f"{cache_stats['hits']} hits / {cache_stats['misses']} misses · "
             f"app open for {cache_stats['age_seconds']}s "
             f"(cache clears automatically when the app closes; "

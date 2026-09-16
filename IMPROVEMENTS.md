@@ -313,7 +313,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Problem: Season list is `[this_year, this_year-1, this_year-2]`; FastF1 has timing + telemetry from 2018.
   - Fix: `range(now.year, 2017, -1)`; warn that pre-2018 has no telemetry if ever extended via Jolpica.
 
-- [x] **HIST-07** · P1 · S — **Jolpica pagination and rate limits ignored** — done in <pending>
+- [x] **HIST-07** · P1 · S — **Jolpica pagination and rate limits ignored** — done in bcfc5d3
   - Files: `data/jolpica_adapter.py:45-132`.
   - Problem: Jolpica defaults to `limit=30`, max `100`, with `MRData.total`/`offset` for paging. `get_seasons()` therefore returns only the first 30 seasons (1950–1979); `get_lap_times()` returns 30 timing rows of a ~1 200-row race; `get_pit_stops()` truncates races with >30 stops. Limits are **4 req/s burst, 500 req/h** unauthenticated ("will decrease in the future"); there is no retry/backoff on HTTP 429 and failures raise `ConnectionError` that callers swallow.
   - Evidence: Jolpica docs (§18). Live verification blocked in the audit sandbox → the network test should assert `len(get_seasons()) == int(MRData.total)`.
@@ -409,11 +409,12 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 ---
 ## 6. P1/P2 — Caching, state & persistence
 
-- [ ] **CACHE-01** · P1 · S — **"Runtime cache" is shared by all users but reset by any new browser session; unbounded**
+- [x] **CACHE-01** · P1 · S — **"Runtime cache" is shared by all users but reset by any new browser session; unbounded** — done in <pending>
   - Files: `data/runtime_cache.py:77-79`, `app.py:148-153`, `app.py:90-120`.
   - Problem: `runtime_cache` is a module-level singleton (process-wide), but `begin_session()` is guarded by `st.session_state`, which is **per browser session**. Opening the app in a second tab (or a second user connecting) clears the cache for everyone. It also has no size limit: every session viewed stays in memory (a race dict with "Full session" scope is hundreds of MB).
   - Fix: Replace with `@st.cache_resource(max_entries=N, ttl=…)` on the loader (or an LRU with a byte budget using `DataFrame.memory_usage(deep=True)`); drop the "wipe on app open" semantics — Streamlit already starts clean per process. Keep hit/miss stats if useful.
   - Acceptance: two AppTest sessions; the second doesn't evict the first's entry; memory bound test with fake 50 MB frames.
+  - Note: kept the in-repo `RuntimeCache` (now LRU + byte budget) rather than moving to `@st.cache_resource`, so the hit/miss stats and the explicit clear survive; `F1_CACHE_MAX_ENTRIES` / `F1_CACHE_MAX_BYTES` tune it.
 
 - [ ] **CACHE-02** · P2 · M — **Metrics store: wrong comparisons, rewrites every rerun, not concurrency-safe**
   - Files: `processing/metrics_store.py`, `app.py:204-231`.
