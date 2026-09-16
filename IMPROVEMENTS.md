@@ -132,7 +132,8 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
 
 > Context for the whole section: F1 moved live timing from classic ASP.NET SignalR (`/signalr/`) to **SignalR Core** (`/signalrcore`) during the 2025 Monaco GP weekend (FastF1 issue #753). FastF1 3.7.0 (Nov 2025) rewrote its client for the new endpoint with optional F1TV authentication and notes that F1 deprecated the old endpoints. Since the 2025 Dutch GP, car telemetry, positions (driver tracker), pit-stop times and championship tables require a valid F1TV subscription token (undercut-f1 README; F1 Sensor docs). Community sites have been hit by IP blocking (matteocelani/f1-telemetry's hosted instance is down "due to IP blocking by Formula 1"; f1-dash.com announced its sunset citing "increasing IP restrictions" and "data becoming locked behind subscriptions").
 
-- [ ] **LIVE-01** · P0 · L · `VERIFY-LIVE` — **Live client targets the deprecated legacy endpoint**
+- [~] **LIVE-01** · P0 · L · `VERIFY-LIVE` — **Live client targets the deprecated legacy endpoint**
+  - **Blocked (2026-09-17):** the acceptance is `scripts/live_smoke.py 60` against a running session, and there is no live F1 session to connect to; the rewrite also needs a `signalrcore` dependency, which REPO-02 owns. The state layer it feeds (LIVE-05) and the ingest entry point it will call (`SignalRLiveAdapter.handle_message`) are in place, so this is implementation plus live verification, not redesign.
   - Files: `data/live_adapter.py:169-199` (`start_livef1_client`), `requirements.txt:9`, `scripts/live_smoke.py:30`, docs.
   - Problem: `livef1.adapters.RealF1Client` connects to `BASE_URL + SIGNALR_ENDPOINT` = `https://livetiming.formula1.com/signalr/` using the bundled `signalr_aio` (classic SignalR, `clientProtocol=1.5`). This is true in the installed 1.2.7 **and** in livef1 1.2.10 (checked the wheel) and on livef1 `main`. The repo's docs, `live_adapter.py` docstring and `live_smoke.py` all claim `wss://livetiming.formula1.com/signalrcore`, which is what FastF1 uses — not what this app uses.
   - Evidence: `livef1/utils/constants.py: SIGNALR_ENDPOINT = "/signalr/"`; `livef1/adapters/realtime_client.py` registers hub `Streaming` over `signalr_aio.Connection`. FastF1 `fastf1/livetiming/client.py`: `_connection_url = 'wss://livetiming.formula1.com/signalrcore'`, uses `signalrcore.HubConnectionBuilder` with `access_token_factory`.
@@ -208,14 +209,15 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: `gp = si["Meeting"]["Name"]`, `session_name = si["Name"]`, `session_type = si["Type"]`, `circuit_key = si["Meeting"]["Circuit"]["Key"]`, `year` from `StartDate`, `gmt_offset = si["GmtOffset"]`.
   - Acceptance: unit test with the real nested shape.
 
-- [x] **LIVE-07** · P0 · S — **Buffers are not thread-safe** — done in <pending>
+- [x] **LIVE-07** · P0 · S — **Buffers are not thread-safe** — done in 3e99a2b
   - Files: `data/live_adapter.py:157-167, 237-251`.
   - Problem: The client thread `extend`s and `del buf[:overflow]` on lists that the Streamlit script thread is iterating (`get_buffered_data` returns the *same* list object). Python won't raise for list mutation during iteration, but slices shift under the reader → skipped/duplicated rows, and `defaultdict` insertion during `.get` on another thread is a data race.
   - Fix: `threading.Lock` around writes; readers get `list(buf)` copies or, better, an immutable snapshot object published atomically after each merge (§12). Use `collections.deque(maxlen=...)` for bounded series.
   - Acceptance: a stress test with a writer thread appending 100k records while a reader polls 1000 times never sees non-monotonic timestamps within a driver.
   - Note: an `RLock` guards every buffer write, trim and read; `get_buffered_data`/`recorded_laps` hand back copies, and `LiveState` already had its own lock. The stress test runs a writer thread against a polling reader and asserts the reader never observes out-of-order records.
 
-- [ ] **LIVE-08** · P0 · M — **"Stop Live" doesn't stop; no reconnect, no heartbeat, no staleness detection**
+- [~] **LIVE-08** · P0 · M — **"Stop Live" doesn't stop; no reconnect, no heartbeat, no staleness detection**
+  - **Blocked (2026-09-17):** its fix is written against the LIVE-01 client (`connection.stop()`, `on_close`, negotiate 403 handling), which does not exist yet. Nothing here can be built against livef1's `RealF1Client`, which has no `stop()` at all.
   - Files: `data/live_adapter.py:210-231, 253-266`, `ui/layout.py:851-853`.
   - Problem: `RealF1Client` has no `stop()` (checked source), so `SignalRLiveAdapter.stop()` does nothing to the socket; `_forever_check` loops forever; the daemon thread keeps the connection open until the process exits. `is_running()` stays `True` if the socket silently dies. There is no reconnect/backoff and no "last message N s ago" indicator.
   - Fix: With the new client (LIVE-01): `connection.stop()`, `on_close` → state `DISCONNECTED`, automatic reconnect with exponential backoff capped at 60 s, a supervisor that marks the feed `STALE` after 30 s without `Heartbeat`, and a status chip in the UI (`CONNECTING / LIVE / STALE / RECONNECTING / STOPPED / AUTH_REQUIRED / BLOCKED(403)`).
