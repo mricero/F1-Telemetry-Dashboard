@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Sequence
 import pandas as pd
 import streamlit as st
 
+from processing.time_utils import to_seconds
 from processing.timing import (
     build_timing_rows,
     dashboard_frames,
@@ -127,19 +128,34 @@ def _flag_state(session_data: dict) -> str:
     return "FINISHED"
 
 
-def _session_length(weather: Optional[pd.DataFrame]) -> str:
-    """Session duration as MM:SS, taken from the weather sampling window."""
-    if weather is None or weather.empty or "Time" not in weather.columns:
-        return "--:--"
-    times = weather["Time"]
-    if pd.api.types.is_timedelta64_dtype(times):
-        total = float(times.max().total_seconds())
-    else:
-        parsed = pd.to_datetime(times, errors="coerce", utc=True)
-        if parsed.notna().sum() < 2:
-            return "--:--"
-        total = float((parsed.max() - parsed.min()).total_seconds())
-    return f"{int(total // 60):02d}:{int(total % 60):02d}"
+CLOCK_PLACEHOLDER = "--:--:--"
+
+
+def _format_clock(seconds: float) -> str:
+    """``5130`` -> ``'1:25:30'``. Sessions run well past an hour."""
+    total = int(round(seconds))
+    return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+
+
+def _session_clock(session_data: dict) -> str:
+    """What the header's clock slot should read.
+
+    Historical: how long the session ran, from the session time at the last
+    completed lap. Live: the time remaining on the feed's ExtrapolatedClock.
+    It used to show the *weather sampling window*, which is neither.
+    """
+    info = session_data.get("session_info") or {}
+    if session_data.get("is_live"):
+        remaining = info.get("extrapolated_clock")
+        return str(remaining) if remaining else CLOCK_PLACEHOLDER
+
+    laps = session_data.get("laps")
+    if laps is None or laps.empty or "Time" not in laps.columns:
+        return CLOCK_PLACEHOLDER
+    seconds = laps["Time"].map(to_seconds).dropna()
+    if seconds.empty:
+        return CLOCK_PLACEHOLDER
+    return _format_clock(float(seconds.max()))
 
 
 def header_html(session_data: dict) -> str:
@@ -152,6 +168,7 @@ def header_html(session_data: dict) -> str:
 
     flag = _flag_state(session_data)
     bg, fg, label = FLAG_STATES.get(flag, FLAG_STATES["FINISHED"])
+    clock_label = "Remaining" if session_data.get("is_live") else "Duration"
 
     event = _esc(info.get("gp") or "Session")
     year = info.get("year")
@@ -185,7 +202,8 @@ def header_html(session_data: dict) -> str:
     <span class="f1-event-session">{session_type}</span>
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
-    <span class="f1-clock f1-mono">{_session_length(weather)}</span>
+    <span class="f1-env-label">{clock_label}</span>
+    <span class="f1-clock f1-mono" title="{clock_label}">{_session_clock(session_data)}</span>
     <span class="f1-flag" style="background:{bg};color:{fg};">{label}</span>
   </div>
   <div class="f1-env">

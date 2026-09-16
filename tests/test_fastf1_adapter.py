@@ -476,3 +476,34 @@ class TestSessionCodes:
 
     def test_schedule_without_session_columns_returns_nothing(self):
         assert session_codes_for_event(pd.Series({"EventName": "Test GP"})) == []
+
+
+class TestLapTimeColumns:
+    """DASH-09: the header's duration needs the session time at each lap."""
+
+    def test_get_laps_keeps_the_session_time(self):
+        session = Mock()
+        session.laps = pd.DataFrame(
+            {
+                "Driver": ["VER", "VER"],
+                "LapNumber": [1, 2],
+                "LapTime": pd.to_timedelta(["00:01:30", "00:01:29"]),
+                "Time": pd.to_timedelta(["00:02:00", "00:03:29"]),
+                "LapStartTime": pd.to_timedelta(["00:00:30", "00:02:00"]),
+            }
+        )
+
+        laps = FastF1Adapter().get_laps(session)
+
+        assert "Time" in laps.columns and "LapStartTime" in laps.columns
+        assert laps["Time"].iloc[-1] == pd.Timedelta("00:03:29")
+
+    def test_get_laps_without_a_time_column_still_works(self):
+        session = Mock()
+        session.laps = pd.DataFrame(
+            {"Driver": ["VER"], "LapNumber": [1], "LapTime": pd.to_timedelta(["00:01:30"])}
+        )
+
+        laps = FastF1Adapter().get_laps(session)
+
+        assert "Time" not in laps.columns

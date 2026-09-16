@@ -233,7 +233,9 @@ class TestHeaderAndSectors:
         assert "30.2 &deg;C" in html  # latest track temp
         # FastF1 WindSpeed is m/s; 6.0 m/s = 21.6 km/h (DASH-07).
         assert "21.6 km/h E" in html
-        assert "60:00" in html  # one-hour session clock
+        # The clock slot is the session duration, and without laps there is
+        # nothing to measure - the weather window is not a session clock.
+        assert "--:--:--" in html and "Duration" in html
 
     def test_header_without_weather_uses_placeholders(self):
         html = header_html({"session_info": {"gp": "Test GP"}, "is_live": False})
@@ -630,3 +632,50 @@ class TestHeaderFlagState:
         state = self._flag(is_live=True, race_control=self._messages(("YELLOW", "Sector")))
 
         assert state == "GREEN"
+
+
+class TestHeaderClock:
+    """DASH-09: the clock slot showed the weather sampling window."""
+
+    @staticmethod
+    def _laps(minutes: float) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "Driver": ["VER", "VER"],
+                "LapNumber": [1, 2],
+                "LapTime": pd.to_timedelta([91.0, 90.5], unit="s"),
+                "Time": pd.to_timedelta([60.0, minutes * 60], unit="s"),
+            }
+        )
+
+    def _clock(self, **session) -> str:
+        from ui.dashboard import _session_clock
+
+        return _session_clock({"session_info": {}, "is_live": False, **session})
+
+    def test_duration_comes_from_the_laps_not_the_weather(self):
+        weather = pd.DataFrame(
+            {"Time": pd.to_timedelta([0, 7200], unit="s"), "AirTemp": [20.0, 21.0]}
+        )
+
+        assert self._clock(laps=self._laps(95), weather=weather) == "1:35:00"
+
+    def test_short_sessions_still_show_hours(self):
+        assert self._clock(laps=self._laps(42.5)) == "0:42:30"
+
+    def test_no_laps_leaves_a_placeholder(self):
+        assert self._clock() == "--:--:--"
+
+    def test_live_counts_down_the_extrapolated_clock(self):
+        state = self._clock(session_info={"extrapolated_clock": "0:32:15"}, is_live=True)
+
+        assert state == "0:32:15"
+
+    def test_live_without_a_clock_is_a_placeholder(self):
+        assert self._clock(is_live=True) == "--:--:--"
+
+    def test_header_labels_the_slot(self):
+        markup = header_html({"session_info": {}, "is_live": False, "laps": self._laps(60)})
+
+        assert "Duration" in markup
+        assert "1:00:00" in markup

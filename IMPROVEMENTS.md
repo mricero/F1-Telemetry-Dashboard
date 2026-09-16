@@ -385,16 +385,17 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Problem: FastF1 `WindSpeed` is **m/s**. The weather tab labels it m/s; the header prints the same number as "km/h" (3.6× understatement). `layout.md` asks for km/h.
   - Fix: Convert `× 3.6` in the header (and in the tab if you standardise on km/h); unit test.
 
-- [x] **DASH-08** · P2 · S — **Finished sessions can show "YELLOW FLAG"** — done in <pending>
+- [x] **DASH-08** · P2 · S — **Finished sessions can show "YELLOW FLAG"** — done in 9d9b46e
   - Files: `ui/dashboard.py:64-88`.
   - Problem: Historical header flag = last race-control message's `Flag`. That is often a sector-scoped `YELLOW`/`DOUBLE YELLOW`/`CLEAR` or a driver-scoped `BLUE`, not the track state.
   - Fix: For historical sessions, use `session.track_status` (FastF1) final value or show `CHEQUERED`/"SESSION ENDED"; only consider messages with `Scope == "Track"`. Live: `TrackStatus` only.
   - Note: took the second option - `Track`-scoped race-control messages (which end with CHEQUERED, or RED for an abandoned session), falling back to SESSION ENDED - rather than adding `session.track_status` to the unified dict for a header badge.
 
-- [ ] **DASH-09** · P2 · S — **Header "clock" is the weather-sampling window length**
+- [x] **DASH-09** · P2 · S — **Header "clock" is the weather-sampling window length** — done in <pending>
   - Files: `ui/dashboard.py:91-103, 149`.
   - Problem: Shown in the clock slot as `MM:SS`, it's actually the time span of weather samples (often >60 min, so the minutes overflow the format's intent).
   - Fix: Historical: session duration from `session.session_start_time`/last lap, formatted `H:MM:SS`, labelled "Duration". Live: `ExtrapolatedClock` (`Remaining`, `Extrapolating`, `Utc`) counting down client-side; laps `LapCount.CurrentLap/TotalLaps` for races.
+  - Note: the historical half is done (duration from the session time at the last lap; `get_laps` now carries `Time`/`LapStartTime`). The live half reads `session_info['extrapolated_clock']` and shows a placeholder until the feed provides it — subscribing to `ExtrapolatedClock`/`LapCount` belongs to **LIVE-05/LIVE-16**.
 
 - [ ] **DASH-10** · P2 · S — **Driver status badges are not informative**
   - Files: `processing/timing.py:93-109, 271-285`.

@@ -326,6 +326,10 @@ class FastF1Adapter:
             "Driver",
             "LapNumber",
             "LapTime",
+            # Session time at the lap's end: the header's session duration and
+            # the race-gap fallback both measure from it.
+            "Time",
+            "LapStartTime",
             "Sector1Time",
             "Sector2Time",
             "Sector3Time",
