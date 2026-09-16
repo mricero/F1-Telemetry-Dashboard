@@ -1,9 +1,31 @@
-"""Jolpica F1 Adapter - Free historical data via Ergast-compatible API"""
+"""Jolpica F1 Adapter - Free historical data via Ergast-compatible API.
 
+Two upstream constraints shape this module:
+
+* **Pagination.** Responses default to ``limit=30`` (max 100) and report
+  ``MRData.total``/``offset``. Without paging, ``seasons`` returned 30 of ~77
+  and a race's lap times were cut to the first 30 of ~1200 rows.
+* **Rate limits.** Unauthenticated use is capped at 4 requests/second burst
+  and 500/hour, and the API answers 429 with a ``Retry-After`` header.
+"""
+
+import time
 import requests
 import pandas as pd
+from collections import deque
 from functools import wraps
-from typing import Dict, List
+from typing import Callable, Deque, Dict, List, Optional
+
+
+def _retry_after_seconds(response, fallback: float) -> float:
+    """Seconds to wait after a 429, honouring the ``Retry-After`` header."""
+    header = (getattr(response, "headers", None) or {}).get("Retry-After")
+    if header is None:
+        return fallback
+    try:
+        return max(0.0, float(header))
+    except (TypeError, ValueError):  # HTTP-date form: back off instead
+        return fallback
 
 
 def _instance_memo(maxsize: int = 64):
@@ -37,26 +59,101 @@ class JolpicaAdapter:
 
     BASE_URL = "https://api.jolpi.ca/ergast/f1"
 
+    # Jolpica's documented limits.
+    PAGE_LIMIT = 100  # maximum items per response
+    BURST_REQUESTS = 4  # requests allowed per BURST_WINDOW
+    BURST_WINDOW = 1.0  # seconds
+    MAX_RETRIES = 3  # attempts after a 429 before giving up
+    BACKOFF_BASE = 1.0  # seconds, doubled per retry when Retry-After is absent
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "F1-Telemetry-Dashboard/1.0"})
         self._memo: Dict = {}
+        self._request_times: Deque[float] = deque(maxlen=self.BURST_REQUESTS)
+
+    def _throttle(self) -> None:
+        """Token bucket: never exceed BURST_REQUESTS per BURST_WINDOW."""
+        if len(self._request_times) == self._request_times.maxlen:
+            wait = self.BURST_WINDOW - (time.monotonic() - self._request_times[0])
+            if wait > 0:
+                time.sleep(wait)
+        self._request_times.append(time.monotonic())
 
     def _fetch(self, endpoint: str, params: Dict = None) -> Dict:
-        """Generic fetch with error handling."""
+        """Generic fetch with throttling, 429 backoff and error handling."""
         url = f"{self.BASE_URL}/{endpoint}"
-        try:
-            response = self.session.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            raise ConnectionError(f"Failed to fetch {endpoint}: {e}")
+        delay = self.BACKOFF_BASE
+        for attempt in range(self.MAX_RETRIES):
+            self._throttle()
+            response = None
+            try:
+                response = self.session.get(url, params=params, timeout=15)
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as e:
+                if getattr(response, "status_code", None) != 429:
+                    raise ConnectionError(f"Failed to fetch {endpoint}: {e}")
+                if attempt == self.MAX_RETRIES - 1:
+                    break
+                time.sleep(_retry_after_seconds(response, delay))
+                delay *= 2
+        raise ConnectionError(
+            f"Failed to fetch {endpoint}: Jolpica rate limit not cleared after "
+            f"{self.MAX_RETRIES} attempts"
+        )
+
+    def _fetch_paged(
+        self, endpoint: str, extract: Callable[[Dict], list], params: Optional[Dict] = None
+    ) -> list:
+        """Every item of a paged endpoint, following MRData.total.
+
+        ``extract`` pulls the list out of one page's payload; the lists are
+        concatenated in page order.
+        """
+        collected: list = []
+        offset = 0
+        while True:
+            page = self._fetch(
+                endpoint, {**(params or {}), "limit": self.PAGE_LIMIT, "offset": offset}
+            )
+            collected.extend(extract(page))
+            total = int(page.get("MRData", {}).get("total", 0) or 0)
+            offset += self.PAGE_LIMIT
+            if offset >= total:
+                return collected
+
+    def _fetch_race_list(self, endpoint: str, key: str) -> Dict:
+        """A single-race payload whose ``Races[0][key]`` list is fully paged.
+
+        Lap times (~1 200 rows) and busy races' pit stops both overflow one
+        page, and the callers index ``RaceTable.Races[0]``, so the merged list
+        is written back into the first page's shape.
+        """
+        first: Optional[Dict] = None
+
+        def extract(page: Dict) -> list:
+            nonlocal first
+            if first is None:
+                first = page
+            races = page.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+            return races[0].get(key, []) if races else []
+
+        items = self._fetch_paged(endpoint, extract)
+        if first is None:
+            return {"MRData": {"RaceTable": {"Races": []}}}
+        races = first.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        if races:
+            races[0][key] = items
+        return first
 
     @_instance_memo(maxsize=32)
     def get_seasons(self) -> List[int]:
-        """Get all available seasons."""
-        data = self._fetch("seasons.json")
-        seasons = data["MRData"]["SeasonTable"]["Seasons"]
+        """Get all available seasons (~77, i.e. well past one page)."""
+        seasons = self._fetch_paged(
+            "seasons.json",
+            lambda page: page["MRData"]["SeasonTable"]["Seasons"],
+        )
         return [int(s["season"]) for s in seasons]
 
     @_instance_memo(maxsize=32)
@@ -123,13 +220,13 @@ class JolpicaAdapter:
 
     @_instance_memo(maxsize=64)
     def get_lap_times(self, year: int, round_num: int) -> Dict:
-        """Get lap times for a race."""
-        return self._fetch(f"{year}/{round_num}/laps.json")
+        """Get lap times for a race (paged: a race is ~1 200 timing rows)."""
+        return self._fetch_race_list(f"{year}/{round_num}/laps.json", "Laps")
 
     @_instance_memo(maxsize=64)
     def get_pit_stops(self, year: int, round_num: int) -> Dict:
-        """Get pit stops for a race."""
-        return self._fetch(f"{year}/{round_num}/pitstops.json")
+        """Get pit stops for a race (paged: busy races exceed one page)."""
+        return self._fetch_race_list(f"{year}/{round_num}/pitstops.json", "PitStops")
 
     def get_driver_standings_df(self, year: int) -> pd.DataFrame:
         """Get driver standings as DataFrame."""

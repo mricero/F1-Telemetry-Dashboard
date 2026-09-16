@@ -142,3 +142,150 @@ class TestFetchErrors:
             adapter.get_seasons()
         state["fail"] = False
         assert adapter.get_seasons() == [2024]
+
+
+class _PagingServer:
+    """Mock Jolpica: serves `total` items in pages of `limit`."""
+
+    def __init__(self, total: int, build_page, limit_cap: int = 100):
+        self.total = total
+        self.build_page = build_page
+        self.limit_cap = limit_cap
+        self.requests = []
+
+    def __call__(self, url, params=None, timeout=None):
+        params = params or {}
+        limit = int(params.get("limit", 30))
+        offset = int(params.get("offset", 0))
+        assert limit <= self.limit_cap, "Jolpica caps limit at 100"
+        self.requests.append((offset, limit))
+        items = list(range(offset, min(offset + limit, self.total)))
+        payload = self.build_page(items)
+        payload["MRData"].update({"total": str(self.total), "limit": str(limit)})
+        payload["MRData"]["offset"] = str(offset)
+        return FakeResponse(payload)
+
+
+def _seasons_page(items):
+    return {"MRData": {"SeasonTable": {"Seasons": [{"season": str(1950 + i)} for i in items]}}}
+
+
+def _laps_page(items):
+    laps = [
+        {"number": str(i + 1), "Timings": [{"driverId": "verstappen", "time": "1:31.2"}]}
+        for i in items
+    ]
+    return {"MRData": {"RaceTable": {"Races": [{"round": "1", "Laps": laps}]}}}
+
+
+def _pit_stops_page(items):
+    stops = [
+        {"driverId": "hamilton", "lap": str(i + 1), "stop": "1", "duration": "22.5"} for i in items
+    ]
+    return {"MRData": {"RaceTable": {"Races": [{"round": "1", "PitStops": stops}]}}}
+
+
+class TestPagination:
+    """HIST-07: Jolpica defaults to limit=30 (max 100) and pages with offset."""
+
+    def test_seasons_are_not_truncated_at_30(self, adapter, monkeypatch):
+        server = _PagingServer(77, _seasons_page)
+        monkeypatch.setattr(adapter.session, "get", server)
+
+        seasons = adapter.get_seasons()
+
+        assert len(seasons) == 77
+        assert seasons[0] == 1950 and seasons[-1] == 2026
+
+    def test_paging_uses_the_maximum_page_size(self, adapter, monkeypatch):
+        server = _PagingServer(250, _seasons_page)
+        monkeypatch.setattr(adapter.session, "get", server)
+
+        adapter.get_seasons()
+
+        assert server.requests == [(0, 100), (100, 100), (200, 100)]
+
+    def test_single_page_makes_one_request(self, adapter, monkeypatch):
+        server = _PagingServer(24, _seasons_page)
+        monkeypatch.setattr(adapter.session, "get", server)
+
+        adapter.get_seasons()
+
+        assert len(server.requests) == 1
+
+    def test_lap_times_cover_the_whole_race(self, adapter, monkeypatch):
+        server = _PagingServer(1200, _laps_page)
+        monkeypatch.setattr(adapter.session, "get", server)
+
+        laps = adapter.get_lap_times_df(2024, 1)
+
+        assert len(laps) == 1200
+        assert len(server.requests) == 12
+
+    def test_pit_stops_are_not_truncated(self, adapter, monkeypatch):
+        server = _PagingServer(45, _pit_stops_page)
+        monkeypatch.setattr(adapter.session, "get", server)
+
+        stops = adapter.get_pit_stops_df(2024, 1)
+
+        assert len(stops) == 45
+
+
+class TestRateLimiting:
+    """HIST-07: 4 req/s burst, 500 req/h; 429 responses carry Retry-After."""
+
+    def test_burst_is_throttled_to_four_per_second(self, adapter, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+        clock = {"t": 0.0}
+        monkeypatch.setattr("data.jolpica_adapter.time.monotonic", lambda: clock["t"])
+        server = _PagingServer(600, _seasons_page)
+        monkeypatch.setattr(adapter.session, "get", server)
+
+        adapter.get_seasons()
+
+        assert len(server.requests) == 6
+        # The first four go straight out; the rest wait for a token.
+        assert len(sleeps) == 2 and all(s > 0 for s in sleeps)
+
+    def test_429_is_retried_after_the_advertised_delay(self, adapter, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+        attempts = {"n": 0}
+
+        def rate_limited(url, params=None, timeout=None):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                response = FakeResponse({}, status_error=requests.exceptions.HTTPError("429"))
+                response.status_code = 429
+                response.headers = {"Retry-After": "7"}
+                return response
+            ok = FakeResponse({"MRData": {"SeasonTable": {"Seasons": [{"season": "2024"}]}}})
+            ok.status_code = 200
+            ok.headers = {}
+            return ok
+
+        monkeypatch.setattr(adapter.session, "get", rate_limited)
+
+        seasons = adapter.get_seasons()
+
+        assert seasons == [2024]
+        assert attempts["n"] == 2
+        assert 7 in sleeps
+
+    def test_429_without_retry_after_backs_off(self, adapter, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+
+        def always_limited(url, params=None, timeout=None):
+            response = FakeResponse({}, status_error=requests.exceptions.HTTPError("429"))
+            response.status_code = 429
+            response.headers = {}
+            return response
+
+        monkeypatch.setattr(adapter.session, "get", always_limited)
+
+        with pytest.raises(ConnectionError, match="rate limit"):
+            adapter.get_seasons()
+
+        assert sleeps == sorted(sleeps) and len(sleeps) >= 2  # exponential backoff

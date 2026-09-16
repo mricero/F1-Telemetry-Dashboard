@@ -302,7 +302,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: `years = [now.year, now.year - 1]`; pick the latest event whose **race session end** is in the past (use `Session5DateUtc`). Use config defaults only when the schedule is unavailable.
   - Acceptance: frozen-clock test on 2026-09-16 returns the most recent 2026 round.
 
-- [x] **HIST-05** · P1 · S — **Session list ignores the weekend format** — done in <pending>
+- [x] **HIST-05** · P1 · S — **Session list ignores the weekend format** — done in f94f667
   - Files: `ui/layout.py:136-137`.
   - Problem: Static `["FP1","FP2","FP3","Q","S","R"]`: sprint weekends have no FP2/FP3 but do have **Sprint Qualifying ("SQ")**, which is missing entirely; normal weekends have no Sprint. Picking a non-existent session fails at load time with a FastF1 error.
   - Fix: Build the list from the event's `Session1..Session5` names (FastF1 `get_event_schedule`), mapping names → identifiers (`Practice 1`→`FP1`, `Sprint Qualifying`/`Sprint Shootout`→`SQ`, `Sprint`→`S`, `Qualifying`→`Q`, `Race`→`R`), and only include sessions that have started.
@@ -313,12 +313,13 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Problem: Season list is `[this_year, this_year-1, this_year-2]`; FastF1 has timing + telemetry from 2018.
   - Fix: `range(now.year, 2017, -1)`; warn that pre-2018 has no telemetry if ever extended via Jolpica.
 
-- [ ] **HIST-07** · P1 · S — **Jolpica pagination and rate limits ignored**
+- [x] **HIST-07** · P1 · S — **Jolpica pagination and rate limits ignored** — done in <pending>
   - Files: `data/jolpica_adapter.py:45-132`.
   - Problem: Jolpica defaults to `limit=30`, max `100`, with `MRData.total`/`offset` for paging. `get_seasons()` therefore returns only the first 30 seasons (1950–1979); `get_lap_times()` returns 30 timing rows of a ~1 200-row race; `get_pit_stops()` truncates races with >30 stops. Limits are **4 req/s burst, 500 req/h** unauthenticated ("will decrease in the future"); there is no retry/backoff on HTTP 429 and failures raise `ConnectionError` that callers swallow.
   - Evidence: Jolpica docs (§18). Live verification blocked in the audit sandbox → the network test should assert `len(get_seasons()) == int(MRData.total)`.
   - Fix: `_fetch_all(endpoint)` that pages with `limit=100&offset=…` until `offset+limit >= total`; a token-bucket limiter (4/s) and `Retry-After`-aware backoff; persistent HTTP cache (`requests-cache`, which FastF1 already depends on) with long TTL for past seasons.
   - Acceptance: mocked paging test (total=250 → 3 requests, 250 rows); 429 test respects `Retry-After`.
+  - Note: pagination, the 4 req/s token bucket and `Retry-After` backoff landed; the persistent `requests-cache` layer is deferred to REPO-02, which owns dependency changes.
 
 - [ ] **HIST-08** · P2 · S — **FastF1 first load is slow and blocks the UI; drivers loaded serially**
   - Files: `data/source_manager.py:93-130`, `data/fastf1_adapter.py:65-70, 108-128`.
