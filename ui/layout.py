@@ -127,9 +127,14 @@ def render_session_selector(data_manager) -> dict:
     # Live indicator (exact match so "LiveF1 (Historical)" is not treated as live)
     live_session = None
     if "Auto" in source and is_race_weekend:
+        # A session really is on air - but Auto no longer switches silently
+        # and hides the historical selectors: the user chooses (LIVE-15).
         with col2:
-            st.success("🔴 LIVE SESSION DETECTED - Race weekend active!")
-        live_session = True
+            st.success("🔴 A session is running now")
+            go_live = st.button("Go live", key="go_live")
+        if go_live or st.session_state.get("go_live_active"):
+            st.session_state["go_live_active"] = True
+            live_session = True
     elif source == "Live (SignalR)":
         with col2:
             st.warning("🔴 LIVE MODE - Attempting SignalR connection...")

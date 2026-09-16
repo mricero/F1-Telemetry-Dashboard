@@ -303,7 +303,13 @@ class JolpicaAdapter:
         return self.get_schedule(year)
 
     def is_race_weekend(self, year: int = None) -> bool:
-        """Check if there's a race this weekend."""
+        """Whether a race falls within three days of now.
+
+        Deliberately coarse, and **not** a live-session test: it says nothing
+        about session times, so it reads True all week. Use
+        :func:`data.fastf1_adapter.live_session_now` to decide whether
+        anything is actually on air (LIVE-15).
+        """
         from datetime import datetime
 
         if year is None:

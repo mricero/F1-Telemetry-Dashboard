@@ -8,7 +8,12 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from config import config
-from data.fastf1_adapter import SCOPE_FASTEST, FastF1Adapter, latest_completed_event
+from data.fastf1_adapter import (
+    SCOPE_FASTEST,
+    FastF1Adapter,
+    latest_completed_event,
+    live_session_now,
+)
 from data.jolpica_adapter import JolpicaAdapter
 from data.live_adapter import SignalRLiveAdapter, LiveDataProcessor
 from data.live_service import get_live_adapter
@@ -92,12 +97,21 @@ class DataSourceManager:
 
         raise ValueError(f"Unknown source: {source}")
 
-    def _is_race_weekend(self) -> bool:
-        """Check if there's an active F1 session this weekend."""
+    def live_session(self) -> Optional[dict]:
+        """The F1 session on air right now, or None.
+
+        Reads the event schedule's own session times rather than asking
+        whether race day is within three days - that called an entire week
+        "live" and hid the historical selectors throughout it.
+        """
         try:
-            return self.jolpica.is_race_weekend()
+            return live_session_now(self.fastf1.get_available_sessions())
         except Exception:
-            return False
+            return None
+
+    def _is_race_weekend(self) -> bool:
+        """Whether a session is actually running now."""
+        return self.live_session() is not None
 
     def _load_fastf1_session(
         self, year: int, gp: str, session_type: str, telemetry_scope: str = SCOPE_FASTEST

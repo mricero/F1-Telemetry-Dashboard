@@ -148,3 +148,41 @@ class TestSessionListFollowsTheWeekendFormat:
 
     def test_conventional_weekend_offers_all_three_practices(self):
         assert self._sessions_for("Monaco Grand Prix") == ["FP1", "FP2", "FP3", "Q", "R"]
+
+
+class TestAutoDoesNotHideHistory:
+    """LIVE-15: a running session must not take the historical view away."""
+
+    @staticmethod
+    def _auto_app():
+        def script():
+            import streamlit as st
+
+            from tests.test_session_selector import _StubManager
+            from ui.layout import render_session_selector
+
+            st.session_state["selection"] = render_session_selector(_StubManager(race_weekend=True))
+
+        app = AppTest.from_function(script, default_timeout=30)
+        app.run()
+        return app
+
+    def test_the_historical_selectors_stay_available(self):
+        app = self._auto_app()
+
+        assert not app.exception
+        labels = [box.label for box in app.selectbox]
+        assert "Season" in labels and "Session" in labels
+
+    def test_going_live_is_an_explicit_choice(self):
+        app = self._auto_app()
+
+        assert any(button.label == "Go live" for button in app.button)
+        assert app.session_state["selection"]["source"] == "auto"
+
+    def test_pressing_go_live_switches_the_view(self):
+        app = self._auto_app()
+        next(button for button in app.button if button.label == "Go live").click().run()
+
+        labels = [box.label for box in app.selectbox]
+        assert "Season" not in labels

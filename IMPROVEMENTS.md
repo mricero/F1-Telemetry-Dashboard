@@ -259,17 +259,18 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Segment live telemetry into laps using lap-completion events (`TimingData.NumberOfLaps` changes, with timestamps) and reset distance per lap; expose "current lap" and "last completed lap" per driver; compute comparisons only on completed laps.
   - Acceptance: fixture replay: each completed lap trace starts near 0 m and ends within ±3 % of the circuit length.
 
-- [x] **LIVE-14** · P2 · S — **Off-track / garage GPS samples pollute trails** — done in <pending>
+- [x] **LIVE-14** · P2 · S — **Off-track / garage GPS samples pollute trails** — done in 4129243
   - Files: `data/live_adapter.py:297-310`, `data/source_manager.py:317-333`.
   - Problem: Position entries carry `Status` (`OnTrack` / `OffTrack`) and cars in the garage report `0,0,0`. They're kept, producing spikes in distance and straight lines to the origin on the map outline.
   - Fix: Drop `Status != "OnTrack"` and exact-zero triples before building trails/distances.
   - Acceptance: unit test with interleaved OffTrack zeros → distance monotonic and no (0,0) in trail.
 
-- [ ] **LIVE-15** · P1 · M — **"Live session detected" is a date heuristic**
+- [x] **LIVE-15** · P1 · M — **"Live session detected" is a date heuristic** — done in <pending>
   - Files: `data/jolpica_adapter.py:208-224`, `ui/layout.py:85-117`, `data/source_manager.py:65-68`, `data/live_adapter.py:469-477`, `readme.md` ("real-time endpoint probing").
   - Problem: `is_race_weekend()` returns True if **race day** (midnight UTC, no time) is within ±72 h. That is Thursday 00:00 → Wednesday 00:00, including days with no sessions; the UI then shows "🔴 LIVE SESSION DETECTED", and `Auto` hides the historical selectors for the whole window. It also only checks the current calendar year (a race on 1 Jan+ would be missed) and ignores session times entirely. The readme calls this "real-time endpoint probing"; it isn't.
   - Fix: Use the FastF1 event schedule (`Session1DateUtc … Session5DateUtc`) or `https://livetiming.formula1.com/static/{year}/Index.json` to find a session whose window `[start − 15 min, start + duration + 30 min]` contains now; confirm with `SessionStatus` once connected. In `Auto`, show a "Go live" call-to-action rather than silently switching and hiding history.
   - Acceptance: unit tests with a frozen clock at FP1 start −10 min → live; Tuesday after the race → historical; `Auto` on a race weekend still shows historical selectors.
+  - Note: `live_session_now(schedule, now)` uses the FastF1 schedule's own `SessionNDateUtc` and a per-session-type duration, with a 15 min lead-in and 30 min run-out. `Auto` now shows "a session is running now" plus a **Go live** button and keeps the historical selectors. Confirming with `SessionStatus` once connected waits on LIVE-01; `JolpicaAdapter.is_race_weekend` stays as the coarse calendar helper it always was, now documented as such.
 
 - [ ] **LIVE-16** · P2 · S — **Dead/misleading live code**
   - Files: `data/live_adapter.py:201-208` (`start_fastf1_client` ignores `topics`, blocks, unused), `data/live_adapter.py:469-477` (`check_live_session_available`, unused), `processing/telemetry_processor.py:267-294` (`process_live_telemetry`, unused, uses `index*100` pseudo-distance), `data/live_adapter.py:122-136` (`LapSeries`, `CurrentTyres`, `PitLaneTimeCollection` subscribed but never parsed).

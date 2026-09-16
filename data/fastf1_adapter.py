@@ -43,6 +43,61 @@ SESSION_NAME_TO_CODE = {
 MAX_SESSIONS_PER_EVENT = 5
 
 
+# How long each session runs, for deciding whether one is on air now. The
+# regulation lengths plus headroom: a race is capped at 3 h including
+# suspensions, qualifying runs ~1 h with its three segments.
+SESSION_DURATIONS = {
+    "FP1": pd.Timedelta(90, unit="m"),
+    "FP2": pd.Timedelta(90, unit="m"),
+    "FP3": pd.Timedelta(90, unit="m"),
+    "SQ": pd.Timedelta(60, unit="m"),
+    "S": pd.Timedelta(90, unit="m"),
+    "Q": pd.Timedelta(75, unit="m"),
+    "R": RACE_MAX_DURATION,
+}
+
+# The feed is live a little before a session starts and stays interesting a
+# little after it ends (parc ferme, post-session race control).
+SESSION_LEAD_IN = pd.Timedelta(15, unit="m")
+SESSION_RUN_OUT = pd.Timedelta(30, unit="m")
+
+
+def live_session_now(schedule: pd.DataFrame, now: Optional[pd.Timestamp] = None) -> Optional[dict]:
+    """The session currently on air, or None.
+
+    A session is live when *now* falls in ``[start - 15 min, start + duration
+    + 30 min]``. The old test - race day within +/-72 h, with no time of day -
+    called an entire week "live", including days with no running at all.
+    """
+    if schedule is None or schedule.empty:
+        return None
+    moment = now if now is not None else _utcnow()
+
+    for _, event in schedule.iterrows():
+        for index in range(1, MAX_SESSIONS_PER_EVENT + 1):
+            name = event.get(f"Session{index}")
+            if name is None or pd.isna(name):
+                continue
+            code = SESSION_NAME_TO_CODE.get(str(name).strip())
+            if code is None:
+                continue
+            start = pd.to_datetime(event.get(f"Session{index}DateUtc"), utc=True, errors="coerce")
+            if pd.isna(start):
+                continue
+            window_start = start - SESSION_LEAD_IN
+            window_end = start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
+            window_end += SESSION_RUN_OUT
+            if window_start <= moment <= window_end:
+                return {
+                    "event": event.get("EventName"),
+                    "session": code,
+                    "session_name": str(name),
+                    "start": start,
+                    "ends_by": window_end,
+                }
+    return None
+
+
 def session_codes_for_event(event: pd.Series) -> list[str]:
     """Session identifiers actually held at an event, in weekend order.
 
