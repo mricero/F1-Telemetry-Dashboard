@@ -402,10 +402,11 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Problem: Every historical row is `CLASSIFIED` (DNFs, DSQs, DNS included); live `IN PIT` uses FastF1-only `PitInTime/PitOutTime` columns that live laps don't have; `laps_completed` counts the synthetic in-progress live lap row.
   - Fix: Historical from `results.Status` (`Finished`, `+1 Lap`, `Retired`, `Disqualified`, …) → badges `FIN / +1L / DNF / DSQ / DNS`; live from `TimingData` `InPit`, `PitOut`, `Retired`, `Stopped` (latch retirement, as matteocelani/f1-telemetry does, because the feed is lossy).
 
-- [ ] **DASH-11** · P2 · S — **Tyre history shows lap counts, not tyre age**
+- [x] **DASH-11** · P2 · S — **Tyre history shows lap counts, not tyre age** — done in 8bf672f
   - Files: `processing/timing.py:69-80`.
   - Problem: `laps_used = len(stint rows)` ignores tyres that started used (FastF1 `TyreLife`, `FreshTyre`); live has no compound data in laps at all.
   - Fix: Use `TyreLife` max per stint and a "used" marker; live from `TimingAppData.Lines[n].Stints` (`Compound`, `New`, `TotalLaps`, `StartLaps`) — the same source f1-dash/undercut-f1 use.
+  - Note: historical side done (`TyreLife`/`FreshTyre` now carried by `get_laps`). Live falls back to the session stint table, so it shows real compounds as soon as stints parse; subscribing to `TimingAppData` itself belongs to **LIVE-05/LIVE-16**.
 
 - [ ] **DASH-12** · P3 · S — **Spec gaps vs `layout.md`**
   - Files: `ui/dashboard.py`, `layout.md`.
