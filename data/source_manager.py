@@ -119,6 +119,7 @@ class DataSourceManager:
             "telemetry": telemetry,
             "laps": self.fastf1.get_laps(session),
             "stints": self.fastf1.get_stints(session),
+            "results": self.fastf1.get_results(session),
             "location": location,
             "weather": self._get_weather_from_session(session),
             "race_control": self.fastf1.get_race_control(session),
@@ -250,6 +251,7 @@ class DataSourceManager:
             "telemetry": telemetry_dict,
             "laps": laps_df,
             "stints": pd.DataFrame(),  # Could be extracted from LiveF1
+            "results": pd.DataFrame(),
             "location": {},
             "weather": pd.DataFrame(),
             "race_control": pd.DataFrame(),
@@ -267,6 +269,7 @@ class DataSourceManager:
             "telemetry": {},  # Populated via poll_live_data()
             "laps": pd.DataFrame(),
             "stints": pd.DataFrame(),
+            "results": pd.DataFrame(),
             "location": {},
             "weather": pd.DataFrame(),
             "race_control": pd.DataFrame(),
@@ -396,6 +399,7 @@ class DataSourceManager:
             "telemetry": telemetry,
             "laps": laps_df,
             "stints": stints_df,
+            "results": pd.DataFrame(),  # live order comes from TimingData
             "location": location,
             "weather": weather_df,
             "race_control": race_control_df,
@@ -579,9 +583,10 @@ class DataSourceManager:
     # Bump when the serialized layout changes; _load_replay rejects newer
     # schemas with a clear message instead of failing deep inside pickle.
     # v2 added 'race_control' and 'compound_colors'; v3 added 'circuit_info'
-    # (corner markers + track rotation). Older replays simply lack those keys
-    # and load with empty defaults.
-    REPLAY_SCHEMA_VERSION = 3
+    # (corner markers + track rotation); v4 added 'results' (official
+    # classification, needed to order a race by finishing position). Older
+    # replays simply lack those keys and load with empty defaults.
+    REPLAY_SCHEMA_VERSION = 4
 
     def save_replay(self, data: dict, name: str) -> str:
         """Save session data for offline replay.
@@ -650,7 +655,8 @@ class DataSourceManager:
         data.setdefault("race_control", [])
         data.setdefault("compound_colors", {})
         data.setdefault("circuit_info", {})
-        for k in ["laps", "stints", "weather", "drivers", "race_control"]:
+        data.setdefault("results", [])
+        for k in ["laps", "stints", "results", "weather", "drivers", "race_control"]:
             if k in data:
                 data[k] = pd.DataFrame(data[k])
         data["telemetry"] = {k: pd.DataFrame(v) for k, v in data.get("telemetry", {}).items()}

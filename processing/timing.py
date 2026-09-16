@@ -4,9 +4,10 @@ Turns a loaded session into the row structure the live-timing leaderboard
 renders (see ``layout.md`` section 3). Everything here is pure data: no
 Streamlit, no HTML, so the classification and delta logic stays testable.
 
-Ordering follows a qualifying-style classification - fastest personal best
-first - because the spec's Gap and Interval columns are lap-time deltas.
-That ranking is meaningful for races and practice too (who was quickest).
+Ordering depends on the session. A race or sprint is classified by finishing
+position, with Gap/Interval as race time behind the leader and the car ahead
+(or ``+N LAP`` for lapped cars). Practice and qualifying rank by personal best
+lap, where Gap and Interval are lap-time deltas.
 """
 
 from typing import Dict, List, Optional, Sequence
@@ -25,6 +26,10 @@ TOTAL_SEGMENTS = SEGMENTS_PER_SECTOR * SECTORS
 # A driver within this fraction of the best micro-sector time shows green
 # rather than yellow. Purple is reserved for the outright fastest.
 GREEN_TOLERANCE = 0.02
+
+# Sessions classified by finishing position rather than by best lap. Both the
+# short codes the selector uses and FastF1's session names are accepted.
+RACE_SESSION_TYPES = {"r", "s", "race", "sprint"}
 
 
 def format_lap(seconds: Optional[float]) -> str:
@@ -46,6 +51,36 @@ def format_delta(seconds: Optional[float]) -> str:
     if seconds is None or pd.isna(seconds):
         return "----"
     return f"+{seconds:.3f}" if seconds >= 0 else f"{seconds:.3f}"
+
+
+def format_lap_gap(laps_down: int) -> str:
+    """``1`` -> ``'+1 LAP'``; ``3`` -> ``'+3 LAPS'`` (race convention)."""
+    return f"+{laps_down} LAP" if laps_down == 1 else f"+{laps_down} LAPS"
+
+
+def is_race_session(session_info: Optional[dict]) -> bool:
+    """True for races and sprints, which are classified by finishing order."""
+    info = session_info or {}
+    for key in ("session_type", "session_name"):
+        value = info.get(key)
+        if value and str(value).strip().lower() in RACE_SESSION_TYPES:
+            return True
+    return False
+
+
+def _results_index(results: Optional[pd.DataFrame]) -> Dict[str, dict]:
+    """Abbreviation -> official classification fields, or {} when absent."""
+    if results is None or not isinstance(results, pd.DataFrame) or results.empty:
+        return {}
+    if "Abbreviation" not in results.columns:
+        return {}
+    index: Dict[str, dict] = {}
+    for _, row in results.iterrows():
+        code = row.get("Abbreviation")
+        if code is None or pd.isna(code):
+            continue
+        index[str(code)] = row.to_dict()
+    return index
 
 
 def _driver_meta(drivers_df: pd.DataFrame) -> Dict[str, dict]:
@@ -78,6 +113,14 @@ def _tyre_history(laps: pd.DataFrame) -> List[dict]:
         compound = str(stint["Compound"].iloc[0]).upper()
         history.append({"compound": compound, "laps_used": int(len(stint))})
     return history
+
+
+def _last_position(laps: pd.DataFrame) -> Optional[float]:
+    """On-road position at the driver's last lap, when the laps carry it."""
+    if laps.empty or "Position" not in laps.columns:
+        return None
+    positions = pd.to_numeric(laps["Position"], errors="coerce").dropna()
+    return float(positions.iloc[-1]) if not positions.empty else None
 
 
 def _speed_trap(laps: pd.DataFrame) -> Optional[float]:
@@ -210,6 +253,96 @@ def theoretical_best(rows: Sequence[dict]) -> Optional[float]:
     return round(total, 3)
 
 
+def _classify_by_best_lap(rows: List[dict]) -> List[dict]:
+    """Practice / qualifying order: quickest personal best first.
+
+    Gap is the lap-time delta to the session best and Interval the delta to
+    the car ahead on the timing screen.
+    """
+    timed = sorted(
+        (r for r in rows if r["best_seconds"] is not None), key=lambda r: r["best_seconds"]
+    )
+    untimed = [r for r in rows if r["best_seconds"] is None]
+    ordered = timed + untimed
+
+    leader = timed[0]["best_seconds"] if timed else None
+    previous = None
+    for row in ordered:
+        if row["best_seconds"] is None or leader is None:
+            row["gap"] = "----"
+            row["interval"] = "----"
+            continue
+        row["gap"] = "----" if row is timed[0] else format_delta(row["best_seconds"] - leader)
+        row["interval"] = (
+            "----" if previous is None else format_delta(row["best_seconds"] - previous)
+        )
+        previous = row["best_seconds"]
+    return ordered
+
+
+def _race_gap_seconds(row: dict, results: Dict[str, dict]) -> Optional[float]:
+    """Race time behind the winner, from results.Time where available.
+
+    FastF1 reports the winner's total race time and everyone else's gap to
+    it in the same column, so only non-winners are read here.
+    """
+    entry = results.get(row["code"], {})
+    if entry.get("Position") in (1, 1.0):
+        return 0.0
+    return to_seconds(entry.get("Time")) if "Time" in entry else None
+
+
+def _classify_race(rows: List[dict], results: Dict[str, dict]) -> List[dict]:
+    """Race / sprint order: finishing position, with race-time gaps.
+
+    Position comes from ``session.results``; without it the last lap's own
+    ``Position`` column is used. Gap and Interval are time behind the leader
+    and the car ahead, or ``+N LAP(S)`` once a driver is lapped.
+    """
+
+    def sort_key(row: dict):
+        official = results.get(row["code"], {}).get("Position")
+        if official is not None and pd.notna(official):
+            return (0, float(official))
+        if row["last_position"] is not None:
+            return (1, float(row["last_position"]))
+        # Nobody classified them: most laps first, then quickest.
+        return (2, -row["laps_completed"])
+
+    ordered = sorted(rows, key=sort_key)
+    if not ordered:
+        return ordered
+
+    leader_laps = ordered[0]["laps_completed"]
+    for row in ordered:
+        laps_down = leader_laps - row["laps_completed"]
+        row["laps_down"] = max(laps_down, 0)
+        row["gap_seconds"] = None if laps_down > 0 else _race_gap_seconds(row, results)
+
+    previous = ordered[0]
+    for index, row in enumerate(ordered):
+        if index == 0:
+            row["gap"] = "----"
+            row["interval"] = "----"
+            continue
+
+        row["gap"] = (
+            format_lap_gap(row["laps_down"])
+            if row["laps_down"] > 0
+            else format_delta(row["gap_seconds"]) if row["gap_seconds"] is not None else "----"
+        )
+
+        laps_behind_ahead = row["laps_down"] - previous["laps_down"]
+        if laps_behind_ahead > 0:
+            row["interval"] = format_lap_gap(laps_behind_ahead)
+        elif row["gap_seconds"] is not None and previous["gap_seconds"] is not None:
+            row["interval"] = format_delta(row["gap_seconds"] - previous["gap_seconds"])
+        else:
+            row["interval"] = "----"
+        previous = row
+    return ordered
+
+
 def build_timing_rows(session_data: dict, cutoff: int = 10) -> List[dict]:
     """Build the leaderboard rows for one session.
 
@@ -282,29 +415,24 @@ def build_timing_rows(session_data: dict, cutoff: int = 10) -> List[dict]:
                 "tyre_history": _tyre_history(driver_laps),
                 "speed_kmh": _speed_trap(driver_laps),
                 "laps_completed": int(len(driver_laps)),
+                "last_position": _last_position(driver_laps),
             }
         )
 
-    # Classify: drivers with a time first (fastest to slowest), then the rest.
-    timed = [r for r in rows if r["best_seconds"] is not None]
-    untimed = [r for r in rows if r["best_seconds"] is None]
-    timed.sort(key=lambda r: r["best_seconds"])
-    ordered = timed + untimed
+    results = _results_index(session_data.get("results"))
+    if is_race_session(session_data.get("session_info")):
+        ordered = _classify_race(rows, results)
+    else:
+        ordered = _classify_by_best_lap(rows)
 
-    leader = timed[0]["best_seconds"] if timed else None
-    previous = None
+    fastest = min(
+        (r for r in rows if r["best_seconds"] is not None),
+        key=lambda r: r["best_seconds"],
+        default=None,
+    )
     for position, row in enumerate(ordered, start=1):
         row["position"] = position
-        row["is_overall_best"] = bool(timed) and row is timed[0]
-        if row["best_seconds"] is None or leader is None:
-            row["gap"] = "----"
-            row["interval"] = "----"
-        else:
-            row["gap"] = "----" if position == 1 else format_delta(row["best_seconds"] - leader)
-            row["interval"] = (
-                "----" if previous is None else format_delta(row["best_seconds"] - previous)
-            )
-            previous = row["best_seconds"]
+        row["is_overall_best"] = row is fastest
         row["knocked_out"] = position > cutoff
 
     best_possible = theoretical_best(ordered)

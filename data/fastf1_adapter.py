@@ -278,6 +278,40 @@ class FastF1Adapter:
         steps = np.nan_to_num(steps, nan=0.0)
         return np.concatenate([[0.0], np.cumsum(steps)]) / POSITION_UNITS_PER_METRE
 
+    # Columns of session.results the dashboard classifies with. Q1/Q2/Q3 are
+    # only present for qualifying sessions.
+    RESULT_COLUMNS = (
+        "Abbreviation",
+        "DriverNumber",
+        "TeamName",
+        "Position",
+        "ClassifiedPosition",
+        "GridPosition",
+        "Status",
+        "Time",
+        "Points",
+        "Q1",
+        "Q2",
+        "Q3",
+    )
+
+    def get_results(self, session: fastf1.core.Session) -> pd.DataFrame:
+        """Official classification for the session.
+
+        A race is ordered by finishing position, not by best lap, and only
+        ``session.results`` carries that (plus Status for DNF/DSQ and the
+        Q1/Q2/Q3 segment times). Missing or unloadable results degrade to an
+        empty frame - the tower then falls back to lap data.
+        """
+        try:
+            results = session.results
+        except Exception:
+            return pd.DataFrame()
+        if results is None or len(results) == 0:
+            return pd.DataFrame()
+        present = [c for c in self.RESULT_COLUMNS if c in results.columns]
+        return pd.DataFrame(results[present]).reset_index(drop=True)
+
     def get_laps(self, session: fastf1.core.Session) -> pd.DataFrame:
         """Get lap timing data with a boolean pit-out flag.
 

@@ -245,3 +245,142 @@ class TestMicroSectors:
 
     def test_no_drivers_yields_empty_mapping(self):
         assert segment_states({}) == {}
+
+
+def _race_laps(driver: str, lap_times, cumulative_start=0.0, positions=None) -> list:
+    """Race laps for one driver: LapTime plus the session Time at lap end."""
+    rows = []
+    elapsed = cumulative_start
+    for number, seconds in enumerate(lap_times, start=1):
+        elapsed += seconds
+        rows.append(
+            {
+                "Driver": driver,
+                "LapNumber": number,
+                "LapTime": timedelta(seconds=seconds),
+                "Time": timedelta(seconds=elapsed),
+                "Position": (positions or [1] * len(lap_times))[number - 1],
+                "Sector1Time": timedelta(seconds=seconds / 3),
+                "Sector2Time": timedelta(seconds=seconds / 3),
+                "Sector3Time": timedelta(seconds=seconds / 3),
+                "Compound": "SOFT",
+                "Stint": 1,
+                "SpeedST": 300.0,
+            }
+        )
+    return rows
+
+
+def _results(*entries) -> pd.DataFrame:
+    """FastF1-shaped session.results: Abbreviation/Position/Status/Time."""
+    return pd.DataFrame(
+        [
+            {
+                "Abbreviation": code,
+                "Position": float(position),
+                "ClassifiedPosition": str(position),
+                "Status": status,
+                "Time": time if time is None else timedelta(seconds=time),
+                "TeamName": "",
+                "GridPosition": float(position),
+            }
+            for code, position, status, time in entries
+        ]
+    )
+
+
+@pytest.fixture
+def race_session():
+    """The winner is NOT the fastest-lap setter - the DASH-01 case.
+
+    PER laps quicker than VER but finishes second; ALO is a lap down.
+    """
+    laps = _laps(
+        _race_laps("VER", [90.0, 90.0, 90.0], positions=[1, 1, 1]),
+        _race_laps("PER", [92.0, 89.0, 88.0], positions=[2, 2, 2]),
+        _race_laps("ALO", [95.0, 95.0], positions=[3, 3]),
+    )
+    return {
+        "session_info": {"session_type": "R", "gp": "Bahrain", "year": 2023},
+        "laps": laps,
+        "results": _results(
+            ("VER", 1, "Finished", 270.0),
+            ("PER", 2, "Finished", 5.0),
+            ("ALO", 3, "+1 Lap", None),
+        ),
+        "drivers": _drivers(
+            ("VER", "Red Bull Racing", "#3671c6"),
+            ("PER", "Red Bull Racing", "#3671c6"),
+            ("ALO", "Aston Martin", "#229971"),
+        ),
+        "telemetry": {},
+        "is_live": False,
+    }
+
+
+class TestRaceClassification:
+    """DASH-01: a race is ordered by finishing position, not by best lap."""
+
+    def test_race_is_ordered_by_finishing_position(self, race_session):
+        rows = build_timing_rows(race_session)
+
+        assert [r["code"] for r in rows] == ["VER", "PER", "ALO"]
+
+    def test_the_fastest_lap_setter_is_not_promoted(self, race_session):
+        rows = build_timing_rows(race_session)
+
+        # PER holds the fastest lap (88.0) but finished second.
+        assert rows[0]["code"] == "VER"
+        assert rows[1]["code"] == "PER"
+        assert rows[1]["best_seconds"] < rows[0]["best_seconds"]
+
+    def test_gap_is_race_time_behind_the_leader(self, race_session):
+        rows = build_timing_rows(race_session)
+
+        assert rows[0]["gap"] == "----"
+        assert rows[1]["gap"] == "+5.000"
+
+    def test_lapped_cars_show_a_lap_gap(self, race_session):
+        rows = build_timing_rows(race_session)
+
+        assert rows[2]["gap"] == "+1 LAP"
+
+    def test_interval_is_to_the_car_ahead(self, race_session):
+        rows = build_timing_rows(race_session)
+
+        assert rows[1]["interval"] == "+5.000"
+        assert rows[2]["interval"] == "+1 LAP"
+
+    def test_sprint_uses_race_semantics(self, race_session):
+        race_session["session_info"]["session_type"] = "S"
+
+        rows = build_timing_rows(race_session)
+
+        assert [r["code"] for r in rows] == ["VER", "PER", "ALO"]
+
+    def test_falls_back_to_the_last_lap_position_without_results(self, race_session):
+        race_session["results"] = pd.DataFrame()
+
+        rows = build_timing_rows(race_session)
+
+        assert [r["code"] for r in rows] == ["VER", "PER", "ALO"]
+        assert rows[2]["gap"] == "+1 LAP"
+
+    def test_practice_still_ranks_by_best_lap(self, race_session):
+        race_session["session_info"]["session_type"] = "FP1"
+
+        rows = build_timing_rows(race_session)
+
+        assert [r["code"] for r in rows] == ["PER", "VER", "ALO"]
+
+    def test_qualifying_still_ranks_by_best_lap(self, race_session):
+        race_session["session_info"]["session_type"] = "Q"
+
+        rows = build_timing_rows(race_session)
+
+        assert rows[0]["code"] == "PER"
+
+    def test_a_session_without_a_type_keeps_best_lap_ordering(self, session):
+        rows = build_timing_rows(session)
+
+        assert [r["code"] for r in rows] == ["VER", "HAM"]

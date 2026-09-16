@@ -167,6 +167,11 @@ class TestDashboardOnRealSession:
         )
 
     def test_timing_rows_are_ranked_and_complete(self):
+        """Qualifying: fastest to slowest is the right classification here.
+
+        Races are ordered by finishing position instead - see
+        ``TestRaceClassificationOnRealSession``.
+        """
         from processing.timing import build_timing_rows
 
         rows = build_timing_rows(self._session())
@@ -217,3 +222,53 @@ class TestDashboardOnRealSession:
         assert len(strips) == len(rows) * TOTAL_SEGMENTS
         # A real session has an outright fastest driver in at least one slice.
         assert "PURPLE" in strips
+
+
+class TestRaceClassificationOnRealSession:
+    """DASH-01 acceptance, against the real 2023 Bahrain Grand Prix."""
+
+    @staticmethod
+    def _race():
+        from data.source_manager import DataSourceManager
+
+        return DataSourceManager().get_session_data(
+            source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="R"
+        )
+
+    def test_podium_matches_the_official_result(self):
+        from processing.timing import build_timing_rows
+
+        rows = build_timing_rows(self._race())
+
+        assert [r["code"] for r in rows[:3]] == ["VER", "PER", "ALO"]
+
+    def test_gaps_match_the_official_times(self):
+        from processing.time_utils import to_seconds
+        from processing.timing import build_timing_rows
+
+        session = self._race()
+        rows = build_timing_rows(session)
+        results = session["results"].set_index("Abbreviation")
+
+        assert rows[0]["gap"] == "----"
+        for row in rows[1:4]:
+            official = to_seconds(results.loc[row["code"], "Time"])
+            assert abs(float(row["gap"].lstrip("+")) - official) < 0.1
+
+    def test_the_fastest_lap_setter_is_not_necessarily_first(self):
+        from processing.timing import build_timing_rows
+
+        rows = build_timing_rows(self._race())
+        fastest = min(
+            (r for r in rows if r["best_seconds"] is not None), key=lambda r: r["best_seconds"]
+        )
+
+        assert rows[0]["is_overall_best"] is (rows[0] is fastest)
+        assert fastest["is_overall_best"]
+
+    def test_the_unified_dict_carries_official_results(self):
+        session = self._race()
+
+        results = session["results"]
+        assert not results.empty
+        assert {"Abbreviation", "Position", "Status"} <= set(results.columns)
