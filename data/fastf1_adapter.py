@@ -336,6 +336,10 @@ class FastF1Adapter:
             "Position",
             "Compound",
             "Stint",
+            # Tyre age and whether the set was new: a stint's length is not
+            # the tyre's age when a driver starts on a scrubbed set.
+            "TyreLife",
+            "FreshTyre",
             # Speed-trap readings feed the timing tower's Speed column.
             "SpeedI1",
             "SpeedI2",

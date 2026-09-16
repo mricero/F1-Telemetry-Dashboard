@@ -397,7 +397,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Historical: session duration from `session.session_start_time`/last lap, formatted `H:MM:SS`, labelled "Duration". Live: `ExtrapolatedClock` (`Remaining`, `Extrapolating`, `Utc`) counting down client-side; laps `LapCount.CurrentLap/TotalLaps` for races.
   - Note: the historical half is done (duration from the session time at the last lap; `get_laps` now carries `Time`/`LapStartTime`). The live half reads `session_info['extrapolated_clock']` and shows a placeholder until the feed provides it — subscribing to `ExtrapolatedClock`/`LapCount` belongs to **LIVE-05/LIVE-16**.
 
-- [x] **DASH-10** · P2 · S — **Driver status badges are not informative** — done in <pending>
+- [x] **DASH-10** · P2 · S — **Driver status badges are not informative** — done in 0ef3d92
   - Files: `processing/timing.py:93-109, 271-285`.
   - Problem: Every historical row is `CLASSIFIED` (DNFs, DSQs, DNS included); live `IN PIT` uses FastF1-only `PitInTime/PitOutTime` columns that live laps don't have; `laps_completed` counts the synthetic in-progress live lap row.
   - Fix: Historical from `results.Status` (`Finished`, `+1 Lap`, `Retired`, `Disqualified`, …) → badges `FIN / +1L / DNF / DSQ / DNS`; live from `TimingData` `InPit`, `PitOut`, `Retired`, `Stopped` (latch retirement, as matteocelani/f1-telemetry does, because the feed is lossy).

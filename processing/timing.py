@@ -134,18 +134,76 @@ def _driver_meta(drivers_df: pd.DataFrame) -> Dict[str, dict]:
     return meta
 
 
-def _tyre_history(laps: pd.DataFrame) -> List[dict]:
-    """Stint list for one driver: compound plus laps run on it."""
+def _tyre_history(laps: pd.DataFrame, stints: Optional[pd.DataFrame] = None) -> List[dict]:
+    """Stint list for one driver: compound, tyre age, and whether it was new.
+
+    ``laps_used`` is the tyre's **age** (FastF1 ``TyreLife``), which is not the
+    stint length when a driver starts on a scrubbed set. Falls back to the
+    session's stint table when the laps carry no compound - live lap frames
+    built from ``TimingData`` never do.
+    """
     if laps.empty or "Compound" not in laps.columns:
-        return []
+        return _tyre_history_from_stints(stints)
+
     work = laps.copy()
     if "Stint" not in work.columns:
         work["Stint"] = 1
     history = []
     for _, stint in work.dropna(subset=["Compound"]).groupby("Stint", sort=True):
         compound = str(stint["Compound"].iloc[0]).upper()
-        history.append({"compound": compound, "laps_used": int(len(stint))})
+        stint_laps = int(len(stint))
+        age = stint_laps
+        if "TyreLife" in stint.columns:
+            life = pd.to_numeric(stint["TyreLife"], errors="coerce").dropna()
+            if not life.empty:
+                age = int(life.max())
+        fresh = None
+        if "FreshTyre" in stint.columns:
+            first = stint["FreshTyre"].iloc[0]
+            fresh = bool(first) if pd.notna(first) else None
+        history.append(
+            {
+                "compound": compound,
+                "laps_used": age,
+                "stint_laps": stint_laps,
+                "fresh": fresh,
+            }
+        )
     return history
+
+
+def _tyre_history_from_stints(stints: Optional[pd.DataFrame]) -> List[dict]:
+    """Tyre history from the session's stint table (the live path)."""
+    if stints is None or stints.empty or "Compound" not in stints.columns:
+        return []
+    history = []
+    for _, stint in stints.iterrows():
+        compound = stint.get("Compound")
+        if compound is None or pd.isna(compound):
+            continue
+        laps_used = pd.to_numeric(pd.Series([stint.get("LapCount")]), errors="coerce").iloc[0]
+        fresh = stint.get("New")
+        history.append(
+            {
+                "compound": str(compound).upper(),
+                "laps_used": int(laps_used) if pd.notna(laps_used) else 0,
+                "stint_laps": int(laps_used) if pd.notna(laps_used) else 0,
+                "fresh": bool(fresh) if fresh is not None and pd.notna(fresh) else None,
+            }
+        )
+    return history
+
+
+def _driver_stints(stints: Optional[pd.DataFrame], driver: str) -> Optional[pd.DataFrame]:
+    """One driver's rows from the session stint table, whatever it calls them."""
+    if stints is None or stints.empty:
+        return None
+    for column in ("Driver", "DriverAcronym"):
+        if column in stints.columns:
+            own = stints[stints[column].astype(str) == str(driver)]
+            if not own.empty:
+                return own
+    return None
 
 
 def _laps_completed(laps: pd.DataFrame) -> int:
@@ -804,7 +862,9 @@ def build_timing_rows(session_data: dict) -> List[dict]:
                 "sectors": sectors,
                 "best_sectors": best_sectors,
                 "personal_ideal": _ideal_lap(best_sectors),
-                "tyre_history": _tyre_history(driver_laps),
+                "tyre_history": _tyre_history(
+                    driver_laps, _driver_stints(session_data.get("stints"), str(code))
+                ),
                 "speed_kmh": _speed_trap(driver_laps),
                 "laps_completed": _laps_completed(driver_laps),
                 "last_position": _last_position(driver_laps),

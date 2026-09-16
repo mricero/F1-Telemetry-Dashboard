@@ -698,3 +698,30 @@ class TestStatusBadgeMarkup:
         for badge in ("DNF", "DSQ", "DNS"):
             markup = tower_html([TestTowerPartitions._row(1, status=badge)])
             assert f'class="f1-badge out">{badge}' in markup
+
+
+class TestTyreBadges:
+    """DASH-11: the badge shows tyre age, and marks a scrubbed set."""
+
+    @staticmethod
+    def _markup(**stint) -> str:
+        base = {"compound": "SOFT", "laps_used": 14, "stint_laps": 9, "fresh": False}
+        base.update(stint)
+        return tower_html([TestTowerPartitions._row(1, tyre_history=[base])])
+
+    def test_age_is_shown_not_the_stint_length(self):
+        markup = self._markup()
+
+        assert "<em>14</em>" in markup
+        assert "14 laps old" in markup and "9 this stint" in markup
+
+    def test_a_used_set_gets_a_dashed_ring(self):
+        assert 'class="f1-tyre used"' in self._markup(fresh=False)
+
+    def test_a_new_set_is_not_marked_used(self):
+        markup = self._markup(fresh=True, laps_used=9)
+
+        assert 'class="f1-tyre"' in markup and "(new)" in markup
+
+    def test_unknown_condition_is_stated(self):
+        assert "condition unknown" in self._markup(fresh=None)

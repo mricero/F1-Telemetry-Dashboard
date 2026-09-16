@@ -224,6 +224,8 @@ DASHBOARD_CSS = f"""
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 9px; font-weight: 700; line-height: 1;
 }}
+/* A scrubbed set: dashed ring, so "used" is not conveyed by colour alone. */
+.f1-tyre.used {{ border-style: dashed; }}
 .f1-tyre em {{
   position: absolute; bottom: -5px; right: -4px; font-style: normal;
   font-size: 8px; font-weight: 700; color: var(--dim);

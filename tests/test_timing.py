@@ -174,7 +174,9 @@ class TestClassification:
     def test_tyre_history_counts_laps_per_stint(self, session):
         history = build_timing_rows(session)[0]["tyre_history"]
 
-        assert history == [{"compound": "SOFT", "laps_used": 2}]
+        # Without TyreLife the stint length is the best age estimate, and
+        # whether the set was new is simply unknown.
+        assert history == [{"compound": "SOFT", "laps_used": 2, "stint_laps": 2, "fresh": None}]
 
 
 class TestSectors:
@@ -909,3 +911,82 @@ class TestLiveStatus:
         rows = build_timing_rows(self._live_session())
 
         assert rows[0]["laps_completed"] == 1
+
+
+class TestTyreHistory:
+    """DASH-11: the badge showed laps in the stint, not the tyre's age."""
+
+    @staticmethod
+    def _laps_with_tyres(**columns) -> pd.DataFrame:
+        base = {
+            "Driver": ["VER"] * 4,
+            "LapNumber": [1, 2, 3, 4],
+            "LapTime": pd.to_timedelta([91.0, 90.5, 92.0, 91.5], unit="s"),
+            "Compound": ["SOFT", "SOFT", "MEDIUM", "MEDIUM"],
+            "Stint": [1, 1, 2, 2],
+        }
+        base.update(columns)
+        return pd.DataFrame(base)
+
+    def _history(self, laps: pd.DataFrame) -> list:
+        session = {
+            "session_info": {"session_type": "FP1"},
+            "laps": laps,
+            "drivers": _drivers(("VER", "Red Bull Racing", "#3671c6")),
+            "telemetry": {},
+            "is_live": False,
+        }
+        return build_timing_rows(session)[0]["tyre_history"]
+
+    def test_age_comes_from_tyre_life_not_the_stint_length(self):
+        # The second set started with 5 laps already on it.
+        history = self._history(self._laps_with_tyres(TyreLife=[1, 2, 6, 7]))
+
+        assert [stint["laps_used"] for stint in history] == [2, 7]
+
+    def test_a_used_set_is_marked(self):
+        history = self._history(
+            self._laps_with_tyres(TyreLife=[1, 2, 6, 7], FreshTyre=[True, True, False, False])
+        )
+
+        assert [stint["fresh"] for stint in history] == [True, False]
+
+    def test_stint_length_is_kept_alongside_the_age(self):
+        history = self._history(self._laps_with_tyres(TyreLife=[1, 2, 6, 7]))
+
+        assert [stint["stint_laps"] for stint in history] == [2, 2]
+
+    def test_without_tyre_life_the_stint_length_is_used(self):
+        history = self._history(self._laps_with_tyres())
+
+        assert [stint["laps_used"] for stint in history] == [2, 2]
+        assert all(stint["fresh"] is None for stint in history)
+
+    def test_falls_back_to_the_stints_table_when_laps_have_no_compound(self):
+        laps = pd.DataFrame(
+            {
+                "Driver": ["VER", "VER"],
+                "LapNumber": [1, 2],
+                "LapTime": pd.to_timedelta([91.0, 90.5], unit="s"),
+            }
+        )
+        session = {
+            "session_info": {"session_type": "R"},
+            "laps": laps,
+            "stints": pd.DataFrame(
+                {
+                    "Driver": ["VER", "VER"],
+                    "Stint": [1, 2],
+                    "Compound": ["SOFT", "HARD"],
+                    "LapCount": [12, 20],
+                }
+            ),
+            "drivers": _drivers(("VER", "Red Bull Racing", "#3671c6")),
+            "telemetry": {},
+            "is_live": True,
+        }
+
+        history = build_timing_rows(session)[0]["tyre_history"]
+
+        assert [s["compound"] for s in history] == ["SOFT", "HARD"]
+        assert [s["laps_used"] for s in history] == [12, 20]

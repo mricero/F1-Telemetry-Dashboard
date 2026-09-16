@@ -231,10 +231,18 @@ def _tyres_html(history: Sequence[dict]) -> str:
         compound = str(stint.get("compound", "UNKNOWN")).upper()
         letter = COMPOUND_LETTER.get(compound, "?")
         ring = COMPOUND_RING.get(compound, "#8a8a8a")
-        laps = stint.get("laps_used", 0)
+        # The number is the tyre's *age*, which exceeds the stint length when
+        # the driver started on a scrubbed set.
+        age = stint.get("laps_used", 0)
+        fresh = stint.get("fresh")
+        used_class = " used" if fresh is False else ""
+        condition = {True: "new", False: "used", None: "condition unknown"}[fresh]
+        stint_laps = stint.get("stint_laps")
+        stint_note = f", {stint_laps} this stint" if stint_laps not in (None, age) else ""
         badges.append(
-            f'<span class="f1-tyre" style="border-color:{ring};color:{ring}" '
-            f'title="{_esc(compound)} - {laps} laps">{letter}<em>{laps}</em></span>'
+            f'<span class="f1-tyre{used_class}" style="border-color:{ring};color:{ring}" '
+            f'title="{_esc(compound)} - {age} laps old ({condition}){stint_note}">'
+            f"{letter}<em>{age}</em></span>"
         )
     return f'<div class="f1-tyres">{"".join(badges)}</div>'
 
