@@ -81,31 +81,50 @@ def wind_kmh(wind_speed) -> Optional[float]:
     return float(wind_speed) * MS_TO_KMH
 
 
+# Official TrackStatus codes -> header flag states. The live feed reports the
+# track state directly, so nothing else is consulted while a session is live.
+TRACK_STATUS_FLAGS = {
+    "1": "GREEN",
+    "2": "YELLOW",
+    "4": "SAFETY CAR",
+    "5": "RED",
+    "6": "VSC",
+    "7": "VSC",
+}
+
+
 def _flag_state(session_data: dict) -> str:
-    """Current flag condition from track status, else the last flag message."""
+    """The track's flag condition for the header.
+
+    Race-control messages are scoped: a ``Sector`` yellow or a ``Driver`` blue
+    says nothing about the state of the track, so only ``Track``-scoped
+    messages count - otherwise a finished session reported "YELLOW FLAG"
+    because some sector went yellow once.
+    """
     info = session_data.get("session_info") or {}
     status = info.get("track_status")
     if isinstance(status, dict):
         code = str(status.get("status", ""))
-        mapped = {
-            "1": "GREEN",
-            "2": "YELLOW",
-            "4": "SAFETY CAR",
-            "5": "RED",
-            "6": "VSC",
-            "7": "VSC",
-        }
-        if code in mapped:
-            return mapped[code]
+        if code in TRACK_STATUS_FLAGS:
+            return TRACK_STATUS_FLAGS[code]
+
+    if session_data.get("is_live"):
+        # No TrackStatus yet: assume green rather than infer one from history.
+        return "GREEN"
 
     race_control = session_data.get("race_control")
-    if race_control is not None and not race_control.empty and "Flag" in race_control.columns:
-        flags = race_control["Flag"].dropna()
-        if not flags.empty:
-            last = str(flags.iloc[-1]).upper()
-            if last in FLAG_STATES:
-                return last
-    return "GREEN" if session_data.get("is_live") else "FINISHED"
+    if (
+        race_control is not None
+        and not race_control.empty
+        and {"Flag", "Scope"} <= set(race_control.columns)
+    ):
+        track_wide = race_control[race_control["Scope"].astype(str).str.lower() == "track"]
+        flags = track_wide["Flag"].dropna()
+        for flag in reversed(flags.tolist()):
+            state = str(flag).upper()
+            if state in FLAG_STATES:
+                return state
+    return "FINISHED"
 
 
 def _session_length(weather: Optional[pd.DataFrame]) -> str:

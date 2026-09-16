@@ -573,3 +573,60 @@ class TestMapFollowsRealSectors:
         first_slice = TestDominancePlacement._path_lengths(svg, "#3671c6")
         outline = TestDominancePlacement._path_lengths(svg, "#000000")
         assert 0.05 < first_slice / outline < 0.08  # 1/15 of the lap
+
+
+class TestHeaderFlagState:
+    """DASH-08: a finished session must not report a sector's yellow flag."""
+
+    @staticmethod
+    def _messages(*entries) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"Time": pd.to_timedelta(i * 60, unit="s"), "Flag": flag, "Scope": scope}
+                for i, (flag, scope) in enumerate(entries)
+            ]
+        )
+
+    def _flag(self, **session) -> str:
+        from ui.dashboard import _flag_state
+
+        return _flag_state({"session_info": {}, "is_live": False, **session})
+
+    def test_sector_yellow_is_not_the_track_state(self):
+        state = self._flag(
+            race_control=self._messages(("CHEQUERED", "Track"), ("YELLOW", "Sector"))
+        )
+
+        assert state == "CHEQUERED"
+
+    def test_driver_scoped_blue_is_ignored(self):
+        state = self._flag(race_control=self._messages(("BLUE", "Driver")))
+
+        assert state == "FINISHED"
+
+    def test_track_scoped_red_is_kept(self):
+        state = self._flag(race_control=self._messages(("GREEN", "Track"), ("RED", "Track")))
+
+        assert state == "RED"
+
+    def test_messages_without_a_scope_column_are_not_trusted(self):
+        messages = pd.DataFrame({"Flag": ["YELLOW"], "Time": pd.to_timedelta([0], unit="s")})
+
+        assert self._flag(race_control=messages) == "FINISHED"
+
+    def test_no_messages_means_the_session_ended(self):
+        assert self._flag() == "FINISHED"
+
+    def test_live_uses_track_status_only(self):
+        state = self._flag(
+            session_info={"track_status": {"status": "2"}},
+            is_live=True,
+            race_control=self._messages(("CHEQUERED", "Track")),
+        )
+
+        assert state == "YELLOW"
+
+    def test_live_without_track_status_is_green_not_a_stale_message(self):
+        state = self._flag(is_live=True, race_control=self._messages(("YELLOW", "Sector")))
+
+        assert state == "GREEN"

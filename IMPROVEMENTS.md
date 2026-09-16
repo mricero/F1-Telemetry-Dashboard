@@ -351,7 +351,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Acceptance: 2026 quali fixture → 10/6/6 split with correct headings; race → no KO styling.
   - Note: the partition follows the *official position*, not "last segment with a time" - 2023 Bahrain HUL reached Q3, set no lap there, and keeps a Q2 time that beats a Q3 time. Verified on the real session (10/5/5). The meaningless `cutoff` parameter was dropped from `build_timing_rows`/`tower_html`/`render_dashboard`. Live `SessionPart`/`KnockedOut` handling stays with LIVE-05/LIVE-10.
 
-- [x] **DASH-03** · P1 · M — **Mini-sector colours don't follow the F1 convention; sector strips assume equal thirds** — done in <pending>
+- [x] **DASH-03** · P1 · M — **Mini-sector colours don't follow the F1 convention; sector strips assume equal thirds** — done in f9a09b1
   - Files: `processing/timing.py:112-174, 252-268`, `ui/theme.py:97-104`.
   - Problem:
     1. Official convention (and `layout.md` §3.8, formula-timer, f1telemetry.com): **purple = session best, green = personal best, yellow = slower than personal best** (f1telemetry.com adds blue = in pit). The code makes green "within 2 % of the session best" (`GREEN_TOLERANCE`), which has nothing to do with personal bests.
@@ -385,10 +385,11 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Problem: FastF1 `WindSpeed` is **m/s**. The weather tab labels it m/s; the header prints the same number as "km/h" (3.6× understatement). `layout.md` asks for km/h.
   - Fix: Convert `× 3.6` in the header (and in the tab if you standardise on km/h); unit test.
 
-- [ ] **DASH-08** · P2 · S — **Finished sessions can show "YELLOW FLAG"**
+- [x] **DASH-08** · P2 · S — **Finished sessions can show "YELLOW FLAG"** — done in <pending>
   - Files: `ui/dashboard.py:64-88`.
   - Problem: Historical header flag = last race-control message's `Flag`. That is often a sector-scoped `YELLOW`/`DOUBLE YELLOW`/`CLEAR` or a driver-scoped `BLUE`, not the track state.
   - Fix: For historical sessions, use `session.track_status` (FastF1) final value or show `CHEQUERED`/"SESSION ENDED"; only consider messages with `Scope == "Track"`. Live: `TrackStatus` only.
+  - Note: took the second option - `Track`-scoped race-control messages (which end with CHEQUERED, or RED for an abandoned session), falling back to SESSION ENDED - rather than adding `session.track_status` to the unified dict for a header badge.
 
 - [ ] **DASH-09** · P2 · S — **Header "clock" is the weather-sampling window length**
   - Files: `ui/dashboard.py:91-103, 149`.
