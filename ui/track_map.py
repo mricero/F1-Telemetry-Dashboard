@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from ui.theme import BORDER, TEXT_DIM, team_color
+from ui.theme import BORDER, TEXT_DIM, safe_hex, team_color
 
 # Viewport the SVG is drawn into; the track is scaled to fit with padding.
 VIEW_W = 1000
@@ -198,7 +198,7 @@ def build_track_svg(
     for marker in markers or []:
         raw = np.array([[marker["x"], marker["y"]]], dtype=float)
         point = _project(rotate_points(raw, rotation), scale, dx, dy)[0]
-        colour = marker.get("team_colour") or "#ffffff"
+        colour = safe_hex(marker.get("team_colour"))
         code = html.escape(str(marker.get("code", "")))
         layers.append(
             f'<circle cx="{point[0]:.1f}" cy="{point[1]:.1f}" r="9" fill="{colour}" '

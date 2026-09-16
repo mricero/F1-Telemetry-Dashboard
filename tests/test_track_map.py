@@ -293,3 +293,69 @@ class TestWindUnits:
 
         assert "36.0 km/h S" in html
         assert "10.0 km/h" not in html
+
+
+class TestColourSanitising:
+    """REPO-12: feed/replay colours land unescaped in style= and SVG stroke=."""
+
+    @staticmethod
+    def _safe_hex():
+        from ui.theme import safe_hex
+
+        return safe_hex
+
+    def test_accepts_six_digit_hex_with_and_without_hash(self):
+        safe_hex = self._safe_hex()
+        assert safe_hex("00d2be") == "#00d2be"
+        assert safe_hex("#00D2BE") == "#00D2BE"
+
+    def test_rejects_a_css_injection_payload(self):
+        safe_hex = self._safe_hex()
+        assert safe_hex("red;background:url(x)") == "#8a8a8a"
+        assert safe_hex('" onload="alert(1)') == "#8a8a8a"
+        assert safe_hex("</style><script>alert(1)</script>") == "#8a8a8a"
+
+    def test_rejects_empty_and_missing_values(self):
+        safe_hex = self._safe_hex()
+        for value in (None, "", "   ", float("nan"), "nan", "None", 12345):
+            assert safe_hex(value) == "#8a8a8a"
+
+    def test_honours_an_explicit_fallback(self):
+        safe_hex = self._safe_hex()
+        assert safe_hex("not a colour", fallback="#123456") == "#123456"
+
+    def test_team_color_sanitises_the_session_colour(self):
+        assert team_color("Mercedes", "red;background:url(x)") == "#00d2be"
+        assert team_color("Nonexistent Team", '"><script>') == "#8a8a8a"
+
+    def test_tower_html_never_emits_a_raw_payload(self):
+        rows = [
+            {
+                "position": 1,
+                "code": "VER",
+                "team_name": "Red Bull",
+                "team_colour": '"><script>alert(1)</script>',
+                "status": "CLASSIFIED",
+                "last_lap": "1:31.2",
+                "best_lap": "1:31.2",
+                "interval": "—",
+                "gap": "—",
+                "diff": "—",
+                "speed_kmh": 320.0,
+                "sectors": [],
+                "tyre_history": [],
+            }
+        ]
+
+        markup = tower_html(rows)
+
+        assert "<script>" not in markup
+        assert "alert(1)" not in markup
+
+    def test_track_map_marker_colour_is_sanitised(self, location):
+        markers = [{"code": "VER", "x": 500.0, "y": 100.0, "team_colour": 'red" onload="x'}]
+
+        svg = build_track_svg(location, markers=markers)
+
+        assert 'onload="x' not in svg
+        assert "#8a8a8a" in svg

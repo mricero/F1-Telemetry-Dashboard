@@ -5,6 +5,7 @@ Keeping them in one module means the timing tower, track map and header all
 resolve the same colours rather than each hardcoding hexes.
 """
 
+import re
 from typing import Dict, Optional
 
 # --- Surfaces -----------------------------------------------------------
@@ -80,18 +81,40 @@ FLAG_STATES = {
 }
 
 
+# Colours reach the renderers from the live feed, FastF1 and third-party
+# replay files, and are interpolated into `style="..."` and SVG stroke/fill
+# attributes. Only a plain six-digit hex is ever let through.
+NEUTRAL_GREY = "#8a8a8a"
+_HEX_COLOUR = re.compile(r"^#?[0-9A-Fa-f]{6}$")
+
+
+def safe_hex(colour, fallback: str = NEUTRAL_GREY) -> str:
+    """A six-digit hex colour, or ``fallback`` for anything else.
+
+    Guards the HTML/SVG builders against values like
+    ``"red;background:url(x)"`` arriving in a shared replay.
+    """
+    if not isinstance(colour, str):
+        return fallback
+    value = colour.strip()
+    if not _HEX_COLOUR.match(value):
+        return fallback
+    return value if value.startswith("#") else f"#{value}"
+
+
 def team_color(team_name: Optional[str], fallback: Optional[str] = None) -> str:
     """Resolve a team's accent colour.
 
     ``fallback`` is the session's own colour (FastF1 ``TeamColor``) and wins
-    when present, since it tracks the real livery for that season.
+    when present, since it tracks the real livery for that season - but only
+    once :func:`safe_hex` has vouched for it.
     """
     if fallback:
-        value = str(fallback).strip()
-        if value and value.lower() not in {"nan", "none"}:
-            return value if value.startswith("#") else f"#{value}"
+        sanitised = safe_hex(fallback, fallback="")
+        if sanitised:
+            return sanitised
     key = str(team_name or "").strip().lower()
-    return TEAM_COLORS.get(key, "#8a8a8a")
+    return TEAM_COLORS.get(key, NEUTRAL_GREY)
 
 
 def segment_color(state: str) -> str:

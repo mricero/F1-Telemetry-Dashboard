@@ -409,7 +409,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 ---
 ## 6. P1/P2 — Caching, state & persistence
 
-- [x] **CACHE-01** · P1 · S — **"Runtime cache" is shared by all users but reset by any new browser session; unbounded** — done in <pending>
+- [x] **CACHE-01** · P1 · S — **"Runtime cache" is shared by all users but reset by any new browser session; unbounded** — done in 1c69594
   - Files: `data/runtime_cache.py:77-79`, `app.py:148-153`, `app.py:90-120`.
   - Problem: `runtime_cache` is a module-level singleton (process-wide), but `begin_session()` is guarded by `st.session_state`, which is **per browser session**. Opening the app in a second tab (or a second user connecting) clears the cache for everyone. It also has no size limit: every session viewed stays in memory (a race dict with "Full session" scope is hundreds of MB).
   - Fix: Replace with `@st.cache_resource(max_entries=N, ttl=…)` on the loader (or an LRU with a byte budget using `DataFrame.memory_usage(deep=True)`); drop the "wipe on app open" semantics — Streamlit already starts clean per process. Keep hit/miss stats if useful.
@@ -551,7 +551,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Files: many `except Exception: return pd.DataFrame()` / `return {}` (e.g. `data/fastf1_adapter.py:238-241, 256-259, 278-283`, `data/source_manager.py:86-91, 501-530`).
   - Fix: `logging.getLogger(__name__)` everywhere; log at WARNING with the exception when degrading; feed UX-11 status. Configure log level via env.
 
-- [ ] **REPO-12** · P2 · S — **HTML injection surface in `st.html`**
+- [x] **REPO-12** · P2 · S — **HTML injection surface in `st.html`** — done in <pending>
   - Files: `ui/dashboard.py:179-181, 212, 228, 257-258`, `ui/track_map.py:147-152, 203-206`.
   - Problem: Team colours from the feed / FastF1 are interpolated unescaped into `style="…"` and SVG `stroke`/`fill` attributes. Low risk with FastF1, higher with third-party replays or a future hosted mode.
   - Fix: `safe_hex(colour)` that only accepts `^#?[0-9A-Fa-f]{6}$`; everything else → fallback grey. Unit test with `"red;background:url(x)"`.
