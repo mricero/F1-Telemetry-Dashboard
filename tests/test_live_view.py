@@ -154,3 +154,74 @@ class TestLiveDashboardIsFed:
 
         assert "No timing data" not in markup
         assert isinstance(snapshot["laps"], pd.DataFrame)
+
+
+def _dashboard_spy_script():
+    """Run the live view with render_dashboard replaced by a recorder.
+
+    AppTest does not expose ``st.html`` output, so what the dashboard was
+    *given* is asserted instead of its markup.
+    """
+    import streamlit as st
+
+    import ui.layout as layout
+    from data.source_manager import DataSourceManager
+    from processing.telemetry_processor import TelemetryProcessor
+    from tests.test_live_view import _primed_adapter
+
+    def spy(session_data):
+        st.session_state["dashboard_input"] = session_data
+
+    layout.render_dashboard = spy
+
+    class Stub(DataSourceManager):
+        def __init__(self):
+            super().__init__(live_adapter=_primed_adapter())
+
+    layout.render_live_dashboard(Stub(), TelemetryProcessor())
+
+
+class TestLiveDashboardRendersInTheFragment:
+    """LIVE-10: the tower must be rendered from the polled snapshot."""
+
+    @pytest.fixture
+    def spy_app(self, monkeypatch):
+        import data.source_manager as source_manager
+
+        monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+        app = AppTest.from_function(_dashboard_spy_script, default_timeout=60)
+        app.run()
+        assert not app.exception, app.exception
+        return app
+
+    def test_the_dashboard_is_rendered_from_live_data(self, spy_app):
+        given = spy_app.session_state["dashboard_input"]
+
+        assert given["is_live"] is True
+        assert given["session_info"]["gp"] == "Bahrain Grand Prix"
+        assert not given["laps"].empty, "the tower would show 'No timing data'"
+
+    def test_the_dashboard_sees_the_drivers(self, spy_app):
+        from processing.timing import build_timing_rows
+
+        rows = build_timing_rows(spy_app.session_state["dashboard_input"])
+
+        assert len(rows) >= 15
+
+    def test_the_duplicate_timing_dataframe_tab_is_gone(self, live_app):
+        labels = [tab.label for tab in live_app.tabs]
+
+        assert "⏱️ Timing" not in labels
+        assert "🚩 Race Control" in labels
+
+    def test_the_app_skips_the_static_dashboard_for_live_sessions(self):
+        import inspect
+
+        import app
+
+        source = inspect.getsource(app.main)
+        # The pre-poll dict is empty for a live session, so rendering the
+        # dashboard there unconditionally is what LIVE-10 removed.
+        guard = 'if not session_data.get("is_live"):'
+        position = source.index(guard)
+        assert "render_dashboard(session_data)" in source[position : position + 200]

@@ -15,7 +15,7 @@ from typing import Dict, Optional
 from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
-from ui.dashboard import wind_kmh
+from ui.dashboard import render_dashboard, wind_kmh
 from processing.time_utils import format_m_s, seconds_series
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
@@ -515,7 +515,12 @@ def render_live_dashboard(data_manager, processor):
     stints_df = processor.process_stints(
         snapshot["stints"], latest_lap=max_lap_number(snapshot["laps"])
     )
-    laps_df = snapshot["laps"]
+
+    # The spec dashboard, fed from the *polled* snapshot. It used to be
+    # rendered once, outside the fragment, with the empty dict a live session
+    # starts from - so the tower, sector cards and map read "No timing data"
+    # for the whole session (LIVE-10).
+    render_dashboard(snapshot)
 
     # Car telemetry and positions are the only auth-gated parts of the feed.
     # Timing, tyres, race control and weather work without a token, so the
@@ -543,9 +548,8 @@ def render_live_dashboard(data_manager, processor):
 
     color_map = processor.build_driver_color_map(snapshot["drivers"])
 
-    tabs = st.tabs(
-        ["📊 Telemetry", "🗺️ Track Map", "🛞 Tyres", "⏱️ Timing", "🚩 Race Control", "🌤️ Weather"]
-    )
+    # No "Timing" tab: the dashboard above is the timing view.
+    tabs = st.tabs(["📊 Telemetry", "🗺️ Track Map", "🛞 Tyres", "🚩 Race Control", "🌤️ Weather"])
     with tabs[0]:
         render_telemetry_charts(
             {d: processor.normalize_units(df.copy()) for d, df in telemetry.items()}, color_map
@@ -557,13 +561,8 @@ def render_live_dashboard(data_manager, processor):
         if not stints_df.empty:
             st.dataframe(stints_df, width="stretch", height=250)
     with tabs[3]:
-        if not laps_df.empty:
-            st.dataframe(laps_df, width="stretch", height=400)
-        else:
-            st.info("No timing data received yet.")
-    with tabs[4]:
         render_race_control(snapshot.get("race_control"), limit=25)
-    with tabs[5]:
+    with tabs[4]:
         render_weather(snapshot.get("weather"))
 
 

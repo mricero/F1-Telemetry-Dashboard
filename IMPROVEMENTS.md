@@ -146,7 +146,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     6. Keep livef1's parsers only if still useful; otherwise decode `.z` topics with the existing `decode_zipped()`.
   - Acceptance: `scripts/live_smoke.py 60` during a session prints non-zero counts for `TimingData`, `TrackStatus`, `RaceControlMessages`, `WeatherData`, `SessionInfo`, `DriverList`, `ExtrapolatedClock`; with a token also `CarData.z`/`Position.z`. Unit tests feed a recorded CompletionMessage + feed messages through the handler.
 
-- [x] **LIVE-02** · P0 · M — **Degraded mode when auth-only topics are missing** — done in <pending>
+- [x] **LIVE-02** · P0 · M — **Degraded mode when auth-only topics are missing** — done in 264a3f4
   - Files: `ui/layout.py:493-495`, `app.py:233-245`, `data/source_manager.py:281-407`.
   - Problem: `render_live_dashboard` returns early with "Waiting for live data…" when `telemetry` and `location` are both empty. Without an F1TV token those are *always* empty, so timing, tyres, race control and weather — all of which work without auth — are never shown.
   - Fix: Render each panel independently from whatever topics have data. Show a single banner: "Car telemetry and driver positions need an F1TV subscription token (set `F1TV_SUBSCRIPTION_TOKEN`)". Maintain an explicit list `AUTH_TOPICS = {"CarData.z", "Position.z", "PitStopSeries", "ChampionshipPrediction", "DriverRaceInfo", "TeamRadio"}` and only subscribe to them when a token is configured.
@@ -231,7 +231,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: two `AppTest` sessions share one adapter instance (assert `id()` equality); starting live in one shows data in the other.
   - Note: a module singleton behind a lock (`data/live_service.py`) rather than `@st.cache_resource`, so scripts, tests and `live_smoke.py` can reach the adapter without a Streamlit runtime. `DataSourceManager` takes an optional `live_adapter` for tests, and `tests/conftest.py` resets the singleton between tests.
 
-- [ ] **LIVE-10** · P0 · M — **Live mode never feeds the timing-tower dashboard**
+- [x] **LIVE-10** · P0 · M — **Live mode never feeds the timing-tower dashboard** — done in <pending>
   - Files: `app.py:173-202, 233-245`, `ui/layout.py:481-530`, `ui/dashboard.py:343-355`.
   - Problem: `render_dashboard(session_data)` runs with the dict from `_load_live_session()` — all empty frames — so the header, tower, sector cards and map show "No timing data" during a live session. Live data only reaches the plain tabs inside `render_live_dashboard`.
   - Fix: Move `render_dashboard` inside the live fragment and feed it `poll_live_data()` (or the LiveState snapshot). Remove the duplicate plain "Timing" dataframe tab.

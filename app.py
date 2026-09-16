@@ -201,8 +201,11 @@ def main():
     info = session_data["session_info"]
 
     # --- Live timing dashboard (layout.md): header bar, leaderboard matrix,
-    # sector widgets and the vector track map on the 60/40 grid.
-    render_dashboard(session_data)
+    # sector widgets and the vector track map on the 60/40 grid. For a live
+    # session this dict is still empty; the auto-refreshing fragment renders
+    # the dashboard from each poll instead (LIVE-10).
+    if not session_data.get("is_live"):
+        render_dashboard(session_data)
 
     # Metrics label + persistent record keeping (survives app restarts)
     # The selection only overrides the session's own identity where it says
