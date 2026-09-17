@@ -28,24 +28,49 @@ class TelemetryProcessor:
         self.driver_color_map = {}
 
     def build_driver_color_map(self, drivers_df: pd.DataFrame) -> dict:
-        """Map driver acronyms to team colors."""
+        """Map driver acronyms to team colours.
+
+        Built from whole columns: `iterrows()` materialises a Series per row,
+        which is pure overhead for a 22-row frame rebuilt on every rerun.
+        """
         color_map: dict[str, str] = {}
         if drivers_df is None or drivers_df.empty:
             self.driver_color_map = color_map
             return color_map
-        for _, row in drivers_df.iterrows():
-            acronym = self._first_present(row, "name_acronym")
-            if not acronym:
-                team = self._first_present(row, "TeamName", "team_name")
-                acronym = str(team)[:3].upper() if team else None
-            if not acronym:
+
+        acronyms = self._column(drivers_df, "name_acronym")
+        if acronyms is None:
+            acronyms = pd.Series(index=drivers_df.index, dtype="object")
+        acronyms = acronyms.astype("object")
+
+        # A row may have no acronym even when the column exists; the first
+        # three letters of the team stand in, as they did row by row before.
+        teams = self._column(drivers_df, "TeamName", "team_name")
+        if teams is not None:
+            from_team = teams.astype("string").str[:3].str.upper()
+            acronyms = acronyms.where(acronyms.notna() & (acronyms != ""), from_team)
+
+        colours = self._column(drivers_df, "team_colour", "TeamColour")
+        if colours is None:
+            colours = pd.Series(index=drivers_df.index, dtype="object")
+        colours = colours.fillna("#888888").astype("string")
+        colours = colours.where(colours.str.startswith("#"), "#" + colours)
+
+        for acronym, colour in zip(acronyms, colours, strict=False):
+            if acronym is None or pd.isna(acronym) or not str(acronym):
                 continue
-            color = self._first_present(row, "team_colour", "TeamColour") or "#888888"
-            if not str(color).startswith("#"):
-                color = f"#{color}"
-            color_map[acronym] = color
+            color_map[str(acronym)] = str(colour) if pd.notna(colour) else "#888888"
+
         self.driver_color_map = color_map
         return color_map
+
+    @staticmethod
+    def _column(frame: pd.DataFrame, *names: str):
+        """The first of `names` present in the frame, else None."""
+        for name in names:
+            if name in frame.columns:
+                return frame[name]
+        return None
 
     @staticmethod
     def _first_present(row, *keys):

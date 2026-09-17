@@ -380,6 +380,59 @@ def _as_lap_number(value, default):
         return default
 
 
+def stint_traces(
+    stints_df: pd.DataFrame,
+    palette: dict,
+    driver_col: str = "DriverAcronym",
+) -> list:
+    """Horizontal bars for a stint chart: one trace per **compound**.
+
+    A trace per stint row meant ~90 Plotly traces for a race, each carrying
+    its own marker and hover template; grouping by compound sends the same
+    picture as a handful of traces with arrays.
+    """
+    if stints_df is None or stints_df.empty:
+        return []
+    if driver_col not in stints_df.columns:
+        driver_col = "Driver" if "Driver" in stints_df.columns else driver_col
+    if driver_col not in stints_df.columns:
+        return []
+
+    frame = stints_df.copy()
+    frame["_compound"] = frame.get("Compound", "UNKNOWN").astype("string").str.upper()
+    frame["_start"] = [_as_lap_number(value, 1) for value in frame.get("LapStart", 1)]
+    frame["_end"] = [
+        _as_lap_number(end, start)
+        for end, start in zip(frame.get("LapEnd", frame["_start"]), frame["_start"], strict=False)
+    ]
+    counts = frame.get("LapCount", pd.Series(index=frame.index, dtype="object"))
+    frame["_laps"] = [
+        _as_lap_number(count, None) or max(end - start + 1, 1)
+        for count, start, end in zip(counts, frame["_start"], frame["_end"], strict=False)
+    ]
+
+    traces = []
+    for compound, group in frame.groupby("_compound", sort=True, dropna=False):
+        label = str(compound) if pd.notna(compound) else "UNKNOWN"
+        traces.append(
+            go.Bar(
+                x=group["_laps"].tolist(),
+                y=group[driver_col].tolist(),
+                base=group["_start"].tolist(),
+                orientation="h",
+                name=label,
+                marker=dict(color=palette.get(label, "gray")),
+                customdata=list(zip(group["_start"], group["_end"], strict=False)),
+                hovertemplate=(
+                    "%{y}: " + label + "<br>Laps: %{x}"
+                    "<br>Start: %{customdata[0]}<br>End: %{customdata[1]}<extra></extra>"
+                ),
+                showlegend=False,
+            )
+        )
+    return traces
+
+
 def render_tire_strategy(
     stints_df: pd.DataFrame,
     color_map: dict[str, str],
@@ -401,32 +454,8 @@ def render_tire_strategy(
         return
 
     fig = go.Figure()
-
-    for _, row in stints_df.iterrows():
-        driver = row.get(driver_col, "")
-        compound = str(row.get("Compound", "UNKNOWN")).upper()
-        lap_start = _as_lap_number(row.get("LapStart"), 1)
-        lap_end = _as_lap_number(row.get("LapEnd"), lap_start)
-        lap_count = _as_lap_number(row.get("LapCount"), None)
-        if lap_count is None:
-            lap_count = max(lap_end - lap_start + 1, 1)
-
-        fig.add_trace(
-            go.Bar(
-                x=[lap_count],
-                y=[driver],
-                base=lap_start,
-                orientation="h",
-                marker=dict(color=palette.get(compound, "gray")),
-                hovertemplate=(
-                    f"{driver}: {compound}<br>"
-                    f"Laps: {lap_count}<br>"
-                    f"Start: {lap_start}<br>"
-                    f"End: {lap_end}<extra></extra>"
-                ),
-                showlegend=False,
-            )
-        )
+    for trace in stint_traces(stints_df, palette, driver_col):
+        fig.add_trace(trace)
 
     # Driver labels with team colors
     for driver in stints_df[driver_col].dropna().unique():

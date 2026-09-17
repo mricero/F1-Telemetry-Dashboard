@@ -59,6 +59,36 @@ def to_seconds(value) -> float | None:
         return None
 
 
+# Same shapes as the scalar parser, as one regex for str.extract.
+_M_S_EXTRACT = r"^(?:(\d{1,2}):)?(\d{1,3}(?:\.\d{1,4})?)$"
+
+
 def seconds_series(values: pd.Series) -> pd.Series:
-    """Vectorised :func:`to_seconds` over a Series -> float Series (NaN-safe)."""
-    return pd.Series([to_seconds(v) for v in values], index=values.index, dtype="float64")
+    """Vectorised :func:`to_seconds` over a Series -> float Series (NaN-safe).
+
+    Timedelta and numeric columns convert in one call; string columns go
+    through a single ``str.extract`` rather than a Python-level loop, which
+    is what this used to be despite the docstring.
+    """
+    if values is None or len(values) == 0:
+        return pd.Series([], dtype="float64")
+
+    if pd.api.types.is_timedelta64_dtype(values):
+        return values.dt.total_seconds().round(3).astype("float64")
+    if pd.api.types.is_numeric_dtype(values):
+        return pd.to_numeric(values, errors="coerce").astype("float64")
+
+    text = values.astype("string").str.strip()
+    parts = text.str.extract(_M_S_EXTRACT)
+    minutes = pd.to_numeric(parts[0], errors="coerce").fillna(0.0)
+    seconds = pd.to_numeric(parts[1], errors="coerce")
+    result = (minutes * 60 + seconds).round(3)
+
+    # Anything the pattern did not match (Timedelta objects in an object
+    # column, odd strings) falls back to the scalar parser - a handful of
+    # values, not the whole column.
+    unmatched = result.isna() & values.notna()
+    if unmatched.any():
+        fallback = [to_seconds(value) for value in values[unmatched]]
+        result.loc[unmatched] = pd.Series(fallback, index=values[unmatched].index, dtype="float64")
+    return pd.Series(result, index=values.index, dtype="float64")
