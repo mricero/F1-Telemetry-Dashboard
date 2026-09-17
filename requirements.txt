@@ -1,11 +1,23 @@
 # Core Framework
-streamlit>=1.35.0,<2
+# streamlit: width="stretch" and @st.fragment(run_every=...) are used
+# throughout; neither exists in the old >=1.35 floor.
+streamlit>=1.55,<2
 plotly>=5.22.0,<7
 pandas>=2.2.0,<3
 numpy>=1.26.0,<3
 
 # F1 Data
 fastf1>=3.8.0,<4
-livef1>=1.2.0,<2
+# livef1 patch releases change parsing shapes, so the floor is the version
+# the live tests are written against.
+livef1>=1.2.1,<1.3
 requests>=2.31.0,<3
 python-dotenv>=1.0.0,<2
+
+# HTTP caching for the Jolpica adapter's paged, rate-limited requests.
+requests-cache>=1.2.0,<2
+# Columnar replay storage (HIST-02) and pandas' parquet engine.
+pyarrow>=16.0.0,<25
+# SignalR Core client for the live feed rewrite (LIVE-01); FastF1 uses the
+# same library for its own live timing client.
+signalrcore>=0.9.5,<2

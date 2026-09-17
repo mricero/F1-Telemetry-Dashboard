@@ -1,0 +1,25 @@
+# Pinned versions this project is known to work with.
+#
+# Regenerate after changing requirements*.txt:
+#   python -m pip install -r requirements-dev.txt
+#   python scripts/lock_requirements.py
+#
+# Install exactly these with:  pip install -r requirements.lock
+
+black==26.5.1
+fastf1==3.8.3
+livef1==1.2.1
+mypy==2.3.1
+numpy==2.5.1
+pandas==2.3.3
+plotly==6.8.0
+pre-commit==4.6.2
+pyarrow==24.0.0
+pytest==9.1.1
+pytest-cov==7.1.0
+python-dotenv==1.2.2
+requests==2.34.2
+requests-cache==1.3.3
+ruff==0.16.4
+signalrcore==1.0.2
+streamlit==1.59.0
