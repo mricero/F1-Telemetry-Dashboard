@@ -1,6 +1,8 @@
 [tool.black]
 line-length = 100
-target-version = ["py312"]
+# 3.11 is the declared floor (readme). Targeting py312 made black warn
+# "Python 3.11 cannot parse code formatted for Python 3.12" on that floor.
+target-version = ["py311"]
 # Black's defaults cover .venv but not these; without them `black --check .`
 # walks the vendored site-packages and fails CI on third-party code.
 extend-exclude = '''
@@ -14,7 +16,7 @@ extend-exclude = '''
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 exclude = [".venv", ".venv311", "ff1_cache", "replay_sessions"]
 
 [tool.ruff.lint]
