@@ -39,6 +39,9 @@ jobs:
       - name: Black (formatting check)
         run: black --check .
 
+      - name: Mypy
+        run: mypy --ignore-missing-imports app.py data processing ui
+
       - name: Pytest
         env:
           FASTF1_CACHE_DIR: ~/.cache/fastf1

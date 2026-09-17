@@ -35,7 +35,7 @@ class MetricsStore:
     """Load/update/persist per-session performance records."""
 
     def __init__(self, path: str | None = None):
-        self.path = Path(path or os.getenv("F1_METRICS_STORE", "./metrics_store.json"))
+        self.path = Path(path or os.getenv("F1_METRICS_STORE") or "./metrics_store.json")
         self.persist = str(self.path) != ":memory:"
         self.data: dict = {"sessions": {}, "updated_at": None}
         self.load()

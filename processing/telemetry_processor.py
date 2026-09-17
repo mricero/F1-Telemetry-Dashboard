@@ -29,7 +29,7 @@ class TelemetryProcessor:
 
     def build_driver_color_map(self, drivers_df: pd.DataFrame) -> dict:
         """Map driver acronyms to team colors."""
-        color_map = {}
+        color_map: dict[str, str] = {}
         if drivers_df is None or drivers_df.empty:
             self.driver_color_map = color_map
             return color_map

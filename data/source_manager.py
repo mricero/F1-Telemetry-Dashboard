@@ -90,11 +90,15 @@ class DataSourceManager:
                 recent = self._get_most_recent_completed_race()
                 year, gp, session_type = recent["year"], recent["gp"], recent["session_type"]
 
-        if source in ("auto", "fastf1"):
+        if source in ("auto", "fastf1", "livef1"):
+            if year is None or gp is None or session_type is None:
+                raise ValueError(
+                    f"source={source!r} needs year, gp and session_type "
+                    f"(got {year!r}, {gp!r}, {session_type!r})"
+                )
+            if source == "livef1":
+                return self._load_livef1_session(year, gp, session_type)
             return self._load_fastf1_session(year, gp, session_type, telemetry_scope)
-
-        if source == "livef1":
-            return self._load_livef1_session(year, gp, session_type)
 
         if source == "live":
             return self._load_live_session()

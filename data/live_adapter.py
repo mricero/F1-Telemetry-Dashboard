@@ -346,12 +346,13 @@ class SignalRLiveAdapter:
         from livef1.adapters import RealF1Client
 
         topics = topics or self.subscribed_topics()
-        self.client = RealF1Client(topics=topics, log_file_name=log_file)
+        client = RealF1Client(topics=topics, log_file_name=log_file)
+        self.client = client
         self._running = True
 
         # Register callback for all topics.
         # records is a dict of {topic: [parsed_record, ...]}
-        @self.client.callback("telemetry_handler")
+        @client.callback("telemetry_handler")
         async def handle_data(records):
             for topic, data in records.items():
                 self._buffer_topic(topic, data)
@@ -364,7 +365,7 @@ class SignalRLiveAdapter:
                         cb(data)
 
         # Blocks; RealF1Client creates and owns its own event loop.
-        self.client.run()
+        client.run()
         self._running = False
 
     def start_async(self, topics: list[str] | None = None, log_file: str | None = None):
@@ -587,7 +588,7 @@ class LiveDataProcessor:
     def parse_tyre_stints(raw_records: list[dict]) -> pd.DataFrame:
         """TyreStintSeries records -> stints DataFrame compatible with the
         tire strategy chart (Compound, LapStart/LapEnd when available)."""
-        rows = {}
+        rows: dict[tuple, dict] = {}
         for r in raw_records or []:
             driver = r.get("DriverNo")
             pit = r.get("PitCount")

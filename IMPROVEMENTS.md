@@ -540,9 +540,10 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Decide the floor (3.11 is reasonable); set `target-version` to it; CI matrix `3.11, 3.12, 3.13`.
   - Note: floor is **3.11**, as the readme already promised. `black` and `ruff` target `py311` (targeting py312 made black warn on the floor it claimed to support), and CI runs `3.11, 3.12, 3.13` with `fail-fast: false`. A test keeps the readme, the tool configs and the CI matrix agreeing.
 
-- [ ] **REPO-04** · P2 · M — **Type checking not enforced (21 mypy errors)**
+- [x] **REPO-04** · P2 · M — **Type checking not enforced (21 mypy errors)** — done in <pending>
   - Files: `data/source_manager.py:20,32-35` and 5 other files (implicit `Optional` defaults, etc.).
   - Fix: Fix errors (`param: str | None = None`), add `mypy` to CI with `--ignore-missing-imports`, then `--strict` per package progressively (`processing/` first — it's pure).
+  - Note: **0 errors**, from 21. REPO-06's autofixes cleared the implicit `Optional`s (19 -> 11); the rest were real: `get_session_data` passed `int | None` into loaders needing an `int` - now a clear `ValueError` naming what is missing - plus two un-annotated dicts and a `self.client` that mypy could not see was non-None. mypy is a CI step, `no_implicit_optional` is on so a new one fails rather than accumulates, and `processing/*` carries `check_untyped_defs`. No `python_version` pin: it makes mypy parse numpy's 3.12-syntax stubs under 3.11 rules; the range is CI's matrix instead.
 
 - [ ] **REPO-05** · P2 · S — **Dead code and unused config**
   - Files: see LIVE-16; plus `ui/layout.py:822-824` (`format_lap_time`, unused), `data/jolpica_adapter.py:134-311` (`get_driver_standings_df`, `get_race_results_df`, `get_lap_times_df`, `get_pit_stops_df`, `get_qualifying_df` — no callers), `config.py:18-22` (`default_year`, `default_gp`, `default_session`, `distance_step`, `cache_ttl_seconds` — never read; `TelemetryProcessor.DISTANCE_STEP` duplicates `distance_step`), `app.py:64-66` (`sys.path.insert`), `data/live_adapter.py:480-501` (`__main__` demo), `processing/telemetry_processor.py:297-317` (`__main__` demo).
@@ -553,7 +554,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: add `B` (bugbear), `UP`, `SIM`, `I` (isort), `PD` (pandas-vet), `NPY`, `PERF`, `RUF`, `S` (bandit: would have flagged `pickle`), `DTZ` (naive datetimes — relevant to earlier tz bugs). Fix or `noqa` with reasons.
   - Note: all ten families are on. 409 findings: 387 fixed (mostly `Dict`->`dict`, `Optional[X]`->`X | None`, import order), the rest by hand - UTC-aware `datetime.now()` everywhere, `raise ... from e`, `ClassVar` on the constant tables, context managers in tests. Four `noqa`s remain, each with a reason: the pickle loader (HIST-02), the recorder's long-lived append handle, `TOKEN_ENV_VAR` (a variable *name*, not a secret), and `S101` for tests. Side effect: mypy fell **19 -> 11** errors, since the implicit-`Optional` fixes are REPO-04's too.
 
-- [x] **REPO-07** · P3 · S — **pre-commit configured in deps but not in repo** (`tasks.md §9` item) — done in <pending>
+- [x] **REPO-07** · P3 · S — **pre-commit configured in deps but not in repo** (`tasks.md §9` item) — done in f85c27f
   - Fix: `.pre-commit-config.yaml` with ruff (lint+format), mypy on `processing/`, end-of-file/trailing-whitespace, `check-added-large-files` (would have blocked `.venv311`).
   - Note: all of that, with every repo pinned to a revision and `check-added-large-files` capped at 512 KB (a committed virtualenv is how REPO-01 happened). Formatting stays with black rather than `ruff-format`, to match CI. Documented in the readme; a test asserts the hooks and the pins stay in place.
 

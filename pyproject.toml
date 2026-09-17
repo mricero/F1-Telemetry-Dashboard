@@ -47,3 +47,17 @@ ignore = [
 "tests/*" = ["S", "DTZ", "PERF"]
 # Exploration scripts print and read from the network by design.
 "scripts/*" = ["S", "DTZ"]
+
+[tool.mypy]
+# No python_version pin: it makes mypy parse installed stubs under that
+# version's rules, and numpy's stubs use 3.12 syntax. The supported range is
+# enforced by CI's matrix instead.
+ignore_missing_imports = true
+# Adding a new implicit-Optional default should fail, not accumulate.
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+# processing/ is pure transforms over DataFrames: no Streamlit, no network,
+# so it is the package that can carry stricter checking first.
+module = "processing.*"
+check_untyped_defs = true
