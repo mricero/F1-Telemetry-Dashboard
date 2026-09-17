@@ -298,7 +298,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: round-trip test for all keys incl. Timedelta/NaT/Int64/category dtypes; loading a legacy `.pkl` requires `allow_pickle=True`.
   - Note: a replay is now a **directory**: `meta.json` (schema, plain values, which tables exist) plus one Parquet per table and one per driver for telemetry/location. Round-trip tested for Timedelta, NaT, `Int64` and categorical dtypes - Parquet keeps all four, which the old `to_dict('records')` pickle did not. Legacy `.pkl` files still load, but only via `allow_pickle=True`; the default path raises an error naming the risk. `pyarrow` was declared by REPO-02 and now has its real use.
 
-- [x] **HIST-03** · P0 · M — **"LiveF1 (Historical)" source is broken** — done in <pending>
+- [x] **HIST-03** · P0 · M — **"LiveF1 (Historical)" source is broken** — done in 7c01238
   - Files: `data/source_manager.py:176-261`.
   - Problem (checked against livef1 1.2.7 source):
     - `session.drivers` values are `livef1.models.driver.Driver` with attributes `RacingNumber`, `Tla`, `TeamColour`, `TeamName`, `FirstName`, `LastName`, `FullName`, `HeadshotUrl` — **not** `driver_number`, `name_acronym`, `team_colour`, `team_name`, `first_name`, `last_name`. Line 209 raises `AttributeError` on the first driver.
