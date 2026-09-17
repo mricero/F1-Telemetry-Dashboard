@@ -10,11 +10,13 @@ Two upstream constraints shape this module:
 """
 
 import time
-import requests
-import pandas as pd
 from collections import deque
+from collections.abc import Callable
+from datetime import UTC
 from functools import wraps
-from typing import Callable, Deque, Dict, List, Optional
+
+import pandas as pd
+import requests
 
 
 def _retry_after_seconds(response, fallback: float) -> float:
@@ -69,8 +71,8 @@ class JolpicaAdapter:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "F1-Telemetry-Dashboard/1.0"})
-        self._memo: Dict = {}
-        self._request_times: Deque[float] = deque(maxlen=self.BURST_REQUESTS)
+        self._memo: dict = {}
+        self._request_times: deque[float] = deque(maxlen=self.BURST_REQUESTS)
 
     def _throttle(self) -> None:
         """Token bucket: never exceed BURST_REQUESTS per BURST_WINDOW."""
@@ -80,7 +82,7 @@ class JolpicaAdapter:
                 time.sleep(wait)
         self._request_times.append(time.monotonic())
 
-    def _fetch(self, endpoint: str, params: Dict = None) -> Dict:
+    def _fetch(self, endpoint: str, params: dict | None = None) -> dict:
         """Generic fetch with throttling, 429 backoff and error handling."""
         url = f"{self.BASE_URL}/{endpoint}"
         delay = self.BACKOFF_BASE
@@ -93,7 +95,7 @@ class JolpicaAdapter:
                 return response.json()
             except requests.RequestException as e:
                 if getattr(response, "status_code", None) != 429:
-                    raise ConnectionError(f"Failed to fetch {endpoint}: {e}")
+                    raise ConnectionError(f"Failed to fetch {endpoint}: {e}") from e
                 if attempt == self.MAX_RETRIES - 1:
                     break
                 time.sleep(_retry_after_seconds(response, delay))
@@ -104,7 +106,7 @@ class JolpicaAdapter:
         )
 
     def _fetch_paged(
-        self, endpoint: str, extract: Callable[[Dict], list], params: Optional[Dict] = None
+        self, endpoint: str, extract: Callable[[dict], list], params: dict | None = None
     ) -> list:
         """Every item of a paged endpoint, following MRData.total.
 
@@ -123,16 +125,16 @@ class JolpicaAdapter:
             if offset >= total:
                 return collected
 
-    def _fetch_race_list(self, endpoint: str, key: str) -> Dict:
+    def _fetch_race_list(self, endpoint: str, key: str) -> dict:
         """A single-race payload whose ``Races[0][key]`` list is fully paged.
 
         Lap times (~1 200 rows) and busy races' pit stops both overflow one
         page, and the callers index ``RaceTable.Races[0]``, so the merged list
         is written back into the first page's shape.
         """
-        first: Optional[Dict] = None
+        first: dict | None = None
 
-        def extract(page: Dict) -> list:
+        def extract(page: dict) -> list:
             nonlocal first
             if first is None:
                 first = page
@@ -148,7 +150,7 @@ class JolpicaAdapter:
         return first
 
     @_instance_memo(maxsize=32)
-    def get_seasons(self) -> List[int]:
+    def get_seasons(self) -> list[int]:
         """Get all available seasons (~77, i.e. well past one page)."""
         seasons = self._fetch_paged(
             "seasons.json",
@@ -188,43 +190,43 @@ class JolpicaAdapter:
         return df
 
     @_instance_memo(maxsize=64)
-    def get_session_results(self, year: int, round_num: int) -> Dict:
+    def get_session_results(self, year: int, round_num: int) -> dict:
         """Get race results."""
         return self._fetch(f"{year}/{round_num}/results.json")
 
     @_instance_memo(maxsize=64)
-    def get_qualifying_results(self, year: int, round_num: int) -> Dict:
+    def get_qualifying_results(self, year: int, round_num: int) -> dict:
         """Get qualifying results."""
         return self._fetch(f"{year}/{round_num}/qualifying.json")
 
     @_instance_memo(maxsize=64)
-    def get_practice_results(self, year: int, round_num: int, session: str = "1") -> Dict:
+    def get_practice_results(self, year: int, round_num: int, session: str = "1") -> dict:
         """Get practice results (session: 1, 2, or 3)."""
         return self._fetch(f"{year}/{round_num}/{session}/practice.json")
 
     @_instance_memo(maxsize=32)
-    def get_driver_standings(self, year: int) -> Dict:
+    def get_driver_standings(self, year: int) -> dict:
         return self._fetch(f"{year}/driverStandings.json")
 
     @_instance_memo(maxsize=32)
-    def get_constructor_standings(self, year: int) -> Dict:
+    def get_constructor_standings(self, year: int) -> dict:
         return self._fetch(f"{year}/constructorStandings.json")
 
     @_instance_memo(maxsize=64)
-    def get_driver_info(self, year: int) -> Dict:
+    def get_driver_info(self, year: int) -> dict:
         return self._fetch(f"{year}/drivers.json")
 
     @_instance_memo(maxsize=64)
-    def get_constructor_info(self, year: int) -> Dict:
+    def get_constructor_info(self, year: int) -> dict:
         return self._fetch(f"{year}/constructors.json")
 
     @_instance_memo(maxsize=64)
-    def get_lap_times(self, year: int, round_num: int) -> Dict:
+    def get_lap_times(self, year: int, round_num: int) -> dict:
         """Get lap times for a race (paged: a race is ~1 200 timing rows)."""
         return self._fetch_race_list(f"{year}/{round_num}/laps.json", "Laps")
 
     @_instance_memo(maxsize=64)
-    def get_pit_stops(self, year: int, round_num: int) -> Dict:
+    def get_pit_stops(self, year: int, round_num: int) -> dict:
         """Get pit stops for a race (paged: busy races exceed one page)."""
         return self._fetch_race_list(f"{year}/{round_num}/pitstops.json", "PitStops")
 
@@ -302,7 +304,7 @@ class JolpicaAdapter:
         """Alias for get_schedule."""
         return self.get_schedule(year)
 
-    def is_race_weekend(self, year: int = None) -> bool:
+    def is_race_weekend(self, year: int | None = None) -> bool:
         """Whether a race falls within three days of now.
 
         Deliberately coarse, and **not** a live-session test: it says nothing
@@ -313,7 +315,7 @@ class JolpicaAdapter:
         from datetime import datetime
 
         if year is None:
-            year = datetime.now().year
+            year = datetime.now(UTC).year
 
         schedule = self.get_schedule(year)
         # Jolpica dates are timezone-aware (UTC), so use timezone-aware now
@@ -366,17 +368,16 @@ class JolpicaAdapter:
         race = races[0]
         pit_stops = race.get("PitStops", [])
 
-        rows = []
-        for stop in pit_stops:
-            rows.append(
-                {
-                    "driver_id": stop.get("driverId", ""),
-                    "lap": int(stop.get("lap", 0)),
-                    "stop": int(stop.get("stop", 0)),
-                    "time": stop.get("time", ""),
-                    "duration": stop.get("duration", ""),
-                }
-            )
+        rows = [
+            {
+                "driver_id": stop.get("driverId", ""),
+                "lap": int(stop.get("lap", 0)),
+                "stop": int(stop.get("stop", 0)),
+                "time": stop.get("time", ""),
+                "duration": stop.get("duration", ""),
+            }
+            for stop in pit_stops
+        ]
 
         return pd.DataFrame(rows)
 

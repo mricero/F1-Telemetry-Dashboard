@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -59,9 +59,9 @@ class RuntimeCache:
         max_entries: int = DEFAULT_MAX_ENTRIES,
         max_bytes: int = DEFAULT_MAX_BYTES,
     ):
-        self._store: "OrderedDict[str, Any]" = OrderedDict()
-        self._created_at: Dict[str, float] = {}
-        self._sizes: Dict[str, int] = {}
+        self._store: OrderedDict[str, Any] = OrderedDict()
+        self._created_at: dict[str, float] = {}
+        self._sizes: dict[str, int] = {}
         self._hits = 0
         self._misses = 0
         self._lock = threading.Lock()
@@ -83,7 +83,7 @@ class RuntimeCache:
             self._misses = 0
             self.session_started_at = time.time()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         with self._lock:
             if key in self._store:
                 self._hits += 1
@@ -114,7 +114,7 @@ class RuntimeCache:
             self._created_at.clear()
             self._sizes.clear()
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "entries": len(self._store),

@@ -8,7 +8,7 @@ accent bars.
 """
 
 import html
-from typing import Dict, List, Optional, Sequence
+from collections.abc import Sequence
 
 import pandas as pd
 import streamlit as st
@@ -86,7 +86,7 @@ def _esc(value) -> str:
 MS_TO_KMH = 3.6
 
 
-def wind_kmh(wind_speed) -> Optional[float]:
+def wind_kmh(wind_speed) -> float | None:
     """Wind speed in km/h from the feed's m/s, or None when unavailable."""
     if wind_speed is None or pd.isna(wind_speed):
         return None
@@ -144,7 +144,7 @@ CLOCK_PLACEHOLDER = "--:--:--"
 
 def _format_clock(seconds: float) -> str:
     """``5130`` -> ``'1:25:30'``. Sessions run well past an hour."""
-    total = int(round(seconds))
+    total = round(seconds)
     return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
 
 
@@ -289,7 +289,7 @@ def tower_html(rows: Sequence[dict]) -> str:
         return '<div style="padding:24px;color:#8a8a8a">No timing data for this session.</div>'
 
     head = "".join(f"<th>{_esc(c)}</th>" for c in TOWER_COLUMNS)
-    body: List[str] = []
+    body: list[str] = []
 
     for row in rows:
         # Only knock-out sessions carry a partition, and it names the segment
@@ -370,14 +370,14 @@ def sector_cards_html(leaders: Sequence[Sequence[dict]]) -> str:
     return f'<div class="f1-sectors">{"".join(cards)}</div>'
 
 
-def _driver_meta(rows: Sequence[dict]) -> Dict[str, dict]:
+def _driver_meta(rows: Sequence[dict]) -> dict[str, dict]:
     return {
         r["code"]: {"team_name": r.get("team_name"), "team_colour": r.get("team_colour")}
         for r in rows
     }
 
 
-def _last_positions(location: Dict[str, pd.DataFrame], rows: Sequence[dict]) -> List[dict]:
+def _last_positions(location: dict[str, pd.DataFrame], rows: Sequence[dict]) -> list[dict]:
     """Driver nodes for the map - only meaningful while a session is live."""
     meta = _driver_meta(rows)
     markers = []

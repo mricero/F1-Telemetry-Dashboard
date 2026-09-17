@@ -40,7 +40,8 @@ def _sample_session() -> dict:
 class TestReplaySchema:
     def test_roundtrip_with_schema_header(self, manager):
         path = manager.save_replay(_sample_session(), "Bahrain_R")
-        raw = pickle.load(open(path, "rb"))
+        with open(path, "rb") as handle:
+            raw = pickle.load(handle)
         assert raw["schema"] == manager.REPLAY_SCHEMA_VERSION
         assert "saved_at" in raw and "data" in raw
 
@@ -277,7 +278,7 @@ class TestReplayFileResolution:
         assert loaded["source"] == "replay"
 
     def test_missing_replay_reports_the_name_not_a_bare_oserror(self, manager):
-        with pytest.raises(FileNotFoundError, match="nope.pkl"):
+        with pytest.raises(FileNotFoundError, match=r"nope\.pkl"):
             manager.get_session_data(source="replay", replay_file="nope.pkl")
 
     def test_path_traversal_is_confined_to_the_replay_dir(self, manager, tmp_path):
@@ -360,7 +361,8 @@ class TestDashboardFrameRoundTrip:
 
     def test_fastest_scope_does_not_duplicate_the_frames(self, manager):
         path = manager.save_replay(self._session_with_scope("fastest"), "Bahrain_R")
-        raw = pickle.load(open(path, "rb"))["data"]
+        with open(path, "rb") as handle:
+            raw = pickle.load(handle)["data"]
 
         assert "dashboard_telemetry" not in raw
         assert "dashboard_location" not in raw

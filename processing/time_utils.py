@@ -9,7 +9,6 @@ NumPy's deprecated "generic" timedelta unit. Everything routes through
 
 import re
 from datetime import timedelta as _dt_timedelta
-from typing import Optional
 
 import pandas as pd
 
@@ -19,7 +18,7 @@ _M_S_RE = re.compile(r"^(\d{1,2}):(\d{1,2}(?:\.\d+)?)$")
 _SECONDS_RE = re.compile(r"^\d{1,3}\.\d{1,4}$")
 
 
-def to_seconds(value) -> Optional[float]:
+def to_seconds(value) -> float | None:
     """Coerce lap/sector times to seconds.
 
     Accepts pandas Timedelta (FastF1), ``'M:SS.mmm'`` strings (live feed),
@@ -65,7 +64,7 @@ def seconds_series(values: pd.Series) -> pd.Series:
     return pd.Series([to_seconds(v) for v in values], index=values.index, dtype="float64")
 
 
-def format_m_s(seconds: Optional[float]) -> str:
+def format_m_s(seconds: float | None) -> str:
     """Format seconds as ``M:SS.mmm`` ('--' when missing)."""
     if seconds is None or pd.isna(seconds):
         return "--"

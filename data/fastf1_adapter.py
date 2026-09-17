@@ -1,11 +1,11 @@
 """FastF1 Historical Data Adapter"""
 
+from pathlib import Path
+
 import fastf1
 import fastf1.core
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from typing import Optional, Tuple
 
 # FastF1 position channels (X/Y/Z) are expressed in 1/10 meter.
 POSITION_UNITS_PER_METRE = 10.0
@@ -62,7 +62,7 @@ SESSION_LEAD_IN = pd.Timedelta(15, unit="m")
 SESSION_RUN_OUT = pd.Timedelta(30, unit="m")
 
 
-def live_session_now(schedule: pd.DataFrame, now: Optional[pd.Timestamp] = None) -> Optional[dict]:
+def live_session_now(schedule: pd.DataFrame, now: pd.Timestamp | None = None) -> dict | None:
     """The session currently on air, or None.
 
     A session is live when *now* falls in ``[start - 15 min, start + duration
@@ -125,7 +125,7 @@ def session_codes_for_event(event: pd.Series) -> list[str]:
     return codes
 
 
-def latest_completed_event(schedule: pd.DataFrame) -> Optional[pd.Series]:
+def latest_completed_event(schedule: pd.DataFrame) -> pd.Series | None:
     """The most recently *finished* round in a schedule, or None.
 
     Rows are ordered by the race session's start (``Session5DateUtc``,
@@ -158,7 +158,7 @@ class FastF1Adapter:
         # Pass the original string so callers can round-trip the exact path
         fastf1.Cache.enable_cache(cache_dir)
 
-    def get_available_sessions(self, years: list[int] = None) -> pd.DataFrame:
+    def get_available_sessions(self, years: list[int] | None = None) -> pd.DataFrame:
         """Returns DataFrame of all completed race weekends from the schedule.
 
         Pre-season testing events are excluded: they appear twice per season,
@@ -178,10 +178,7 @@ class FastF1Adapter:
             # Add Year column for consistency
             schedule["Year"] = year
             all_schedules.append(schedule)
-        if all_schedules:
-            combined = pd.concat(all_schedules, ignore_index=True)
-        else:
-            combined = pd.DataFrame()
+        combined = pd.concat(all_schedules, ignore_index=True) if all_schedules else pd.DataFrame()
 
         # Drop testing events (EventFormat == 'testing', RoundNumber 0).
         if not combined.empty and "EventFormat" in combined.columns:
@@ -246,7 +243,7 @@ class FastF1Adapter:
         session: fastf1.core.Session,
         driver: str,
         scope: str = SCOPE_FASTEST,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Telemetry channels and GPS trail for one driver from a single merge.
 
         ``get_telemetry()`` is the expensive call (car/position merge plus
@@ -318,7 +315,7 @@ class FastF1Adapter:
         return pos_data[cols].reset_index(drop=True)
 
     @staticmethod
-    def distance_from_positions(pos_data: pd.DataFrame) -> Optional[np.ndarray]:
+    def distance_from_positions(pos_data: pd.DataFrame) -> np.ndarray | None:
         """Cumulative travelled distance (metres) along an X/Y GPS trail.
 
         FastF1 position coordinates are in 1/10 m, so the raw arc length is

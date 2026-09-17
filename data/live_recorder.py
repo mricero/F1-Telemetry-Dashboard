@@ -14,10 +14,11 @@ the handler the live client feeds, so the state it rebuilds is the state the
 session ended in - no second parsing path to drift out of step.
 """
 
+import contextlib
 import json
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 SNAPSHOT_FILE = "subscribe.json"
 STREAM_FILE = "live.jsonl"
@@ -26,19 +27,21 @@ STREAM_FILE = "live.jsonl"
 class LiveRecorder:
     """Append-only writer for one recording directory."""
 
-    def __init__(self, directory: Union[str, Path]):
+    def __init__(self, directory: str | Path):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.message_count = 0
         self._lock = threading.Lock()
-        self._stream = open(self.directory / STREAM_FILE, "a", encoding="utf-8")
+        # Held open for the length of the session and closed by close();
+        # a context manager per message would reopen it thousands of times.
+        self._stream = open(self.directory / STREAM_FILE, "a", encoding="utf-8")  # noqa: SIM115
 
-    def record_snapshot(self, snapshot: Dict[str, Any]) -> None:
+    def record_snapshot(self, snapshot: dict[str, Any]) -> None:
         """Write the subscription completion result."""
         path = self.directory / SNAPSHOT_FILE
         path.write_text(json.dumps(snapshot), encoding="utf-8")
 
-    def record(self, topic: str, payload: Any, timestamp: Optional[str] = None) -> None:
+    def record(self, topic: str, payload: Any, timestamp: str | None = None) -> None:
         """Append one feed message, exactly as it arrived."""
         with self._lock:
             if self._stream.closed:
@@ -59,7 +62,7 @@ class LiveRecorder:
         self.close()
 
 
-def replay_recording(directory: Union[str, Path], adapter=None):
+def replay_recording(directory: str | Path, adapter=None):
     """Rebuild adapter state from a recording, and return the adapter.
 
     Feeds the recorded messages through the live ingest path in order. A torn
@@ -76,14 +79,12 @@ def replay_recording(directory: Union[str, Path], adapter=None):
 
     snapshot_path = path / SNAPSHOT_FILE
     if snapshot_path.is_file():
-        try:
+        with contextlib.suppress(json.JSONDecodeError):
             target.seed_state(json.loads(snapshot_path.read_text(encoding="utf-8")))
-        except json.JSONDecodeError:
-            pass
 
     stream_path = path / STREAM_FILE
     if stream_path.is_file():
-        with open(stream_path, "r", encoding="utf-8") as handle:
+        with open(stream_path, encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:

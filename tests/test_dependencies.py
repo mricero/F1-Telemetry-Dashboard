@@ -9,6 +9,7 @@ at install time.
 import re
 from importlib import metadata
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from packaging.requirements import Requirement
@@ -59,7 +60,7 @@ class TestFloorsAreHonest:
 
 
 class TestEverythingImportedIsDeclared:
-    THIRD_PARTY = {
+    THIRD_PARTY: ClassVar = {
         "streamlit",
         "plotly",
         "pandas",
@@ -69,7 +70,7 @@ class TestEverythingImportedIsDeclared:
         "requests",
         "dotenv",
     }
-    DISTRIBUTION_NAMES = {"dotenv": "python-dotenv"}
+    DISTRIBUTION_NAMES: ClassVar = {"dotenv": "python-dotenv"}
 
     def test_each_imported_package_is_a_requirement(self):
         declared = set(_requirements())

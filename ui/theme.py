@@ -6,7 +6,6 @@ resolve the same colours rather than each hardcoding hexes.
 """
 
 import re
-from typing import Dict, Optional
 
 # --- Surfaces -----------------------------------------------------------
 BG_PRIMARY = "#0a0a0a"
@@ -28,7 +27,7 @@ RED_FLAG = "#ff1744"
 # --- Team branding ------------------------------------------------------
 # Fallback only: a loaded session carries real per-season colours from
 # FastF1 (results.TeamColor), which take precedence in team_color().
-TEAM_COLORS: Dict[str, str] = {
+TEAM_COLORS: dict[str, str] = {
     "mclaren": "#ff8000",
     "mercedes": "#00d2be",
     "ferrari": "#e80020",
@@ -102,7 +101,7 @@ def safe_hex(colour, fallback: str = NEUTRAL_GREY) -> str:
     return value if value.startswith("#") else f"#{value}"
 
 
-def team_color(team_name: Optional[str], fallback: Optional[str] = None) -> str:
+def team_color(team_name: str | None, fallback: str | None = None) -> str:
     """Resolve a team's accent colour.
 
     ``fallback`` is the session's own colour (FastF1 ``TeamColor``) and wins

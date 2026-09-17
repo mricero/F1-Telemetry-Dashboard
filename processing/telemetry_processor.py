@@ -1,11 +1,10 @@
 """Telemetry Processor - Distance alignment, normalization, color mapping"""
 
-import pandas as pd
 import numpy as np
-from typing import Dict, Optional
+import pandas as pd
 
 
-def max_lap_number(laps_df: pd.DataFrame) -> Optional[int]:
+def max_lap_number(laps_df: pd.DataFrame) -> int | None:
     """Highest lap number present in a laps DataFrame (None if unavailable)."""
     if laps_df is None or laps_df.empty or "LapNumber" not in laps_df.columns:
         return None
@@ -116,8 +115,8 @@ class TelemetryProcessor:
         return raw[idx]
 
     def align_drivers_by_distance(
-        self, telemetry_dict: Dict[str, pd.DataFrame]
-    ) -> Dict[str, pd.DataFrame]:
+        self, telemetry_dict: dict[str, pd.DataFrame]
+    ) -> dict[str, pd.DataFrame]:
         """Align all drivers to same distance grid."""
         aligned = {}
         for driver, df in telemetry_dict.items():
@@ -175,7 +174,9 @@ class TelemetryProcessor:
                 mapped = df["Driver"].map(number_map)
             else:
                 mapped = pd.Series(pd.NA, index=df.index, dtype=object)
-            acronym_map = dict(zip(drivers_df["name_acronym"], drivers_df["name_acronym"]))
+            acronym_map = dict(
+                zip(drivers_df["name_acronym"], drivers_df["name_acronym"], strict=False)
+            )
             direct = df["Driver"].map(acronym_map).astype(object)
             acronym = direct.where(direct.notna(), mapped.astype(object))
         if acronym is None:
@@ -184,7 +185,7 @@ class TelemetryProcessor:
         return df
 
     def process_stints(
-        self, stints_df: pd.DataFrame, latest_lap: Optional[int] = None
+        self, stints_df: pd.DataFrame, latest_lap: int | None = None
     ) -> pd.DataFrame:
         """Prepare stint data for the tire strategy chart.
 
@@ -214,7 +215,7 @@ class TelemetryProcessor:
         return df
 
     @staticmethod
-    def _derive_stint_bounds(df: pd.DataFrame, latest_lap: Optional[int]) -> pd.DataFrame:
+    def _derive_stint_bounds(df: pd.DataFrame, latest_lap: int | None) -> pd.DataFrame:
         """Fill missing LapStart/LapEnd/LapCount from stint ordering."""
 
         def _num(v):

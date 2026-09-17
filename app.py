@@ -65,6 +65,7 @@ import streamlit as st  # noqa: E402
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+from config import config  # noqa: E402,F401  (loads .env before adapters read it)
 from data.runtime_cache import runtime_cache  # noqa: E402
 from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402
@@ -73,9 +74,9 @@ from ui.dashboard import render_dashboard  # noqa: E402
 from ui.layout import (  # noqa: E402
     render_driver_comparison,
     render_header,
-    render_live_dashboard,
     render_lap_times,
     render_live_controls,
+    render_live_dashboard,
     render_position_changes,
     render_race_control,
     render_session_selector,
@@ -84,7 +85,6 @@ from ui.layout import (  # noqa: E402
     render_track_map,
     render_weather,
 )
-from config import config  # noqa: E402,F401  (loads .env before adapters read it)
 
 
 def load_session_data(data_manager, selection: dict) -> dict:

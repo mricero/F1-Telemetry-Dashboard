@@ -59,7 +59,7 @@ class TestResample:
 
         out = processor.resample_to_distance_grid(df)
 
-        by_distance = dict(zip(out["Distance"], out["nGear"]))
+        by_distance = dict(zip(out["Distance"], out["nGear"], strict=False))
         assert by_distance[0.0] == 3
         assert by_distance[5.0] == 3  # tie -> earlier sample
         # beyond the midpoint the 10 m sample is nearer

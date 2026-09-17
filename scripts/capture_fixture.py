@@ -19,7 +19,6 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
 
 BASE_URL = "https://livetiming.formula1.com/static"
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
@@ -63,7 +62,7 @@ DEFAULT_WINDOW = ("01:25:00", "01:28:00")
 TELEMETRY_HEAD = 12
 
 
-def _get(url: str, timeout: int = 60) -> Optional[bytes]:
+def _get(url: str, timeout: int = 60) -> bytes | None:
     try:
         request = urllib.request.Request(url, headers=HEADERS)
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -99,9 +98,9 @@ def find_session(year: int, meeting: str, session: str) -> str:
     raise SystemExit(f"no session matching {meeting!r}/{session!r} in {year}")
 
 
-def parse_stream(text: str) -> List[list]:
+def parse_stream(text: str) -> list[list]:
     """``.jsonStream`` is ``<12-char timestamp><json>`` per line."""
-    records: List[list] = []
+    records: list[list] = []
     for line in text.splitlines():
         if not line.strip() or len(line) < 13:
             continue
@@ -114,7 +113,7 @@ def parse_stream(text: str) -> List[list]:
     return records
 
 
-def select(records: List[list], topic: str, cap: int, window: tuple) -> List[list]:
+def select(records: list[list], topic: str, cap: int, window: tuple) -> list[list]:
     """Which recorded messages to keep: the keyframe plus a session window."""
     if topic not in WINDOWED_TOPICS:
         return records[:cap]
@@ -126,11 +125,11 @@ def select(records: List[list], topic: str, cap: int, window: tuple) -> List[lis
 
 def capture(
     year: int, meeting: str, session: str, cap: int, window: tuple = DEFAULT_WINDOW
-) -> Dict[str, int]:
+) -> dict[str, int]:
     path = find_session(year, meeting, session)
     print(f"session path: {path}")
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-    written: Dict[str, int] = {}
+    written: dict[str, int] = {}
 
     for topic in SNAPSHOT_TOPICS:
         raw = _get(f"{BASE_URL}/{path}{topic}.json")
@@ -163,7 +162,7 @@ def capture(
     return written
 
 
-def _write(topic: str, records: List[list]) -> None:
+def _write(topic: str, records: list[list]) -> None:
     target = FIXTURE_DIR / f"{topic}.jsonl.gz"
     with gzip.open(target, "wt", encoding="utf-8") as handle:
         for record in records:

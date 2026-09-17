@@ -1,11 +1,13 @@
 """Data Source Manager - Unified interface with automatic fallback"""
 
-import pandas as pd
-import numpy as np
 import pickle
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar
+
+import numpy as np
+import pandas as pd
+from livef1 import get_session
 
 from config import config
 from data.fastf1_adapter import (
@@ -15,9 +17,8 @@ from data.fastf1_adapter import (
     live_session_now,
 )
 from data.jolpica_adapter import JolpicaAdapter
-from data.live_adapter import SignalRLiveAdapter, LiveDataProcessor
+from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
 from data.live_service import get_live_adapter
-from livef1 import get_session
 
 
 class DataSourceManager:
@@ -25,9 +26,9 @@ class DataSourceManager:
 
     def __init__(
         self,
-        cache_dir: str = None,
-        replay_dir: str = None,
-        live_adapter: Optional[SignalRLiveAdapter] = None,
+        cache_dir: str | None = None,
+        replay_dir: str | None = None,
+        live_adapter: SignalRLiveAdapter | None = None,
     ):
         # Defaults come from config (which reads .env), so the documented
         # FASTF1_CACHE_DIR / REPLAY_DIR settings actually take effect.
@@ -40,16 +41,16 @@ class DataSourceManager:
         self.replay_dir = Path(replay_dir or config.replay_dir)
         self.replay_dir.mkdir(parents=True, exist_ok=True)
         # Last live snapshot and the ingest token it was built from.
-        self._live_snapshot: Optional[dict] = None
-        self._live_snapshot_token: Optional[tuple] = None
+        self._live_snapshot: dict | None = None
+        self._live_snapshot_token: tuple | None = None
 
     def get_session_data(
         self,
         source: str = "auto",  # "auto", "fastf1", "livef1", "live", "replay"
-        year: int = None,
-        gp: str = None,
-        session_type: str = None,
-        replay_file: str = None,
+        year: int | None = None,
+        gp: str | None = None,
+        session_type: str | None = None,
+        replay_file: str | None = None,
         telemetry_scope: str = SCOPE_FASTEST,
     ) -> dict:
         """
@@ -100,7 +101,7 @@ class DataSourceManager:
 
         raise ValueError(f"Unknown source: {source}")
 
-    def live_session(self) -> Optional[dict]:
+    def live_session(self) -> dict | None:
         """The F1 session on air right now, or None.
 
         Reads the event schedule's own session times rather than asking
@@ -174,7 +175,7 @@ class DataSourceManager:
         }
 
     # Map FastF1 EventName-style GP names to LiveF1 circuit short names
-    CIRCUIT_MAP = {
+    CIRCUIT_MAP: ClassVar = {
         "bahrain": "Sakhir",
         "saudi arabia": "Jeddah",
         "australia": "Melbourne",
@@ -384,7 +385,9 @@ class DataSourceManager:
 
         acr_by_num = {}
         if not drivers_df.empty:
-            acr_by_num = dict(zip(drivers_df["driver_number"], drivers_df["name_acronym"]))
+            acr_by_num = dict(
+                zip(drivers_df["driver_number"], drivers_df["name_acronym"], strict=False)
+            )
 
         # Timestamps are parsed once per frame here: every per-driver
         # distance call used to re-parse its slice's ISO strings (LIVE-11).
@@ -395,8 +398,8 @@ class DataSourceManager:
         # Lap boundaries let each driver's trace cover one completed lap, so
         # Distance runs 0 -> lap length and drivers are comparable (LIVE-13).
         boundaries = LiveDataProcessor.lap_boundaries(adapter.recorded_laps())
-        shown_lap: Dict[str, int] = {}
-        current_lap: Dict[str, int] = {}
+        shown_lap: dict[str, int] = {}
+        current_lap: dict[str, int] = {}
         for entry in adapter.recorded_laps():
             driver = str(entry.get("driver_number"))
             lap = entry.get("LapNumber")
@@ -404,8 +407,8 @@ class DataSourceManager:
                 current_lap[driver] = max(current_lap.get(driver, 0), lap + 1)
 
         # --- per-driver GPS trails for the track map (with real distances) ---
-        location: Dict[str, pd.DataFrame] = {}
-        pos_distance_by_num: Dict[Any, pd.DataFrame] = {}
+        location: dict[str, pd.DataFrame] = {}
+        pos_distance_by_num: dict[Any, pd.DataFrame] = {}
         if not pos_df.empty:
             pos_df = pos_df.dropna(subset=["X", "Y"])
             for num, grp in pos_df.groupby("driver_number"):
@@ -430,7 +433,7 @@ class DataSourceManager:
                     pos_distance_by_num[num] = d
 
         # --- per-driver telemetry (tail keeps memory bounded) ---
-        telemetry: Dict[str, pd.DataFrame] = {}
+        telemetry: dict[str, pd.DataFrame] = {}
         if not car_df.empty:
             car_df = car_df.dropna(subset=["Speed"])
             for num, grp in car_df.groupby("driver_number"):
@@ -536,7 +539,7 @@ class DataSourceManager:
         return bool(records[column].fillna(False).astype(bool).any())
 
     @staticmethod
-    def _laps_from_timing(timing_df: pd.DataFrame, acr_by_num: Dict) -> pd.DataFrame:
+    def _laps_from_timing(timing_df: pd.DataFrame, acr_by_num: dict) -> pd.DataFrame:
         """Build a laps DataFrame from TimingData records with real lap
         numbers.
 
@@ -557,7 +560,7 @@ class DataSourceManager:
             return pd.DataFrame()
         for num, grp in timing_df.groupby("driver_number"):
             grp = grp.sort_values("timestamp")
-            completed: Dict[int, str] = {}
+            completed: dict[int, str] = {}
             current_lap = 0
             latest = grp.iloc[-1]
             # Driver state for the tower's badge. Retirement latches: the feed
@@ -634,7 +637,7 @@ class DataSourceManager:
         ``Name`` is the *session* name ("Race", "Practice 1"). Reading them
         the other way round put "Race" in the header where the GP belongs.
         """
-        info: Dict[str, Any] = {
+        info: dict[str, Any] = {
             "gp": "Live Session",
             "session_type": "",
             "session_name": "",
@@ -754,7 +757,7 @@ class DataSourceManager:
         Files carry a schema header (``schema``/``saved_at``/``data``) so
         future format changes can be detected and old files keep loading.
         """
-        filepath = self.replay_dir / f"{name}_{datetime.now():%Y%m%d_%H%M%S}.pkl"
+        filepath = self.replay_dir / f"{name}_{datetime.now(UTC):%Y%m%d_%H%M%S}.pkl"
         save_data = {}
         frame_dicts = ("telemetry", "location", "dashboard_telemetry", "dashboard_location")
         for k, v in data.items():
@@ -777,7 +780,7 @@ class DataSourceManager:
         payload = {
             "schema": self.REPLAY_SCHEMA_VERSION,
             "app": "f1-telemetry-dashboard",
-            "saved_at": datetime.now().isoformat(),
+            "saved_at": datetime.now(UTC).isoformat(),
             "data": save_data,
         }
         with open(filepath, "wb") as f:
@@ -804,7 +807,9 @@ class DataSourceManager:
 
     def _load_replay(self, filepath: str) -> dict:
         with open(self._resolve_replay(filepath), "rb") as f:
-            payload = pickle.load(f)
+            # Loading a replay runs arbitrary code; replacing this format
+            # with Parquet + JSON is HIST-02.
+            payload = pickle.load(f)  # noqa: S301
 
         # Schema header (current) vs bare session dict (legacy replays)
         if isinstance(payload, dict) and "schema" in payload and "data" in payload:

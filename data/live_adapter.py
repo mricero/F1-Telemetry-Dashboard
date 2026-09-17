@@ -21,14 +21,17 @@ FastF1-style raw recordings.
 
 import asyncio
 import base64
-import os
+import contextlib
 import json
+import os
 import threading
 import zlib
+from collections import defaultdict
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar
+
 import numpy as np
 import pandas as pd
-from typing import TYPE_CHECKING, Dict, List, Callable, Optional, Any, Sequence
-from collections import defaultdict
 
 # Position.z shares FastF1's 1/10 m position units - one definition, both paths.
 from data.fastf1_adapter import POSITION_UNITS_PER_METRE
@@ -55,7 +58,7 @@ def decode_zipped(text: str) -> Any:
     return json.loads(raw.decode("utf-8-sig"))
 
 
-def _normalize_channels(channels: Any) -> Dict[str, Any]:
+def _normalize_channels(channels: Any) -> dict[str, Any]:
     """Channels arrive as {id: value} dicts; tolerate positional lists."""
     if isinstance(channels, dict):
         return {str(k): v for k, v in channels.items()}
@@ -65,14 +68,14 @@ def _normalize_channels(channels: Any) -> Dict[str, Any]:
     return {}
 
 
-def decode_topic_payload(topic: str, payload: Any) -> List[Dict]:
+def decode_topic_payload(topic: str, payload: Any) -> list[dict]:
     """Decode one raw topic payload into flat record dicts.
 
     Supports CarData.z and Position.z shapes: ``[(timestamp, b64str), ...]``
     or a single b64 string.
     """
     items = payload if isinstance(payload, list) else [(None, payload)]
-    records: List[Dict] = []
+    records: list[dict] = []
     for ts, value in items:
         decoded = value if isinstance(value, dict) else decode_zipped(value)
         if topic == "CarData.z":
@@ -110,7 +113,7 @@ def decode_topic_payload(topic: str, payload: Any) -> List[Dict]:
     return records
 
 
-def _as_bool(value: Any) -> Optional[bool]:
+def _as_bool(value: Any) -> bool | None:
     """The feed sends booleans as "true"/"false" strings as often as bools."""
     if value is None:
         return None
@@ -144,10 +147,10 @@ AUTH_TOPICS = frozenset(
 
 # Where the user's own token is read from. It stays on their machine: the
 # sustainable mode for this feed is local, single-connection, own-token use.
-TOKEN_ENV_VAR = "F1TV_SUBSCRIPTION_TOKEN"
+TOKEN_ENV_VAR = "F1TV_SUBSCRIPTION_TOKEN"  # noqa: S105 - the variable name, not a token
 
 
-def subscription_token() -> Optional[str]:
+def subscription_token() -> str | None:
     """The configured F1TV subscription token, or None."""
     token = os.getenv(TOKEN_ENV_VAR, "").strip()
     return token or None
@@ -167,7 +170,7 @@ class SignalRLiveAdapter:
     """
 
     # Topics to subscribe for telemetry dashboard
-    TELEMETRY_TOPICS = [
+    TELEMETRY_TOPICS: ClassVar = [
         "CarData.z",  # Speed/Throttle/Brake/RPM/Gear/DRS (~50Hz? ~3.7Hz aggregated)
         "Position.z",  # GPS position X,Y,Z
         "TimingData",  # Lap times, sectors, gaps
@@ -202,9 +205,9 @@ class SignalRLiveAdapter:
         # Lap completions are a true time series and must outlive the telemetry
         # cap: losing them would erase the first half of a race from the lap
         # chart. Kept separately, and only one small row per completed lap.
-        self.lap_history: List[Dict] = []
-        self._lap_counter: Dict[str, int] = {}
-        self._data_buffer: Dict[str, List[Dict]] = defaultdict(list)
+        self.lap_history: list[dict] = []
+        self._lap_counter: dict[str, int] = {}
+        self._data_buffer: dict[str, list[dict]] = defaultdict(list)
         # The client runs on its own thread while Streamlit polls from the
         # script thread: without this, trimming a buffer shifted the reader's
         # slice underneath it and records were skipped or duplicated.
@@ -213,13 +216,13 @@ class SignalRLiveAdapter:
         # once a topic hits its cap, so they cannot signal new data.
         self._ingested = 0
         # Optional raw-stream recorder; see data/live_recorder.py (LIVE-12).
-        self.recorder: Optional["LiveRecorder"] = None
-        self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
+        self.recorder: LiveRecorder | None = None
+        self._callbacks: dict[str, list[Callable]] = defaultdict(list)
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._thread_error: Optional[BaseException] = None
+        self._thread: threading.Thread | None = None
+        self._thread_error: BaseException | None = None
 
-    def handle_message(self, topic: str, payload: Any, timestamp: Optional[str] = None) -> None:
+    def handle_message(self, topic: str, payload: Any, timestamp: str | None = None) -> None:
         """Ingest one raw feed message.
 
         State topics are deep-merged into :attr:`state`; time series are
@@ -238,7 +241,7 @@ class SignalRLiveAdapter:
             return
         self._buffer_topic(topic, payload)
 
-    def _record_lap_progress(self, payload: Any, timestamp: Optional[str] = None) -> None:
+    def _record_lap_progress(self, payload: Any, timestamp: str | None = None) -> None:
         """Note completed laps as TimingData messages arrive.
 
         ``NumberOfLaps`` and ``LastLapTime`` usually come in separate partial
@@ -253,10 +256,8 @@ class SignalRLiveAdapter:
             driver = str(number)
             laps = line.get("NumberOfLaps")
             if laps is not None:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     self._lap_counter[driver] = int(laps)
-                except (TypeError, ValueError):
-                    pass
 
             last_lap = line.get("LastLapTime")
             value = last_lap.get("Value") if isinstance(last_lap, dict) else None
@@ -282,7 +283,7 @@ class SignalRLiveAdapter:
                     }
                 )
 
-    def seed_state(self, snapshot: Dict[str, Any]) -> None:
+    def seed_state(self, snapshot: dict[str, Any]) -> None:
         """Apply a subscription snapshot: ``{topic: full_state}``."""
         if self.recorder is not None:
             self.recorder.record_snapshot(snapshot)
@@ -297,7 +298,7 @@ class SignalRLiveAdapter:
         self.recorder.record_snapshot(self.state.snapshot())
         return self.recorder
 
-    def stop_recording(self) -> Optional[str]:
+    def stop_recording(self) -> str | None:
         """Stop recording; returns where the recording was written."""
         if self.recorder is None:
             return None
@@ -309,7 +310,7 @@ class SignalRLiveAdapter:
     def is_recording(self) -> bool:
         return self.recorder is not None
 
-    def subscribed_topics(self) -> List[str]:
+    def subscribed_topics(self) -> list[str]:
         """Topics worth subscribing to, given whether a token is configured.
 
         Auth-gated topics are dropped without one: they would never deliver
@@ -334,7 +335,7 @@ class SignalRLiveAdapter:
             if overflow > 0:
                 del buf[:overflow]
 
-    def start_livef1_client(self, topics: List[str] = None, log_file: str = None):
+    def start_livef1_client(self, topics: list[str] | None = None, log_file: str | None = None):
         """Start LiveF1 RealF1Client with async callbacks.
 
         NOTE: RealF1Client.run() manages its own event loop (asyncio.run)
@@ -366,7 +367,7 @@ class SignalRLiveAdapter:
         self.client.run()
         self._running = False
 
-    def start_async(self, topics: List[str] = None, log_file: str = None):
+    def start_async(self, topics: list[str] | None = None, log_file: str | None = None):
         """Start live client in background thread.
 
         RealF1Client.run() creates its own event loop internally, so the
@@ -404,12 +405,12 @@ class SignalRLiveAdapter:
             ingested, laps = self._ingested, len(self.lap_history)
         return (self.state.version, laps, ingested)
 
-    def recorded_laps(self) -> List[Dict]:
+    def recorded_laps(self) -> list[dict]:
         """A snapshot copy of the recorded lap completions."""
         with self._buffer_lock:
             return list(self.lap_history)
 
-    def get_buffered_data(self, topic: str) -> List[Dict]:
+    def get_buffered_data(self, topic: str) -> list[dict]:
         """A snapshot copy of a topic's buffer.
 
         A copy, not the live list: the client thread keeps appending and
@@ -419,13 +420,13 @@ class SignalRLiveAdapter:
         with self._buffer_lock:
             return list(self._data_buffer.get(topic, []))
 
-    def get_latest_data(self, topic: str) -> Optional[Dict]:
+    def get_latest_data(self, topic: str) -> dict | None:
         """Get most recent record for a topic."""
         with self._buffer_lock:
             data = self._data_buffer.get(topic, [])
             return data[-1] if data else None
 
-    def clear_buffer(self, topic: str = None):
+    def clear_buffer(self, topic: str | None = None):
         """Clear buffered data."""
         with self._buffer_lock:
             if topic:
@@ -441,7 +442,7 @@ class SignalRLiveAdapter:
         """Check if client is running."""
         return self._running
 
-    def last_error(self) -> Optional[BaseException]:
+    def last_error(self) -> BaseException | None:
         return self._thread_error
 
     def stop(self):
@@ -461,7 +462,7 @@ class LiveDataProcessor:
     """
 
     # CarData.z field -> unified channel name.
-    CAR_CHANNEL_COLUMNS = {
+    CAR_CHANNEL_COLUMNS: ClassVar = {
         "rpm": "RPM",
         "speed": "Speed",
         "n_gear": "nGear",
@@ -471,7 +472,7 @@ class LiveDataProcessor:
     }
 
     @staticmethod
-    def parse_car_data(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_car_data(raw_records: list[dict]) -> pd.DataFrame:
         """CarData.z records -> DataFrame[driver_number, timestamp,
         RPM, Speed, nGear, Throttle, Brake, DRS].
 
@@ -523,7 +524,7 @@ class LiveDataProcessor:
         return pd.Series(index=frame.index, dtype="object")
 
     @staticmethod
-    def parse_position_data(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_position_data(raw_records: list[dict]) -> pd.DataFrame:
         """Position.z records -> DataFrame[driver_number, timestamp, X, Y, Z].
 
         Samples the car is not actually on track are dropped: entries carry a
@@ -556,7 +557,7 @@ class LiveDataProcessor:
         return out[keep & ~garage].reset_index(drop=True)
 
     @staticmethod
-    def parse_timing_data(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_timing_data(raw_records: list[dict]) -> pd.DataFrame:
         """TimingData records -> one row per driver with flattened fields
         (Position, BestLapTimeValue, Sectors_1_Value, ...)."""
         rows = []
@@ -573,7 +574,7 @@ class LiveDataProcessor:
         return pd.DataFrame(rows)
 
     @staticmethod
-    def parse_weather_data(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_weather_data(raw_records: list[dict]) -> pd.DataFrame:
         """WeatherData records -> DataFrame of weather observations."""
         rows = []
         for r in raw_records or []:
@@ -583,7 +584,7 @@ class LiveDataProcessor:
         return pd.DataFrame(rows)
 
     @staticmethod
-    def parse_tyre_stints(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_tyre_stints(raw_records: list[dict]) -> pd.DataFrame:
         """TyreStintSeries records -> stints DataFrame compatible with the
         tire strategy chart (Compound, LapStart/LapEnd when available)."""
         rows = {}
@@ -623,7 +624,7 @@ class LiveDataProcessor:
     # the entry it belongs to.
 
     @staticmethod
-    def timing_from_state(timing_state: Dict) -> pd.DataFrame:
+    def timing_from_state(timing_state: dict) -> pd.DataFrame:
         """``TimingData`` state -> one row per driver, current values.
 
         ``Sectors``, ``Segments`` and ``Speeds`` are index-addressed, so they
@@ -634,7 +635,7 @@ class LiveDataProcessor:
         for number, line in (timing_state or {}).get("Lines", {}).items():
             if not isinstance(line, dict):
                 continue
-            row: Dict[str, Any] = {"driver_number": str(number)}
+            row: dict[str, Any] = {"driver_number": str(number)}
             for key, value in line.items():
                 if key in ("Sectors", "Speeds"):
                     for index, entry in enumerate(as_list(value), start=1):
@@ -654,7 +655,7 @@ class LiveDataProcessor:
 
     @staticmethod
     def stints_from_state(
-        stint_state: Dict, acronyms: Optional[Dict[str, str]] = None
+        stint_state: dict, acronyms: dict[str, str] | None = None
     ) -> pd.DataFrame:
         """``TyreStintSeries`` state -> the tyre strategy chart's frame.
 
@@ -702,13 +703,13 @@ class LiveDataProcessor:
         return frame
 
     @staticmethod
-    def lap_boundaries(lap_history: Sequence[Dict]) -> Dict[str, List[pd.Timestamp]]:
+    def lap_boundaries(lap_history: Sequence[dict]) -> dict[str, list[pd.Timestamp]]:
         """When each driver's completed laps ended, oldest first.
 
         Live ``Distance`` is cumulative since the stream started, so without
         these the traces of two drivers share no axis (LIVE-13).
         """
-        boundaries: Dict[str, List[pd.Timestamp]] = {}
+        boundaries: dict[str, list[pd.Timestamp]] = {}
         for entry in lap_history or []:
             moment = pd.to_datetime(entry.get("Utc"), utc=True, errors="coerce")
             if pd.isna(moment):
@@ -721,7 +722,7 @@ class LiveDataProcessor:
     @staticmethod
     def last_completed_lap(
         frame: pd.DataFrame, boundaries: Sequence[pd.Timestamp]
-    ) -> Optional[pd.DataFrame]:
+    ) -> pd.DataFrame | None:
         """The slice of a driver's samples covering their last full lap.
 
         Returns None when the lap is not covered by the buffered samples, so
@@ -738,9 +739,9 @@ class LiveDataProcessor:
 
     @staticmethod
     def laps_from_history(
-        lap_history: Sequence[Dict],
-        timing_state: Optional[Dict] = None,
-        acronyms: Optional[Dict[str, str]] = None,
+        lap_history: Sequence[dict],
+        timing_state: dict | None = None,
+        acronyms: dict[str, str] | None = None,
     ) -> pd.DataFrame:
         """Completed laps (plus the lap in progress) for the unified dict.
 
@@ -814,7 +815,7 @@ class LiveDataProcessor:
         return frame.sort_values(["Driver", "LapNumber"]).reset_index(drop=True)
 
     @staticmethod
-    def drivers_from_state(driver_state: Dict) -> pd.DataFrame:
+    def drivers_from_state(driver_state: dict) -> pd.DataFrame:
         """``DriverList`` state -> the unified drivers table.
 
         Reads the merged entry, so colours and names that arrived in a later
@@ -840,7 +841,7 @@ class LiveDataProcessor:
         return pd.DataFrame(rows)
 
     @staticmethod
-    def acronyms_from_state(driver_state: Dict) -> Dict[str, str]:
+    def acronyms_from_state(driver_state: dict) -> dict[str, str]:
         """Racing number -> three-letter acronym, from merged DriverList."""
         mapping = {}
         for number, entry in (driver_state or {}).items():
@@ -849,7 +850,7 @@ class LiveDataProcessor:
         return mapping
 
     @staticmethod
-    def parse_race_control(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_race_control(raw_records: list[dict]) -> pd.DataFrame:
         """RaceControlMessages records -> flags/SC/incident feed.
 
         Mirrors the FastF1 historical shape (``Time``/``Lap``/``Category``/
@@ -873,7 +874,7 @@ class LiveDataProcessor:
         return pd.DataFrame(rows)
 
     @staticmethod
-    def parse_track_status(raw_records: List[Dict]) -> Optional[Dict]:
+    def parse_track_status(raw_records: list[dict]) -> dict | None:
         """Latest TrackStatus record -> ``{'status': code, 'message': text}``.
 
         Status codes follow the official feed: 1 green, 2 yellow, 4 safety
@@ -887,7 +888,7 @@ class LiveDataProcessor:
         return None
 
     @staticmethod
-    def parse_driver_list(raw_records: List[Dict]) -> pd.DataFrame:
+    def parse_driver_list(raw_records: list[dict]) -> pd.DataFrame:
         """DriverList records -> drivers table matching the unified schema."""
         rows = []
         seen = set()
@@ -913,7 +914,7 @@ class LiveDataProcessor:
         return pd.DataFrame(rows)
 
     @staticmethod
-    def distance_at(pos_df: pd.DataFrame, car_timestamps: Sequence) -> Optional[np.ndarray]:
+    def distance_at(pos_df: pd.DataFrame, car_timestamps: Sequence) -> np.ndarray | None:
         """Interpolate travelled track distance (meters) at given timestamps.
 
         The distance is the cumulative Euclidean arc length of the driver's

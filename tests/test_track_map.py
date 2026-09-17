@@ -1,5 +1,6 @@
 """Tests for the SVG track map and the dashboard HTML builders."""
 
+import itertools
 import re
 
 import numpy as np
@@ -440,7 +441,7 @@ class TestDominancePlacement:
                 for x, y in re.findall(r"[ML] (-?\d+\.?\d*) (-?\d+\.?\d*)", data)
             ]
             total += sum(
-                float(np.hypot(b[0] - a[0], b[1] - a[1])) for a, b in zip(points, points[1:])
+                float(np.hypot(b[0] - a[0], b[1] - a[1])) for a, b in itertools.pairwise(points)
             )
         return total
 

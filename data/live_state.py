@@ -18,7 +18,7 @@ the adapter's buffers.
 
 import copy
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Topics whose messages are merged into state rather than appended. Everything
 # else the adapter sees is a time series.
@@ -47,7 +47,7 @@ STATE_TOPICS = frozenset(
 DELETED_KEY = "_deleted"
 
 
-def as_list(value: Any) -> List[Any]:
+def as_list(value: Any) -> list[Any]:
     """Normalise an index-keyed dict back to an ordered list.
 
     Deltas address list items by position (``{"1": {...}}`` is the *second*
@@ -63,15 +63,15 @@ def as_list(value: Any) -> List[Any]:
         keys = list(value)
         if keys and all(str(key).isdigit() for key in keys):
             indices = [int(key) for key in keys]
-            ordered: List[Any] = [None] * (max(indices) + 1)
-            for key, index in zip(keys, indices):
+            ordered: list[Any] = [None] * (max(indices) + 1)
+            for key, index in zip(keys, indices, strict=False):
                 ordered[index] = value[key]
             return ordered
         return [value]
     return [value]
 
 
-def deep_merge(base: Dict, update: Dict) -> Dict:
+def deep_merge(base: dict, update: dict) -> dict:
     """Recursively merge ``update`` into ``base``, in place, and return it.
 
     Dicts merge key by key; a dict arriving where the base holds a **list**
@@ -100,7 +100,7 @@ class LiveState:
     """One merged dict per topic, safe to update from the client thread."""
 
     def __init__(self) -> None:
-        self._topics: Dict[str, Dict] = {}
+        self._topics: dict[str, dict] = {}
         self._version = 0
         self._lock = threading.Lock()
 
@@ -110,7 +110,7 @@ class LiveState:
         with self._lock:
             return self._version
 
-    def update(self, topic: str, payload: Optional[Dict]) -> None:
+    def update(self, topic: str, payload: dict | None) -> None:
         """Merge one message (keyframe or delta) into the topic's state."""
         if not isinstance(payload, dict):
             return
@@ -118,17 +118,17 @@ class LiveState:
             deep_merge(self._topics.setdefault(topic, {}), payload)
             self._version += 1
 
-    def seed(self, snapshot: Dict[str, Any]) -> None:
+    def seed(self, snapshot: dict[str, Any]) -> None:
         """Apply a subscription completion result: ``{topic: full_state}``."""
         for topic, payload in (snapshot or {}).items():
             self.update(topic, payload)
 
-    def get(self, topic: str) -> Dict:
+    def get(self, topic: str) -> dict:
         """A deep copy of one topic's state, so readers cannot mutate it."""
         with self._lock:
             return copy.deepcopy(self._topics.get(topic, {}))
 
-    def snapshot(self) -> Dict[str, Dict]:
+    def snapshot(self) -> dict[str, dict]:
         """A deep copy of everything, for building an immutable view."""
         with self._lock:
             return copy.deepcopy(self._topics)

@@ -3,13 +3,14 @@
 import base64
 import json
 import zlib
+
 import pandas as pd
 import pytest
 
 from data.live_adapter import (
     LiveDataProcessor,
-    decode_zipped,
     decode_topic_payload,
+    decode_zipped,
 )
 
 

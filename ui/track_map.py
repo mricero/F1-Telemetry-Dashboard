@@ -9,7 +9,7 @@ stay crisp at any size, and the overlays need precise placement.
 """
 
 import html
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -45,7 +45,7 @@ def rotate_points(xy: np.ndarray, angle_degrees: float) -> np.ndarray:
     return np.matmul(np.asarray(xy, dtype=float), matrix)
 
 
-def reference_driver(location: Dict[str, pd.DataFrame]) -> Optional[str]:
+def reference_driver(location: dict[str, pd.DataFrame]) -> str | None:
     """Whose GPS trace the outline is drawn from (the most complete one)."""
     best_code, best_len = None, 0
     for code, frame in (location or {}).items():
@@ -57,7 +57,7 @@ def reference_driver(location: Dict[str, pd.DataFrame]) -> Optional[str]:
     return best_code
 
 
-def _reference_trace(location: Dict[str, pd.DataFrame]) -> Optional[pd.DataFrame]:
+def _reference_trace(location: dict[str, pd.DataFrame]) -> pd.DataFrame | None:
     """Pick the GPS trace that best describes the circuit outline."""
     code = reference_driver(location)
     if code is None:
@@ -81,7 +81,7 @@ def _trace_distance(reference: pd.DataFrame, track: np.ndarray) -> np.ndarray:
 
 def _decimate(
     track: np.ndarray, distance: np.ndarray, limit: int = MAX_OUTLINE_POINTS
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Resample a trace to at most ``limit`` points, uniformly by distance."""
     if len(track) <= limit:
         return track, distance
@@ -89,7 +89,7 @@ def _decimate(
     return track[keep], distance[keep]
 
 
-def _fit_transform(points: np.ndarray) -> Tuple[float, float, float]:
+def _fit_transform(points: np.ndarray) -> tuple[float, float, float]:
     """Scale/offset mapping rotated track coordinates into the viewBox."""
     min_xy, max_xy = points.min(axis=0), points.max(axis=0)
     span = np.maximum(max_xy - min_xy, 1e-6)
@@ -120,8 +120,8 @@ def _path_from(points: np.ndarray, close: bool = True) -> str:
 
 
 def dominance_segments(
-    micro_times: Dict[str, np.ndarray], segments: int = DOMINANCE_SEGMENTS
-) -> List[Optional[str]]:
+    micro_times: dict[str, np.ndarray], segments: int = DOMINANCE_SEGMENTS
+) -> list[str | None]:
     """Which driver was fastest through each mini-sector.
 
     ``micro_times`` comes from :func:`processing.timing.micro_sector_times`,
@@ -137,13 +137,13 @@ def dominance_segments(
 
 
 def build_track_svg(
-    location: Dict[str, pd.DataFrame],
-    circuit_info: Optional[dict] = None,
-    driver_meta: Optional[Dict[str, dict]] = None,
-    dominance: Optional[Sequence[Optional[str]]] = None,
-    markers: Optional[Sequence[dict]] = None,
-    segment_distances: Optional[Sequence[float]] = None,
-) -> Optional[str]:
+    location: dict[str, pd.DataFrame],
+    circuit_info: dict | None = None,
+    driver_meta: dict[str, dict] | None = None,
+    dominance: Sequence[str | None] | None = None,
+    markers: Sequence[dict] | None = None,
+    segment_distances: Sequence[float] | None = None,
+) -> str | None:
     """Render the circuit to an SVG string.
 
     ``dominance`` colours each mini-sector by the fastest driver's team.
@@ -164,7 +164,7 @@ def build_track_svg(
     scale, dx, dy = _fit_transform(track)
     projected = _project(track.copy(), scale, dx, dy)
 
-    layers: List[str] = []
+    layers: list[str] = []
 
     # Track body: a wide dark casing under a lighter ribbon reads as tarmac
     # and keeps thin sections legible.
@@ -223,7 +223,7 @@ def build_track_svg(
         corner_xy = rotate_points(corner_df[["X", "Y"]].to_numpy(float), rotation)
         corner_pts = _project(corner_xy.copy(), scale, dx, dy)
         centre = projected.mean(axis=0)
-        for (px, py), (_, corner) in zip(corner_pts, corner_df.iterrows()):
+        for (px, py), (_, corner) in zip(corner_pts, corner_df.iterrows(), strict=False):
             away = np.array([px, py]) - centre
             away = away / (float(np.hypot(*away)) or 1.0) * 26
             lx, ly = px + away[0], py + away[1]
@@ -269,11 +269,11 @@ def build_track_svg(
 
 
 def dominance_legend(
-    dominance: Sequence[Optional[str]], driver_meta: Optional[Dict[str, dict]] = None
+    dominance: Sequence[str | None], driver_meta: dict[str, dict] | None = None
 ) -> str:
     """Legend HTML naming each driver holding a mini-sector."""
     meta = driver_meta or {}
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for code in dominance or []:
         if code:
             counts[code] = counts.get(code, 0) + 1

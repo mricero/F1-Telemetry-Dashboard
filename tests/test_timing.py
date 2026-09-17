@@ -19,8 +19,8 @@ from processing.timing import (
     format_lap,
     micro_sector_times,
     qualifying_cutoffs,
-    segment_states,
     sector_leaders,
+    segment_states,
     theoretical_best,
 )
 

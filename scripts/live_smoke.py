@@ -19,7 +19,7 @@ from collections import Counter
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
 
-from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter  # noqa: E402
+from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
 
 
 def main(duration: int = 30):

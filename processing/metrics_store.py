@@ -10,9 +10,8 @@ with the ``F1_METRICS_STORE`` environment variable).
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, Optional
 
 import pandas as pd
 
@@ -24,7 +23,7 @@ SECTORS = ("S1", "S2", "S3")
 _to_seconds = to_seconds
 
 
-def _fmt(seconds: Optional[float]) -> str:
+def _fmt(seconds: float | None) -> str:
     if not seconds:
         return "N/A"
     m = int(seconds // 60)
@@ -35,10 +34,10 @@ def _fmt(seconds: Optional[float]) -> str:
 class MetricsStore:
     """Load/update/persist per-session performance records."""
 
-    def __init__(self, path: str = None):
+    def __init__(self, path: str | None = None):
         self.path = Path(path or os.getenv("F1_METRICS_STORE", "./metrics_store.json"))
         self.persist = str(self.path) != ":memory:"
-        self.data: Dict = {"sessions": {}, "updated_at": None}
+        self.data: dict = {"sessions": {}, "updated_at": None}
         self.load()
 
     # ---------------------------------------------------------------- io
@@ -52,7 +51,7 @@ class MetricsStore:
                 self.data = {"sessions": {}, "updated_at": None}
 
     def save(self) -> None:
-        self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.data["updated_at"] = datetime.now(UTC).isoformat()
         if not self.persist:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +72,7 @@ class MetricsStore:
         return label or session_info.get("source", "unknown-session")
 
     def update_laps(
-        self, label: str, laps_df: pd.DataFrame, driver_map: Optional[Dict] = None
+        self, label: str, laps_df: pd.DataFrame, driver_map: dict | None = None
     ) -> dict:
         """Record fastest lap + fastest sectors from a laps DataFrame.
 
@@ -122,7 +121,7 @@ class MetricsStore:
                 "lap": int(best["lap_number"]) if pd.notna(best["lap_number"]) else None,
             }
 
-        for i, sec in enumerate(SECTORS, start=1):
+        for _index, sec in enumerate(SECTORS, start=1):
             col = sec.lower()
             sub = work.dropna(subset=[col])
             if sub.empty:
@@ -139,7 +138,7 @@ class MetricsStore:
         self.save()
         return session
 
-    def update_telemetry(self, label: str, telemetry_dict: Dict[str, pd.DataFrame]) -> dict:
+    def update_telemetry(self, label: str, telemetry_dict: dict[str, pd.DataFrame]) -> dict:
         """Record top speed reached by any driver from telemetry DataFrames."""
         session = self._session(label)
         best_driver, best_speed = None, 0.0
@@ -160,7 +159,7 @@ class MetricsStore:
 
     def all_time(self) -> dict:
         """Fastest lap / sectors / top speed across every recorded session."""
-        agg: Dict[str, dict] = {}
+        agg: dict[str, dict] = {}
         for label, sess in self.data["sessions"].items():
             for metric in ["fastest_lap", "fastest_s1", "fastest_s2", "fastest_s3", "top_speed"]:
                 rec = sess.get(metric)

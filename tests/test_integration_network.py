@@ -338,8 +338,8 @@ class TestScopeIndependenceOfTheDashboard:
         assert fingerprint(self._race("fastest")) == fingerprint(self._race("session"))
 
     def test_full_session_scope_still_yields_a_small_svg(self):
-        from ui.dashboard import map_panel_html
         from processing.timing import build_timing_rows
+        from ui.dashboard import map_panel_html
 
         session = self._race("session")
         markup = map_panel_html(session, build_timing_rows(session))

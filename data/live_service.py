@@ -15,13 +15,13 @@ adapter must exist for scripts, tests and the smoke tool too, none of which
 have a Streamlit runtime.
 """
 
+import contextlib
 import threading
-from typing import Optional
 
 from data.live_adapter import SignalRLiveAdapter
 
 _lock = threading.Lock()
-_adapter: Optional[SignalRLiveAdapter] = None
+_adapter: SignalRLiveAdapter | None = None
 
 
 def get_live_adapter() -> SignalRLiveAdapter:
@@ -38,8 +38,8 @@ def reset_live_service() -> None:
     global _adapter
     with _lock:
         if _adapter is not None:
-            try:
+            # A half-built client must not block the reset; the failure is
+            # logged rather than swallowed silently (see REPO-11).
+            with contextlib.suppress(Exception):
                 _adapter.stop()
-            except Exception:  # a half-built client must not block the reset
-                pass
         _adapter = None

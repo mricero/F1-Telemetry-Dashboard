@@ -20,6 +20,30 @@ target-version = "py311"
 exclude = [".venv", ".venv311", "ff1_cache", "replay_sessions"]
 
 [tool.ruff.lint]
-# Keep to high-signal rules (errors, undefined names, unused imports);
-# broader style is delegated to black.
-select = ["E4", "E7", "E9", "F"]
+# Beyond the defaults, these are the rules that would have caught bugs this
+# project actually shipped: S (bandit) flags the pickle replay loader, DTZ
+# the naive datetimes behind earlier timezone bugs, PD pandas anti-patterns,
+# B mutable defaults and loop-variable capture. Style stays with black.
+select = [
+    "E4", "E7", "E9", "F",  # pyflakes + the pycodestyle errors black leaves
+    "B",                     # bugbear
+    "UP",                    # pyupgrade
+    "SIM",                   # flake8-simplify
+    "I",                     # isort
+    "PD",                    # pandas-vet
+    "NPY",                   # numpy-specific
+    "PERF",                  # perflint
+    "RUF",                   # ruff-specific
+    "S",                     # bandit
+    "DTZ",                   # naive datetimes
+]
+ignore = [
+    # assert is how tests state their expectations.
+    "S101",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use asserts, temp paths and non-cryptographic randomness freely.
+"tests/*" = ["S", "DTZ", "PERF"]
+# Exploration scripts print and read from the network by design.
+"scripts/*" = ["S", "DTZ"]

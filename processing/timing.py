@@ -10,8 +10,9 @@ position, with Gap/Interval as race time behind the leader and the car ahead
 lap, where Gap and Interval are lap-time deltas.
 """
 
+import itertools
 import re
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -45,7 +46,7 @@ QUALIFYING_SEGMENTS = ("Q3", "Q2", "Q1")
 SEGMENT_HEADINGS = {"Q3": "Q3", "Q2": "Eliminated in Q2", "Q1": "Eliminated in Q1"}
 
 
-def format_lap(seconds: Optional[float]) -> str:
+def format_lap(seconds: float | None) -> str:
     """``93.456`` -> ``'1:33.456'``; missing values render as an em dash."""
     if seconds is None:
         return "—"
@@ -59,7 +60,7 @@ def format_lap(seconds: Optional[float]) -> str:
     return f"{minutes}:{rest:06.3f}" if minutes else f"{rest:.3f}"
 
 
-def format_delta(seconds: Optional[float]) -> str:
+def format_delta(seconds: float | None) -> str:
     """Signed gap string, e.g. ``'+0.102'``. Missing deltas render ``'----'``."""
     if seconds is None or pd.isna(seconds):
         return "----"
@@ -71,7 +72,7 @@ def format_lap_gap(laps_down: int) -> str:
     return f"+{laps_down} LAP" if laps_down == 1 else f"+{laps_down} LAPS"
 
 
-def is_race_session(session_info: Optional[dict]) -> bool:
+def is_race_session(session_info: dict | None) -> bool:
     """True for races and sprints, which are classified by finishing order."""
     info = session_info or {}
     for key in ("session_type", "session_name"):
@@ -81,7 +82,7 @@ def is_race_session(session_info: Optional[dict]) -> bool:
     return False
 
 
-def is_qualifying_session(session_info: Optional[dict]) -> bool:
+def is_qualifying_session(session_info: dict | None) -> bool:
     """True for qualifying and sprint qualifying, which run in segments."""
     info = session_info or {}
     for key in ("session_type", "session_name"):
@@ -91,7 +92,7 @@ def is_qualifying_session(session_info: Optional[dict]) -> bool:
     return False
 
 
-def qualifying_cutoffs(car_count: int) -> List[int]:
+def qualifying_cutoffs(car_count: int) -> list[int]:
     """How many cars survive each segment, e.g. 22 cars -> ``[16, 10]``.
 
     The regulations eliminate the same number after Q1 and Q2, so the count
@@ -101,13 +102,13 @@ def qualifying_cutoffs(car_count: int) -> List[int]:
     return [max(car_count - eliminated, Q3_PLACES), Q3_PLACES]
 
 
-def _results_index(results: Optional[pd.DataFrame]) -> Dict[str, dict]:
+def _results_index(results: pd.DataFrame | None) -> dict[str, dict]:
     """Abbreviation -> official classification fields, or {} when absent."""
     if results is None or not isinstance(results, pd.DataFrame) or results.empty:
         return {}
     if "Abbreviation" not in results.columns:
         return {}
-    index: Dict[str, dict] = {}
+    index: dict[str, dict] = {}
     for _, row in results.iterrows():
         code = row.get("Abbreviation")
         if code is None or pd.isna(code):
@@ -116,9 +117,9 @@ def _results_index(results: Optional[pd.DataFrame]) -> Dict[str, dict]:
     return index
 
 
-def _driver_meta(drivers_df: pd.DataFrame) -> Dict[str, dict]:
+def _driver_meta(drivers_df: pd.DataFrame) -> dict[str, dict]:
     """Acronym -> {team_name, team_colour, full_name, driver_number}."""
-    meta: Dict[str, dict] = {}
+    meta: dict[str, dict] = {}
     if drivers_df is None or drivers_df.empty:
         return meta
     for _, row in drivers_df.iterrows():
@@ -134,7 +135,7 @@ def _driver_meta(drivers_df: pd.DataFrame) -> Dict[str, dict]:
     return meta
 
 
-def _tyre_history(laps: pd.DataFrame, stints: Optional[pd.DataFrame] = None) -> List[dict]:
+def _tyre_history(laps: pd.DataFrame, stints: pd.DataFrame | None = None) -> list[dict]:
     """Stint list for one driver: compound, tyre age, and whether it was new.
 
     ``laps_used`` is the tyre's **age** (FastF1 ``TyreLife``), which is not the
@@ -151,7 +152,7 @@ def _tyre_history(laps: pd.DataFrame, stints: Optional[pd.DataFrame] = None) -> 
     history = []
     for _, stint in work.dropna(subset=["Compound"]).groupby("Stint", sort=True):
         compound = str(stint["Compound"].iloc[0]).upper()
-        stint_laps = int(len(stint))
+        stint_laps = len(stint)
         age = stint_laps
         if "TyreLife" in stint.columns:
             life = pd.to_numeric(stint["TyreLife"], errors="coerce").dropna()
@@ -172,7 +173,7 @@ def _tyre_history(laps: pd.DataFrame, stints: Optional[pd.DataFrame] = None) -> 
     return history
 
 
-def _tyre_history_from_stints(stints: Optional[pd.DataFrame]) -> List[dict]:
+def _tyre_history_from_stints(stints: pd.DataFrame | None) -> list[dict]:
     """Tyre history from the session's stint table (the live path)."""
     if stints is None or stints.empty or "Compound" not in stints.columns:
         return []
@@ -194,7 +195,7 @@ def _tyre_history_from_stints(stints: Optional[pd.DataFrame]) -> List[dict]:
     return history
 
 
-def _driver_stints(stints: Optional[pd.DataFrame], driver: str) -> Optional[pd.DataFrame]:
+def _driver_stints(stints: pd.DataFrame | None, driver: str) -> pd.DataFrame | None:
     """One driver's rows from the session stint table, whatever it calls them."""
     if stints is None or stints.empty:
         return None
@@ -214,10 +215,10 @@ def _laps_completed(laps: pd.DataFrame) -> int:
     """
     if "IsInProgress" in laps.columns:
         return int((~laps["IsInProgress"].fillna(False).astype(bool)).sum())
-    return int(len(laps))
+    return len(laps)
 
 
-def _last_position(laps: pd.DataFrame) -> Optional[float]:
+def _last_position(laps: pd.DataFrame) -> float | None:
     """On-road position at the driver's last lap, when the laps carry it."""
     if laps.empty or "Position" not in laps.columns:
         return None
@@ -240,14 +241,14 @@ def _valid_laps(laps: pd.DataFrame) -> pd.DataFrame:
     return valid
 
 
-def _best_sectors(laps: pd.DataFrame) -> List[Optional[float]]:
+def _best_sectors(laps: pd.DataFrame) -> list[float | None]:
     """Each sector's quickest time across all of a driver's valid laps.
 
     The fastest *lap* rarely contains the driver's fastest sectors, so the
     ideal lap has to look wider than one lap.
     """
     valid = _valid_laps(laps)
-    bests: List[Optional[float]] = []
+    bests: list[float | None] = []
     for index in range(1, SECTORS + 1):
         column = f"Sector{index}Time"
         if column not in valid.columns:
@@ -258,14 +259,14 @@ def _best_sectors(laps: pd.DataFrame) -> List[Optional[float]]:
     return bests
 
 
-def _ideal_lap(best_sectors: Sequence[Optional[float]]) -> Optional[float]:
+def _ideal_lap(best_sectors: Sequence[float | None]) -> float | None:
     """Sum of sector bests, or None when any sector is missing."""
     if any(value is None for value in best_sectors):
         return None
     return round(sum(float(value) for value in best_sectors if value is not None), 3)
 
 
-def _speed_trap(laps: pd.DataFrame) -> Optional[float]:
+def _speed_trap(laps: pd.DataFrame) -> float | None:
     """Best speed-trap reading across the driver's laps (km/h)."""
     for col in ("SpeedST", "SpeedFL", "SpeedI2", "SpeedI1"):
         if col in laps.columns:
@@ -283,7 +284,7 @@ DSQ_STATUSES = {"disqualified", "excluded"}
 _LAPS_DOWN = re.compile(r"^\+(\d+)\s+laps?$", re.IGNORECASE)
 
 
-def status_badge(official_status: Optional[str]) -> Optional[str]:
+def status_badge(official_status: str | None) -> str | None:
     """``session.results.Status`` -> a tower badge, or None when unknown.
 
     FIN / +NL / DNF / DSQ / DNS, so a retirement is not presented as a
@@ -336,7 +337,7 @@ def _live_status(laps: pd.DataFrame) -> str:
     return "ON TRACK"
 
 
-def _status(laps: pd.DataFrame, is_live: bool, official_status: Optional[str] = None) -> str:
+def _status(laps: pd.DataFrame, is_live: bool, official_status: str | None = None) -> str:
     """Driver state badge.
 
     Live sessions report where the car is now; a finished session reports how
@@ -349,7 +350,7 @@ def _status(laps: pd.DataFrame, is_live: bool, official_status: Optional[str] = 
     return status_badge(official_status) or "CLASSIFIED"
 
 
-def fastest_lap_row(laps_df: pd.DataFrame, driver: str) -> Optional[pd.Series]:
+def fastest_lap_row(laps_df: pd.DataFrame, driver: str) -> pd.Series | None:
     """The driver's quickest lap, or None when they never set a time."""
     if laps_df is None or laps_df.empty or "Driver" not in laps_df.columns:
         return None
@@ -364,7 +365,7 @@ def fastest_lap_row(laps_df: pd.DataFrame, driver: str) -> Optional[pd.Series]:
 
 def sector_bounds_for_driver(
     laps_df: pd.DataFrame, driver: str, telemetry: pd.DataFrame
-) -> Optional[List[float]]:
+) -> list[float] | None:
     """Real sector-boundary distances for the lap the strips display."""
     lap = fastest_lap_row(laps_df, driver)
     if lap is None:
@@ -374,7 +375,7 @@ def sector_bounds_for_driver(
     )
 
 
-def dashboard_frames(session_data: dict) -> Tuple[dict, dict]:
+def dashboard_frames(session_data: dict) -> tuple[dict, dict]:
     """The telemetry and location frames the dashboard should read.
 
     The charts honour the user's telemetry scope, but the tower's
@@ -410,7 +411,7 @@ def segment_boundaries(distance: np.ndarray, segments: int) -> np.ndarray:
     return np.maximum.accumulate(bounds)
 
 
-def _distance_and_elapsed(telemetry: pd.DataFrame) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+def _distance_and_elapsed(telemetry: pd.DataFrame) -> tuple[np.ndarray, np.ndarray] | None:
     """Sorted (distance, elapsed-seconds) arrays for one lap trace."""
     if telemetry is None or telemetry.empty:
         return None
@@ -437,8 +438,8 @@ def _distance_and_elapsed(telemetry: pd.DataFrame) -> Optional[Tuple[np.ndarray,
 
 
 def sector_boundary_distances(
-    telemetry: pd.DataFrame, sector_times: Sequence[Optional[float]]
-) -> Optional[List[float]]:
+    telemetry: pd.DataFrame, sector_times: Sequence[float | None]
+) -> list[float] | None:
     """Distances (m) where each sector ends on this lap.
 
     Sector boundaries are nowhere near 1/3 and 2/3 of a lap, so the strip
@@ -472,12 +473,12 @@ def sector_boundary_distances(
         cumulative += value * scale
         bounds.append(float(np.interp(elapsed[0] + cumulative, elapsed, distance)))
     bounds.append(end)
-    return bounds if all(b <= n for b, n in zip(bounds, bounds[1:])) else thirds
+    return bounds if all(b <= n for b, n in itertools.pairwise(bounds)) else thirds
 
 
 def micro_sector_marks(
-    sector_bounds: Optional[Sequence[float]], segments: int = TOTAL_SEGMENTS
-) -> Optional[List[float]]:
+    sector_bounds: Sequence[float] | None, segments: int = TOTAL_SEGMENTS
+) -> list[float] | None:
     """Distance marks splitting each real sector into equal mini-sectors.
 
     Returns ``segments + 1`` distances, or None when the sector boundaries
@@ -497,8 +498,8 @@ def micro_sector_marks(
 def micro_sector_times(
     telemetry: pd.DataFrame,
     segments: int = TOTAL_SEGMENTS,
-    sector_bounds: Optional[Sequence[float]] = None,
-) -> Optional[np.ndarray]:
+    sector_bounds: Sequence[float] | None = None,
+) -> np.ndarray | None:
     """Time (s) spent in each mini-sector of one lap.
 
     With ``sector_bounds`` (from :func:`sector_boundary_distances`) each real
@@ -522,8 +523,8 @@ def micro_sector_times(
 
 
 def segment_states(
-    per_driver_laps: Dict[str, Union[np.ndarray, Sequence[np.ndarray]]],
-) -> Dict[str, List[str]]:
+    per_driver_laps: dict[str, np.ndarray | Sequence[np.ndarray]],
+) -> dict[str, list[str]]:
     """Colour each driver's displayed mini-sectors, F1 convention.
 
     PURPLE = the session best through that slice, GREEN = the driver's own
@@ -543,7 +544,7 @@ def segment_states(
     if not laps_by_driver:
         return {}
 
-    def _column_min(stack: List[np.ndarray]) -> np.ndarray:
+    def _column_min(stack: list[np.ndarray]) -> np.ndarray:
         """Per-slice minimum. Non-finite entries are ignored, and a slice with
         no usable time comes back NaN (np.nanmin would warn on an all-NaN
         column)."""
@@ -555,11 +556,11 @@ def segment_states(
     personal_best = {driver: _column_min(laps) for driver, laps in laps_by_driver.items()}
     session_best = _column_min(list(personal_best.values()))
 
-    states: Dict[str, List[str]] = {}
+    states: dict[str, list[str]] = {}
     for driver, laps in laps_by_driver.items():
         shown, own = laps[0], personal_best[driver]
         row = []
-        for value, mine, best in zip(shown, own, session_best):
+        for value, mine, best in zip(shown, own, session_best, strict=False):
             if not np.isfinite(value) or not np.isfinite(best) or best <= 0:
                 row.append("NONE")
             elif value <= best + SEGMENT_TOLERANCE:
@@ -572,7 +573,7 @@ def segment_states(
     return states
 
 
-def sector_leaders(rows: Sequence[dict], top_n: int = 3) -> List[List[dict]]:
+def sector_leaders(rows: Sequence[dict], top_n: int = 3) -> list[list[dict]]:
     """Top ``top_n`` drivers per sector (spec section 5)."""
     leaders = []
     for index in range(SECTORS):
@@ -593,9 +594,9 @@ def sector_leaders(rows: Sequence[dict], top_n: int = 3) -> List[List[dict]]:
     return leaders
 
 
-def theoretical_best(rows: Sequence[dict]) -> Optional[float]:
+def theoretical_best(rows: Sequence[dict]) -> float | None:
     """Session ideal: each sector's best from any driver, on any lap."""
-    session_bests: List[Optional[float]] = []
+    session_bests: list[float | None] = []
     for index in range(SECTORS):
         times = [
             row["best_sectors"][index]
@@ -606,7 +607,7 @@ def theoretical_best(rows: Sequence[dict]) -> Optional[float]:
     return _ideal_lap(session_bests)
 
 
-def _classify_by_best_lap(rows: List[dict]) -> List[dict]:
+def _classify_by_best_lap(rows: list[dict]) -> list[dict]:
     """Practice / qualifying order: quickest personal best first.
 
     Gap is the lap-time delta to the session best and Interval the delta to
@@ -633,7 +634,7 @@ def _classify_by_best_lap(rows: List[dict]) -> List[dict]:
     return ordered
 
 
-def _classify_qualifying(rows: List[dict], results: Dict[str, dict]) -> List[dict]:
+def _classify_qualifying(rows: list[dict], results: dict[str, dict]) -> list[dict]:
     """Qualifying order: segment reached first, then time within it.
 
     A driver's row shows the time from the segment they went out in, not
@@ -723,7 +724,7 @@ def _classify_qualifying(rows: List[dict], results: Dict[str, dict]) -> List[dic
     return ordered
 
 
-def _race_gap_seconds(row: dict, results: Dict[str, dict]) -> Optional[float]:
+def _race_gap_seconds(row: dict, results: dict[str, dict]) -> float | None:
     """Race time behind the winner, from results.Time where available.
 
     FastF1 reports the winner's total race time and everyone else's gap to
@@ -735,7 +736,7 @@ def _race_gap_seconds(row: dict, results: Dict[str, dict]) -> Optional[float]:
     return to_seconds(entry.get("Time")) if "Time" in entry else None
 
 
-def _classify_race(rows: List[dict], results: Dict[str, dict]) -> List[dict]:
+def _classify_race(rows: list[dict], results: dict[str, dict]) -> list[dict]:
     """Race / sprint order: finishing position, with race-time gaps.
 
     Position comes from ``session.results``; without it the last lap's own
@@ -786,7 +787,7 @@ def _classify_race(rows: List[dict], results: Dict[str, dict]) -> List[dict]:
     return ordered
 
 
-def build_timing_rows(session_data: dict) -> List[dict]:
+def build_timing_rows(session_data: dict) -> list[dict]:
     """Build the leaderboard rows for one session.
 
     Ordering, gaps and the knock-out partition all depend on the session
@@ -804,7 +805,7 @@ def build_timing_rows(session_data: dict) -> List[dict]:
 
     # Micro-sector heat strips come from each driver's own telemetry trace,
     # split at that lap's real sector boundaries rather than at 1/3 and 2/3.
-    per_driver_segments: Dict[str, Union[np.ndarray, Sequence[np.ndarray]]] = {}
+    per_driver_segments: dict[str, np.ndarray | Sequence[np.ndarray]] = {}
     for code, frame in telemetry.items():
         times = micro_sector_times(
             frame, sector_bounds=sector_bounds_for_driver(laps_df, str(code), frame)

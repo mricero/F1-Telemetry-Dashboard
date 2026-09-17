@@ -7,10 +7,12 @@ raises) and that ``session.laps`` has ``PitOutTime`` rather than a boolean
 production crash pass CI.
 """
 
-import numpy as np
-import pytest
 from unittest.mock import Mock, patch
+
+import numpy as np
 import pandas as pd
+import pytest
+
 from data.fastf1_adapter import (
     SCOPE_SESSION,
     FastF1Adapter,
@@ -104,9 +106,9 @@ class TestFastF1Adapter:
         sessions = FastF1Adapter().get_available_sessions([2024])
 
         assert len(sessions) == 2  # Only completed races
-        assert "Bahrain" in sessions["EventName"].values
-        assert "Saudi Arabia" in sessions["EventName"].values
-        assert "Australia" not in sessions["EventName"].values
+        assert "Bahrain" in sessions["EventName"].to_numpy()
+        assert "Saudi Arabia" in sessions["EventName"].to_numpy()
+        assert "Australia" not in sessions["EventName"].to_numpy()
 
     @patch("data.fastf1_adapter.fastf1.get_event_schedule")
     def test_get_available_sessions_drops_testing(self, mock_get_schedule):
@@ -423,7 +425,7 @@ class TestSessionCodes:
         """A schedule row: Session1..Session5 names + naive-UTC dates."""
         base = pd.Timestamp("2025-05-02T12:00:00")
         row = {"EventName": "Test GP", "Year": year}
-        for i, (name, offset) in enumerate(zip(names, offsets_days), start=1):
+        for i, (name, offset) in enumerate(zip(names, offsets_days, strict=False), start=1):
             row[f"Session{i}"] = name
             row[f"Session{i}DateUtc"] = base + pd.Timedelta(offset, unit="h")
         return pd.Series(row)

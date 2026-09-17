@@ -1,7 +1,7 @@
 """Runtime Configuration"""
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 try:
     from dotenv import load_dotenv

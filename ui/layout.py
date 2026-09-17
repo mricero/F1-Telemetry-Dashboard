@@ -5,20 +5,20 @@ single source of truth for the dashboard's visuals (the former
 ``ui/layout_new.py`` variant was removed).
 """
 
+from datetime import UTC, datetime
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Optional
 
 from config import config
 from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
-from ui.dashboard import render_dashboard, wind_kmh
 from processing.time_utils import format_m_s, seconds_series
+from ui.dashboard import render_dashboard, wind_kmh
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
 # (see FastF1Adapter.compound_colors); these hexes match the 2024+ branding.
@@ -54,7 +54,7 @@ FLAG_ICONS = {
 }
 
 
-def compound_palette(compound_colors: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+def compound_palette(compound_colors: dict[str, str] | None = None) -> dict[str, str]:
     """Session compound colours, falling back to the built-in table."""
     palette = dict(COMPOUND_COLORS)
     if compound_colors:
@@ -162,7 +162,7 @@ def render_session_selector(data_manager) -> dict:
     # Historical selection
     elif not live_session:
         with col2:
-            this_year = datetime.now().year
+            this_year = datetime.now(UTC).year
             years = st.selectbox("Season", [this_year, this_year - 1, this_year - 2], index=0)
 
         with col3:
@@ -214,8 +214,8 @@ def render_session_selector(data_manager) -> dict:
 
 
 def create_telemetry_chart(
-    telemetry_data: Dict[str, pd.DataFrame], config: dict, color_map: Dict[str, str]
-) -> Optional[go.Figure]:
+    telemetry_data: dict[str, pd.DataFrame], config: dict, color_map: dict[str, str]
+) -> go.Figure | None:
     """Create multi-driver telemetry line chart."""
     col = config["col"]
     unit = config["unit"]
@@ -277,7 +277,7 @@ def create_telemetry_chart(
     return fig
 
 
-def render_telemetry_charts(telemetry_data: Dict[str, pd.DataFrame], color_map: Dict[str, str]):
+def render_telemetry_charts(telemetry_data: dict[str, pd.DataFrame], color_map: dict[str, str]):
     """Render speed, throttle, brake, rpm, gear, DRS charts."""
     if not telemetry_data:
         st.info("No telemetry data available")
@@ -303,7 +303,7 @@ def render_telemetry_charts(telemetry_data: Dict[str, pd.DataFrame], color_map: 
                 st.info(f"No {cfg['col']} data available")
 
 
-def render_lap_times(laps_df: pd.DataFrame, color_map: Dict[str, str]):
+def render_lap_times(laps_df: pd.DataFrame, color_map: dict[str, str]):
     """Render lap time chart with pit stop indicators.
 
     Handles both FastF1 Timedelta lap times and the string values of the
@@ -382,8 +382,8 @@ def _as_lap_number(value, default):
 
 def render_tire_strategy(
     stints_df: pd.DataFrame,
-    color_map: Dict[str, str],
-    compound_colors: Optional[Dict[str, str]] = None,
+    color_map: dict[str, str],
+    compound_colors: dict[str, str] | None = None,
 ):
     """Render horizontal bar chart for tire strategy.
 
@@ -453,7 +453,7 @@ def render_tire_strategy(
     st.plotly_chart(fig, width="stretch")
 
 
-def render_track_map(location_data: Dict[str, pd.DataFrame], color_map: Dict[str, str]):
+def render_track_map(location_data: dict[str, pd.DataFrame], color_map: dict[str, str]):
     """Render track map with driver positions."""
     if not location_data:
         st.info("GPS data not available for track map")
@@ -573,7 +573,7 @@ def render_live_dashboard(data_manager, processor):
         render_weather(snapshot.get("weather"))
 
 
-def render_position_changes(laps_df: pd.DataFrame, color_map: Dict[str, str]):
+def render_position_changes(laps_df: pd.DataFrame, color_map: dict[str, str]):
     """Lap-by-lap running order - who gained and lost places, and when."""
     if laps_df.empty or "Position" not in laps_df.columns:
         st.info("No position data available for this session")
@@ -635,7 +635,7 @@ def render_weather(weather_df: pd.DataFrame):
         ("🌬️ Wind", "WindSpeed", "km/h", wind_kmh),
         ("🔽 Pressure", "Pressure", "mbar", None),
     ]
-    for col, (label, key, unit, convert) in zip(cols, readings):
+    for col, (label, key, unit, convert) in zip(cols, readings, strict=False):
         # The live feed sends these as strings ("21.0"); FastF1 sends floats.
         value = pd.to_numeric(latest.get(key), errors="coerce")
         if convert is not None:
@@ -736,7 +736,7 @@ def render_race_control(race_control_df: pd.DataFrame, limit: int = 60):
 
 
 def render_driver_comparison(
-    telemetry_data: Dict[str, pd.DataFrame], color_map: Dict[str, str], key_prefix: str = "cmp"
+    telemetry_data: dict[str, pd.DataFrame], color_map: dict[str, str], key_prefix: str = "cmp"
 ):
     """Head-to-head speed trace plus cumulative time delta between two drivers.
 
@@ -844,7 +844,7 @@ def _time_delta(ref_df: pd.DataFrame, cmp_df: pd.DataFrame):
     return grid, delta
 
 
-def _speed_on_grid(df: pd.DataFrame, grid: Optional[np.ndarray] = None):
+def _speed_on_grid(df: pd.DataFrame, grid: np.ndarray | None = None):
     """Speed sampled onto a uniform distance grid (10 m steps by default)."""
     if df is None or df.empty or not {"Distance", "Speed"}.issubset(df.columns):
         return None, None
@@ -866,7 +866,7 @@ def _speed_on_grid(df: pd.DataFrame, grid: Optional[np.ndarray] = None):
     return grid, np.interp(grid, distance, speed)
 
 
-def format_lap_time(seconds: Optional[float]) -> str:
+def format_lap_time(seconds: float | None) -> str:
     """Format lap time in M:SS.mmm format ('--' when missing)."""
     return format_m_s(seconds)
 
@@ -905,7 +905,7 @@ def render_live_controls(live_client):
                 where = live_client.stop_recording()
                 st.success(f"Raw stream saved to {where}")
         elif st.button("💾 Record Raw Stream"):
-            directory = Path(config.replay_dir) / f"raw_{datetime.now():%Y%m%d_%H%M%S}"
+            directory = Path(config.replay_dir) / f"raw_{datetime.now(UTC):%Y%m%d_%H%M%S}"
             live_client.start_recording(directory)
             st.info(f"Recording to {directory}")
 

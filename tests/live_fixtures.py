@@ -8,17 +8,17 @@ assumptions instead of the feed, which is how the LIVE-03..06 bugs passed CI.
 
 import gzip
 import json
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "live"
 
-Message = Tuple[str, Any]
+Message = tuple[str, Any]
 
 
-@lru_cache(maxsize=None)
-def messages(topic: str) -> List[Message]:
+@cache
+def messages(topic: str) -> list[Message]:
     """Recorded ``(timestamp, payload)`` messages for one topic."""
     path = FIXTURE_DIR / f"{topic}.jsonl.gz"
     if not path.is_file():
@@ -27,7 +27,7 @@ def messages(topic: str) -> List[Message]:
         return [tuple(json.loads(line)) for line in handle if line.strip()]
 
 
-def payloads(topic: str) -> List[Any]:
+def payloads(topic: str) -> list[Any]:
     """Just the payloads, in recorded order."""
     return [payload for _, payload in messages(topic)]
 
@@ -36,10 +36,10 @@ def first_payload(topic: str) -> Any:
     return payloads(topic)[0]
 
 
-@lru_cache(maxsize=None)
-def manifest() -> Dict[str, Any]:
+@cache
+def manifest() -> dict[str, Any]:
     return json.loads((FIXTURE_DIR / "manifest.json").read_text(encoding="utf-8"))
 
 
-def available_topics() -> List[str]:
+def available_topics() -> list[str]:
     return sorted(path.name.split(".jsonl.gz")[0] for path in FIXTURE_DIR.glob("*.jsonl.gz"))
