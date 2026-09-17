@@ -540,7 +540,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: Decide the floor (3.11 is reasonable); set `target-version` to it; CI matrix `3.11, 3.12, 3.13`.
   - Note: floor is **3.11**, as the readme already promised. `black` and `ruff` target `py311` (targeting py312 made black warn on the floor it claimed to support), and CI runs `3.11, 3.12, 3.13` with `fail-fast: false`. A test keeps the readme, the tool configs and the CI matrix agreeing.
 
-- [x] **REPO-04** · P2 · M — **Type checking not enforced (21 mypy errors)** — done in <pending>
+- [x] **REPO-04** · P2 · M — **Type checking not enforced (21 mypy errors)** — done in 2b8ad5d
   - Files: `data/source_manager.py:20,32-35` and 5 other files (implicit `Optional` defaults, etc.).
   - Fix: Fix errors (`param: str | None = None`), add `mypy` to CI with `--ignore-missing-imports`, then `--strict` per package progressively (`processing/` first — it's pure).
   - Note: **0 errors**, from 21. REPO-06's autofixes cleared the implicit `Optional`s (19 -> 11); the rest were real: `get_session_data` passed `int | None` into loaders needing an `int` - now a clear `ValueError` naming what is missing - plus two un-annotated dicts and a `self.client` that mypy could not see was non-None. mypy is a CI step, `no_implicit_optional` is on so a new one fails rather than accumulates, and `processing/*` carries `check_untyped_defs`. No `python_version` pin: it makes mypy parse numpy's 3.12-syntax stubs under 3.11 rules; the range is CI's matrix instead.
