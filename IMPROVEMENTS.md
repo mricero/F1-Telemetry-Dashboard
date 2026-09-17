@@ -559,7 +559,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Fix: `.pre-commit-config.yaml` with ruff (lint+format), mypy on `processing/`, end-of-file/trailing-whitespace, `check-added-large-files` (would have blocked `.venv311`).
   - Note: all of that, with every repo pinned to a revision and `check-added-large-files` capped at 512 KB (a committed virtualenv is how REPO-01 happened). Formatting stays with black rather than `ruff-format`, to match CI. Documented in the readme; a test asserts the hooks and the pins stay in place.
 
-- [x] **REPO-08** · P2 · M — **Row-wise pandas in hot paths** — done in <pending>
+- [x] **REPO-08** · P2 · M — **Row-wise pandas in hot paths** — done in f4a330e
   - Files: `data/live_adapter.py:277-310` (per-record `pd.to_numeric`), `data/source_manager.py:428-434` (`iterrows` + `pd.Series` per row), `processing/telemetry_processor.py:37-47` and `processing/timing.py:51-66` (`iterrows` for driver maps), `ui/layout.py:371-395` (one `go.Bar` trace per stint row), `processing/time_utils.py:63-65` (`seconds_series` is a Python loop despite "Vectorised" docstring).
   - Fix: build DataFrames from lists of dicts once, then `pd.to_numeric` per column; `dict(zip(...))` for maps; one bar trace per compound with arrays; vectorised regex extraction in `seconds_series` (`str.extract` for `M:SS.mmm`).
   - Acceptance: micro-benchmarks in `tests/perf/` (skipped by default) show ≥5× improvements on 20k rows.
