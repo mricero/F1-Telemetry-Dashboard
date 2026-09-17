@@ -572,7 +572,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Problem: Modules rely on `sys.path.insert` and top-level package names `data`, `processing`, `ui`, `config` that collide easily with other packages.
   - Fix: `src/f1dash/{data,processing,ui}`, `pyproject.toml [project]` with entry point `f1dash = "f1dash.cli:main"` (wraps `streamlit run`).
 
-- [x] **REPO-11** · P2 · S — **No logging; errors silently become empty data** — done in <pending>
+- [x] **REPO-11** · P2 · S — **No logging; errors silently become empty data** — done in 9e9b612
   - Files: many `except Exception: return pd.DataFrame()` / `return {}` (e.g. `data/fastf1_adapter.py:238-241, 256-259, 278-283`, `data/source_manager.py:86-91, 501-530`).
   - Fix: `logging.getLogger(__name__)` everywhere; log at WARNING with the exception when degrading; feed UX-11 status. Configure log level via env.
   - Note: every module that degrades now has a module logger and every `except Exception` either logs with the exception, re-raises, or carries a comment saying why not - enforced by a test that scans for silent handlers. `LOG_LEVEL` drives `logging.basicConfig` in `app.py` (default WARNING). The per-panel `DataStatus` surface is **UX-11**'s, still open.
