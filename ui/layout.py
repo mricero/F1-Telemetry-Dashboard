@@ -68,10 +68,13 @@ SCOPE_LABELS = {
     "Full session": "session",
 }
 
+# "LiveF1 (Historical)" is deliberately absent: its loader reads attributes
+# and column names livef1 does not use, and livef1 itself raises building a
+# Session for some seasons. Offering it promised data the app cannot deliver
+# (HIST-03); FastF1 covers the same sessions.
 SOURCE_MAP = {
     "Auto (Live → Historical)": "auto",
     "FastF1 (Historical)": "fastf1",
-    "LiveF1 (Historical)": "livef1",
     "Live (SignalR)": "live",
     "Replay (Saved)": "replay",
 }

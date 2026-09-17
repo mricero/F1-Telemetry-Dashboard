@@ -106,7 +106,12 @@ class DataSourceManager:
                     f"(got {year!r}, {gp!r}, {session_type!r})"
                 )
             if source == "livef1":
-                return self._load_livef1_session(year, gp, session_type)
+                raise NotImplementedError(
+                    "The LiveF1 historical source is disabled (HIST-03): its loader "
+                    "reads attributes and column names livef1 does not provide, and "
+                    "livef1 raises building a Session for some seasons. Use "
+                    "source='fastf1', which covers the same sessions."
+                )
             return self._load_fastf1_session(year, gp, session_type, telemetry_scope)
 
         if source == "live":

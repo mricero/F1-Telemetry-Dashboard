@@ -171,9 +171,9 @@ def _app_script():
     app.main()
 
 
+# LiveF1 (Historical) is no longer offered - see HIST-03.
 SOURCE_LABELS = {
     "fastf1": "FastF1 (Historical)",
-    "livef1": "LiveF1 (Historical)",
     "replay": "Replay (Saved)",
 }
 
@@ -200,7 +200,7 @@ def _isolate_streamlit_caches():
 
 
 class TestSourcesRenderEndToEnd:
-    @pytest.mark.parametrize("source", ["fastf1", "livef1", "replay"])
+    @pytest.mark.parametrize("source", ["fastf1", "replay"])
     def test_no_exception_and_the_loader_saw_the_source(self, source):
         app_test = _run_for(source)
 

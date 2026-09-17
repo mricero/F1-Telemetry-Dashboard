@@ -298,7 +298,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: round-trip test for all keys incl. Timedelta/NaT/Int64/category dtypes; loading a legacy `.pkl` requires `allow_pickle=True`.
   - Note: a replay is now a **directory**: `meta.json` (schema, plain values, which tables exist) plus one Parquet per table and one per driver for telemetry/location. Round-trip tested for Timedelta, NaT, `Int64` and categorical dtypes - Parquet keeps all four, which the old `to_dict('records')` pickle did not. Legacy `.pkl` files still load, but only via `allow_pickle=True`; the default path raises an error naming the risk. `pyarrow` was declared by REPO-02 and now has its real use.
 
-- [ ] **HIST-03** · P0 · M — **"LiveF1 (Historical)" source is broken**
+- [x] **HIST-03** · P0 · M — **"LiveF1 (Historical)" source is broken** — done in <pending>
   - Files: `data/source_manager.py:176-261`.
   - Problem (checked against livef1 1.2.7 source):
     - `session.drivers` values are `livef1.models.driver.Driver` with attributes `RacingNumber`, `Tla`, `TeamColour`, `TeamName`, `FirstName`, `LastName`, `FullName`, `HeadshotUrl` — **not** `driver_number`, `name_acronym`, `team_colour`, `team_name`, `first_name`, `last_name`. Line 209 raises `AttributeError` on the first driver.
@@ -308,6 +308,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
     - `session_map` lacks "Sprint Shootout" (2023) naming differences; `circuit_short` mapping is a hand-maintained dict that misses Madrid (2026, "Madring"), Las Vegas variants etc.
   - Fix: Either (a) remove the source from the selector until fixed, or (b) write a proper adapter with explicit column maps, lap-relative distance for the fastest lap (filter `LapNo == fastest`), and resolve the meeting via `meeting_key/session_key` from `Index.json`/FastF1 schedule instead of name heuristics. Mark as experimental in the UI.
   - Acceptance: network test (`F1_NETWORK_TESTS=1`) loads 2025 Bahrain Q via livef1 and gets ≥18 drivers with non-empty telemetry, location and laps; offline unit test with a captured silver-table sample.
+  - Note: took option **(a)**, on evidence. Beyond the attribute and column mismatches the audit lists, livef1 1.2.1 itself raises `AttributeError: 'Session' object has no attribute 'name'` building a Session for 2023 Bahrain (2024 Bahrain works), so option (b) could not be verified for the acceptance's own session. The source is gone from the selector, `source='livef1'` raises a `NotImplementedError` naming HIST-03 and pointing at `fastf1`, and tests pin livef1's real `Driver` attribute names for whoever writes the adapter later.
 
 - [x] **HIST-04** · P1 · S — **Auto fallback is stuck in 2025** — done in 5ae2645
   - Files: `data/fastf1_adapter.py:27-36`, `data/source_manager.py:493-499`.

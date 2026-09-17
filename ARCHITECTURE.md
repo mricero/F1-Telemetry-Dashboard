@@ -457,7 +457,7 @@ def render_session_selector(data_manager: DataSourceManager) -> dict:
     with col1:
         source = st.selectbox(
             "Data Source",
-            ["Auto (Live → Historical)", "FastF1 (Historical)", "LiveF1 (Historical)", "Live (SignalR)", "Replay (Saved)"],
+            ["Auto (Live → Historical)", "FastF1 (Historical)", "Live (SignalR)", "Replay (Saved)"],
             index=0
         )
     
