@@ -248,7 +248,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Note: measured 1.80 s in the audit → **311 ms** once LIVE-05 took `TimingData` out of the record path → **under the 150 ms budget** here, via whole-column `pd.to_numeric` instead of one call per record per channel, one timestamp parse per frame instead of one per driver, and a change token (`state.version` + lap count + a monotonic ingest counter) that lets an unchanged poll hand back the same snapshot. Lap history was already separated from the capped telemetry buffer by LIVE-05; the retention test covers it. Per-driver numpy ring buffers were not needed to meet the budget and would have cost more than they bought.
   - Depends on: LIVE-05.
 
-- [x] **LIVE-12** · P1 · S — **Unreachable/placeholder live controls; saving a live session saves nothing** — done in <pending>
+- [x] **LIVE-12** · P1 · S — **Unreachable/placeholder live controls; saving a live session saves nothing** — done in bdb7992
   - Files: `app.py:233-245` (returns), `app.py:287-288` (unreachable `render_live_controls`), `ui/layout.py:827-853`.
   - Problem: For live sessions `main()` returns at line 245, so `render_live_controls` (buffer counts, "Save Raw Stream", "Stop Live") never renders. "Save Raw Stream" only prints advice. For non-live sessions the "💾 Save Session for Replay" button saves the loaded dict; for live it would save the empty initial dict.
   - Fix: Render controls inside the live branch. Implement recording as **append-only JSONL** of raw messages (`subscribe.json` for the snapshot + `live.jsonl` for `[topic, data, timestamp]`), the format undercut-f1 uses; replay feeds the same handler (LIVE-05) with a virtual clock.
@@ -275,10 +275,11 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: unit tests with a frozen clock at FP1 start −10 min → live; Tuesday after the race → historical; `Auto` on a race weekend still shows historical selectors.
   - Note: `live_session_now(schedule, now)` uses the FastF1 schedule's own `SessionNDateUtc` and a per-session-type duration, with a 15 min lead-in and 30 min run-out. `Auto` now shows "a session is running now" plus a **Go live** button and keeps the historical selectors. Confirming with `SessionStatus` once connected waits on LIVE-01; `JolpicaAdapter.is_race_weekend` stays as the coarse calendar helper it always was, now documented as such.
 
-- [ ] **LIVE-16** · P2 · S — **Dead/misleading live code**
+- [x] **LIVE-16** · P2 · S — **Dead/misleading live code** — done in <pending>
   - Files: `data/live_adapter.py:201-208` (`start_fastf1_client` ignores `topics`, blocks, unused), `data/live_adapter.py:469-477` (`check_live_session_available`, unused), `processing/telemetry_processor.py:267-294` (`process_live_telemetry`, unused, uses `index*100` pseudo-distance), `data/live_adapter.py:122-136` (`LapSeries`, `CurrentTyres`, `PitLaneTimeCollection` subscribed but never parsed).
   - Fix: delete, or wire up with tests. `CurrentTyres` + `TimingAppData` are exactly what the tower needs for live tyre compound/age (see DASH-11); `PitLaneTimeCollection` gives pit lane durations.
   - Acceptance: `vulture`/grep shows no unused public functions in `data/` and `processing/`.
+  - Note: deleted `start_fastf1_client`, `check_live_session_available`, `process_live_telemetry` and both `__main__` demo blocks; dropped `LapSeries` from the subscription (lap progression comes from `TimingData.NumberOfLaps`) and added `TimingAppData`, the tower's tyre source. `CurrentTyres`/`PitLaneTimeCollection` are no longer dead buffers — LIVE-05 merges every state topic. A test enforces the acceptance for the live modules; the unused Jolpica `*_df` helpers it also surfaced are **REPO-05**'s call (wire up as FEAT-06 standings, or delete). mypy fell 21 → 19 errors.
 
 ---
 ## 4. P0/P1 — Historical & replay sources

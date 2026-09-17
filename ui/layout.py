@@ -892,6 +892,9 @@ def render_live_controls(live_client):
                     for topic in ("CarData.z", "Position.z", "TimingData", "WeatherData")
                 }
             )
+        if st.button("🧹 Clear Buffers"):
+            live_client.clear_buffer()
+            st.info("Buffered telemetry and merged state cleared")
 
     with col2:
         # Records the raw messages, so a replay feeds the same handler the

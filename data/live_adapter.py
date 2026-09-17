@@ -176,7 +176,7 @@ class SignalRLiveAdapter:
         "SessionInfo",  # Session metadata
         "SessionStatus",  # Session state (racing, stopped, etc.)
         "DriverList",  # Driver info (numbers, names, teams)
-        "LapSeries",  # Lap data stream
+        "TimingAppData",  # Per-driver stints: compound, age, new/used
         "CurrentTyres",  # Current tyre compounds
         "PitLaneTimeCollection",  # Pit lane timing
         "TyreStintSeries",  # Tyre stint data
@@ -364,15 +364,6 @@ class SignalRLiveAdapter:
         # Blocks; RealF1Client creates and owns its own event loop.
         self.client.run()
         self._running = False
-
-    def start_fastf1_client(self, filename: str, topics: List[str] = None, timeout: int = 60):
-        """Start FastF1 SignalRClient - saves raw stream to file."""
-        from fastf1.livetiming.client import SignalRClient
-
-        topics = topics or self.subscribed_topics()
-        self.client = SignalRClient(filename=filename, filemode="w", timeout=timeout, no_auth=False)
-        self._running = True
-        self.client.start()  # Blocks
 
     def start_async(self, topics: List[str] = None, log_file: str = None):
         """Start live client in background thread.
@@ -952,38 +943,3 @@ class LiveDataProcessor:
         result = np.interp(ct_num, t_num, dist)
         result[ct.isna().to_numpy()] = np.nan
         return result
-
-
-def check_live_session_available() -> bool:
-    """Check if there's likely a live F1 session running."""
-    try:
-        from data.jolpica_adapter import JolpicaAdapter
-
-        return JolpicaAdapter().is_race_weekend()
-    except Exception:
-        # No connectivity or schedule unavailable - assume no live session
-        return False
-
-
-if __name__ == "__main__":
-    import time
-    import pandas as pd
-
-    adapter = SignalRLiveAdapter(use_livef1=True)
-
-    def on_car_data(data):
-        print(f"CarData: {len(data)} records")
-
-    adapter.register_callback("CarData.z", on_car_data)
-    adapter.start_async(topics=["CarData.z", "Position.z"], log_file="test_session.json")
-
-    time.sleep(10)
-
-    print(f"Buffered CarData: {len(adapter.get_buffered_data('CarData.z'))}")
-    print(f"Buffered Position: {len(adapter.get_buffered_data('Position.z'))}")
-
-    processor = LiveDataProcessor()
-    df = processor.parse_car_data(adapter.get_buffered_data("CarData.z"))
-    print(df.tail())
-
-    adapter.stop()
