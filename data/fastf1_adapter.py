@@ -1,12 +1,15 @@
 """FastF1 Historical Data Adapter"""
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 import fastf1
 import fastf1.core
 import numpy as np
 import pandas as pd
+
+from processing.replay import build_position_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +370,32 @@ class FastF1Adapter:
             return pd.DataFrame()
         present = [c for c in self.RESULT_COLUMNS if c in results.columns]
         return pd.DataFrame(results[present]).reset_index(drop=True)
+
+    def get_position_timeline(
+        self, session: fastf1.core.Session, drivers: Sequence[str]
+    ) -> pd.DataFrame:
+        """Every driver's position across the whole session, on one clock.
+
+        Uses ``get_pos_data()`` directly - position data alone, no car-data
+        merge - because this needs the *whole* session rather than one lap,
+        and the merge is what makes telemetry loading expensive. Note that
+        this data must never be `.add_distance()`d: it carries no Speed
+        channel (see CLAUDE.md).
+        """
+        frames = {}
+        for driver in drivers:
+            try:
+                laps = session.laps.pick_drivers(driver)
+                if laps is None or laps.empty:
+                    continue
+                positions = laps.get_pos_data()
+            except Exception as exc:
+                logger.warning("No position data for %s: %s", driver, exc)
+                continue
+            if positions is not None and len(positions) > 0:
+                frames[driver] = pd.DataFrame(positions)
+
+        return build_position_timeline(frames)
 
     def get_laps(self, session: fastf1.core.Session) -> pd.DataFrame:
         """Get lap timing data with a boolean pit-out flag.

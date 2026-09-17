@@ -89,6 +89,7 @@ from ui.layout import (  # noqa: E402
     render_track_map,
     render_weather,
 )
+from ui.replay_view import render_session_replay  # noqa: E402
 
 
 def load_session_data(data_manager, selection: dict) -> dict:
@@ -274,6 +275,7 @@ def main():
             "📈 Positions",
             "🛞 Tyres",
             "🗺️ Track",
+            "🎬 Replay",
             "🌤️ Weather",
             "🚩 Race Control",
         ]
@@ -299,8 +301,14 @@ def main():
     with analysis[5]:
         render_track_map(session_data["location"], color_map)
     with analysis[6]:
-        render_weather(session_data.get("weather"))
+        st.caption(
+            "Play the session back from the start: every car where it actually "
+            "was, the running order at that moment, and the lap they were on."
+        )
+        render_session_replay(session_data)
     with analysis[7]:
+        render_weather(session_data.get("weather"))
+    with analysis[8]:
         render_race_control(session_data.get("race_control"))
 
     # Replay Save Option

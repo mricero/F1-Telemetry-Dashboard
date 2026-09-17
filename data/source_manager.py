@@ -183,6 +183,8 @@ class DataSourceManager:
             "laps": self.fastf1.get_laps(session),
             "stints": self.fastf1.get_stints(session),
             "results": self.fastf1.get_results(session),
+            # Positions over the whole session, for the replay scrubber.
+            "positions": self.fastf1.get_position_timeline(session, drivers),
             "location": location,
             "weather": self._get_weather_from_session(session),
             "race_control": self.fastf1.get_race_control(session),
@@ -315,6 +317,7 @@ class DataSourceManager:
             "laps": laps_df,
             "stints": pd.DataFrame(),  # Could be extracted from LiveF1
             "results": pd.DataFrame(),
+            "positions": pd.DataFrame(),
             "location": {},
             "weather": pd.DataFrame(),
             "race_control": pd.DataFrame(),
@@ -333,6 +336,7 @@ class DataSourceManager:
             "laps": pd.DataFrame(),
             "stints": pd.DataFrame(),
             "results": pd.DataFrame(),
+            "positions": pd.DataFrame(),
             "location": {},
             "weather": pd.DataFrame(),
             "race_control": pd.DataFrame(),
@@ -537,6 +541,7 @@ class DataSourceManager:
             "laps": laps_df,
             "stints": stints_df,
             "results": pd.DataFrame(),  # live order comes from TimingData
+            "positions": pd.DataFrame(),
             "location": location,
             "weather": weather_df,
             "race_control": race_control_df,
@@ -767,12 +772,13 @@ class DataSourceManager:
     # Bump when the serialized layout changes; _load_replay rejects newer
     # schemas with a clear message instead of failing deep inside pickle.
     # v2 added 'race_control' and 'compound_colors'; v3 added 'circuit_info'
-    # (corner markers + track rotation); v4 added 'results' (official
+    # (corner markers + track rotation); v6 added 'positions' (the replay
+    # timeline); v4 added 'results' (official
     # classification, needed to order a race by finishing position); v5 added
     # 'dashboard_telemetry'/'dashboard_location' (fastest-lap frames, stored
     # only when the charts use a different scope). Older replays simply lack
     # those keys and load with empty defaults.
-    REPLAY_SCHEMA_VERSION = 5
+    REPLAY_SCHEMA_VERSION = 6
 
     # Tables stored as their own Parquet file inside a replay directory.
     FRAME_KEYS = ("laps", "stints", "results", "weather", "race_control", "drivers")
@@ -931,6 +937,7 @@ class DataSourceManager:
         data.setdefault("compound_colors", {})
         data.setdefault("circuit_info", {})
         data.setdefault("results", pd.DataFrame())
+        data.setdefault("positions", pd.DataFrame())
         data.setdefault("telemetry", {})
         data.setdefault("location", {})
         data["source"] = "replay"

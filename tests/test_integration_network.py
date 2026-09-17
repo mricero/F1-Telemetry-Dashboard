@@ -364,3 +364,59 @@ class TestStatusBadgesOnRealSession:
         assert "CLASSIFIED" not in badges
         # Three cars retired at Bahrain 2023 (LEC, STR's team mate aside).
         assert "DNF" in badges
+
+
+class TestReplayTimelineOnRealSession:
+    """FEAT-04: the playback timeline, built from a real race."""
+
+    @staticmethod
+    def _race():
+        from data.source_manager import DataSourceManager
+
+        return DataSourceManager().get_session_data(
+            source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="R"
+        )
+
+    def test_the_session_carries_a_position_timeline(self):
+        positions = self._race()["positions"]
+
+        assert not positions.empty
+        assert list(positions.columns) == ["Time", "Driver", "X", "Y"]
+        assert positions["Driver"].nunique() >= 15
+
+    def test_it_spans_the_whole_race(self):
+        from processing.replay import timeline_bounds
+
+        start, end = timeline_bounds(self._race()["positions"])
+
+        # Bahrain 2023 ran about 1 h 33 m; the stream covers rather more.
+        assert (end - start) > 3600
+
+    def test_the_grid_moves_between_moments(self):
+        from processing.replay import positions_at, timeline_bounds
+
+        positions = self._race()["positions"]
+        # FastF1's SessionTime counts from the start of the recording, not
+        # from zero, so moments are taken relative to the timeline itself.
+        start, end = timeline_bounds(positions)
+        middle = start + (end - start) / 2
+
+        early = {m["code"]: (m["x"], m["y"]) for m in positions_at(positions, middle)}
+        later = {m["code"]: (m["x"], m["y"]) for m in positions_at(positions, middle + 30)}
+
+        shared = set(early) & set(later)
+        assert shared, "no driver present at both moments"
+        assert any(early[code] != later[code] for code in shared), "cars did not move"
+
+    def test_the_order_at_a_moment_matches_the_laps(self):
+        from processing.replay import lap_at, order_at, timeline_bounds
+
+        session = self._race()
+        start, end = timeline_bounds(session["positions"])
+        middle = start + (end - start) / 2
+
+        order = order_at(session["laps"], middle)
+
+        assert len(order) >= 15
+        assert order[0]["position"] == 1
+        assert lap_at(session["laps"], middle) > 1
