@@ -39,11 +39,15 @@ def _sample_session() -> dict:
 
 class TestReplaySchema:
     def test_roundtrip_with_schema_header(self, manager):
-        path = manager.save_replay(_sample_session(), "Bahrain_R")
-        with open(path, "rb") as handle:
-            raw = pickle.load(handle)
-        assert raw["schema"] == manager.REPLAY_SCHEMA_VERSION
-        assert "saved_at" in raw and "data" in raw
+        """HIST-02: the header is a JSON manifest, not a pickle envelope."""
+        import json
+        from pathlib import Path
+
+        path = Path(manager.save_replay(_sample_session(), "Bahrain_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+
+        assert meta["schema"] == manager.REPLAY_SCHEMA_VERSION
+        assert "saved_at" in meta and "frames" in meta
 
     def test_load_roundtrip_restores_frames(self, manager):
         path = manager.save_replay(_sample_session(), "Bahrain_R")
@@ -64,7 +68,8 @@ class TestReplaySchema:
         with open(target, "wb") as f:
             pickle.dump(legacy, f)
 
-        loaded = manager._load_replay(str(target))
+        # Reading a pickle runs code from the file, so the caller must say so.
+        loaded = manager._load_replay(str(target), allow_pickle=True)
         assert loaded["source"] == "replay"
         assert isinstance(loaded["laps"], pd.DataFrame)
 
@@ -74,7 +79,7 @@ class TestReplaySchema:
         with open(target, "wb") as f:
             pickle.dump(payload, f)
         with pytest.raises(ValueError, match="schema"):
-            manager._load_replay(str(target))
+            manager._load_replay(str(target), allow_pickle=True)
 
 
 class TestCircuitMapping:
@@ -360,12 +365,14 @@ class TestDashboardFrameRoundTrip:
         return data
 
     def test_fastest_scope_does_not_duplicate_the_frames(self, manager):
-        path = manager.save_replay(self._session_with_scope("fastest"), "Bahrain_R")
-        with open(path, "rb") as handle:
-            raw = pickle.load(handle)["data"]
+        import json
+        from pathlib import Path
 
-        assert "dashboard_telemetry" not in raw
-        assert "dashboard_location" not in raw
+        path = Path(manager.save_replay(self._session_with_scope("fastest"), "Bahrain_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+
+        assert "dashboard_telemetry" not in meta["frame_dicts"]
+        assert "dashboard_location" not in meta["frame_dicts"]
 
     def test_session_scope_stores_the_fastest_lap_frames(self, manager):
         path = manager.save_replay(self._session_with_scope("session"), "Bahrain_R")

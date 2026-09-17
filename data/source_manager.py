@@ -1,5 +1,6 @@
 """Data Source Manager - Unified interface with automatic fallback"""
 
+import json
 import logging
 import pickle
 from datetime import UTC, datetime
@@ -22,6 +23,11 @@ from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
 from data.live_service import get_live_adapter
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_name(value) -> str:
+    """A filesystem-safe name for a per-driver Parquet file."""
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(value))
 
 
 class DataSourceManager:
@@ -763,41 +769,72 @@ class DataSourceManager:
     # those keys and load with empty defaults.
     REPLAY_SCHEMA_VERSION = 5
 
+    # Tables stored as their own Parquet file inside a replay directory.
+    FRAME_KEYS = ("laps", "stints", "results", "weather", "race_control", "drivers")
+    # Per-driver frames: one Parquet each, under a subdirectory.
+    FRAME_DICT_KEYS = (
+        "telemetry",
+        "location",
+        "dashboard_telemetry",
+        "dashboard_location",
+    )
+    META_FILE = "meta.json"
+
     def save_replay(self, data: dict, name: str) -> str:
-        """Save session data for offline replay.
+        """Save session data for offline replay, as data rather than code.
 
-        Files carry a schema header (``schema``/``saved_at``/``data``) so
-        future format changes can be detected and old files keep loading.
+        A directory holding ``meta.json`` (schema, session info and the small
+        plain values) plus Parquet for every table - Parquet keeps Timedelta,
+        nullable Int64 and categorical dtypes, and loading one cannot execute
+        anything. Replays are the artefact users share, so the old pickle
+        format is read-only now (HIST-02).
         """
-        filepath = self.replay_dir / f"{name}_{datetime.now(UTC):%Y%m%d_%H%M%S}.pkl"
-        save_data = {}
-        frame_dicts = ("telemetry", "location", "dashboard_telemetry", "dashboard_location")
-        for k, v in data.items():
-            # Same objects under fastest scope: no point storing them twice.
-            if k == "dashboard_telemetry" and v is data.get("telemetry"):
-                continue
-            if k == "dashboard_location" and v is data.get("location"):
-                continue
-            if k in frame_dicts:
-                save_data[k] = (
-                    {dk: dv.to_dict("records") for dk, dv in v.items()}
-                    if isinstance(v, dict)
-                    else v
-                )
-            elif isinstance(v, pd.DataFrame):
-                save_data[k] = v.to_dict("records")
-            elif k != "live_client":
-                save_data[k] = v
+        target = self.replay_dir / f"{name}_{datetime.now(UTC):%Y%m%d_%H%M%S}"
+        target.mkdir(parents=True, exist_ok=True)
 
-        payload = {
+        meta: dict = {
             "schema": self.REPLAY_SCHEMA_VERSION,
             "app": "f1-telemetry-dashboard",
             "saved_at": datetime.now(UTC).isoformat(),
-            "data": save_data,
+            "values": {},
+            "frames": [],
+            "frame_dicts": {},
         }
-        with open(filepath, "wb") as f:
-            pickle.dump(payload, f)
-        return str(filepath)
+
+        for key, value in data.items():
+            if key == "live_client":
+                continue
+            # Under fastest scope these are the same objects; storing them
+            # twice would double the file for nothing.
+            if key == "dashboard_telemetry" and value is data.get("telemetry"):
+                continue
+            if key == "dashboard_location" and value is data.get("location"):
+                continue
+
+            if isinstance(value, pd.DataFrame):
+                self._write_frame(value, target / f"{key}.parquet")
+                meta["frames"].append(key)
+            elif key in self.FRAME_DICT_KEYS and isinstance(value, dict):
+                folder = target / key
+                folder.mkdir(exist_ok=True)
+                written = []
+                for driver, frame in value.items():
+                    if isinstance(frame, pd.DataFrame):
+                        self._write_frame(frame, folder / f"{_safe_name(driver)}.parquet")
+                        written.append(driver)
+                meta["frame_dicts"][key] = written
+            else:
+                meta["values"][key] = value
+
+        (target / self.META_FILE).write_text(
+            json.dumps(meta, indent=2, default=str), encoding="utf-8"
+        )
+        return str(target)
+
+    @staticmethod
+    def _write_frame(frame: pd.DataFrame, path: Path) -> None:
+        """One table to Parquet, preserving the dtypes the app relies on."""
+        frame.to_parquet(path, index=False)
 
     def _resolve_replay(self, replay_file: str) -> Path:
         """Resolve a replay reference to a file inside ``replay_dir``.
@@ -808,26 +845,65 @@ class DataSourceManager:
         (``../secrets.pkl``) to the replay directory.
         """
         candidate = Path(replay_file)
-        if candidate.is_absolute() and candidate.is_file():
+        if candidate.is_absolute() and candidate.exists():
             return candidate
         path = self.replay_dir / candidate.name
-        if not path.is_file():
+        if not path.exists():
             raise FileNotFoundError(
                 f"Replay file not found: {replay_file} (looked in {self.replay_dir})"
             )
         return path
 
-    def _load_replay(self, filepath: str) -> dict:
-        with open(self._resolve_replay(filepath), "rb") as f:
-            # Loading a replay runs arbitrary code; replacing this format
-            # with Parquet + JSON is HIST-02.
-            payload = pickle.load(f)  # noqa: S301
+    def _load_replay(self, filepath: str, allow_pickle: bool = False) -> dict:
+        """Load a replay directory, or a legacy pickle if explicitly trusted."""
+        path = self._resolve_replay(filepath)
+        if path.is_dir():
+            return self._load_replay_bundle(path)
+        return self._load_legacy_pickle(path, allow_pickle=allow_pickle)
 
-        # Schema header (current) vs bare session dict (legacy replays)
+    def _load_replay_bundle(self, path: Path) -> dict:
+        meta = json.loads((path / self.META_FILE).read_text(encoding="utf-8"))
+        if int(meta.get("schema", 0)) > self.REPLAY_SCHEMA_VERSION:
+            raise ValueError(
+                f"Replay {path.name} was saved with schema {meta['schema']} but this "
+                f"app supports up to {self.REPLAY_SCHEMA_VERSION}. Please update the app."
+            )
+
+        data: dict = dict(meta.get("values", {}))
+        for key in meta.get("frames", []):
+            frame_path = path / f"{key}.parquet"
+            data[key] = pd.read_parquet(frame_path) if frame_path.is_file() else pd.DataFrame()
+        for key, drivers in (meta.get("frame_dicts") or {}).items():
+            folder = path / key
+            frames = {}
+            for driver in drivers:
+                driver_path = folder / f"{_safe_name(driver)}.parquet"
+                if driver_path.is_file():
+                    frames[driver] = pd.read_parquet(driver_path)
+            data[key] = frames
+
+        return self._finalise_replay(data)
+
+    def _load_legacy_pickle(self, path: Path, allow_pickle: bool = False) -> dict:
+        """Read a pre-HIST-02 ``.pkl`` replay.
+
+        Refused unless the caller passes ``allow_pickle=True``: unpickling
+        runs arbitrary code, and replays are exactly the file people share.
+        """
+        if not allow_pickle:
+            raise ValueError(
+                f"{path.name} is a legacy pickle replay. Loading one runs arbitrary "
+                f"code from the file, so it is only read with allow_pickle=True - "
+                f"do that only for files you created yourself."
+            )
+        with open(path, "rb") as handle:
+            # Guarded above; the format is read-only and goes away next release.
+            payload = pickle.load(handle)  # noqa: S301
+
         if isinstance(payload, dict) and "schema" in payload and "data" in payload:
             if payload["schema"] > self.REPLAY_SCHEMA_VERSION:
                 raise ValueError(
-                    f"Replay {filepath} was saved with schema "
+                    f"Replay {path.name} was saved with schema "
                     f"{payload['schema']} but this app supports up to "
                     f"{self.REPLAY_SCHEMA_VERSION}. Please update the app."
                 )
@@ -835,20 +911,32 @@ class DataSourceManager:
         else:
             data = payload
 
-        data.setdefault("race_control", [])
-        data.setdefault("compound_colors", {})
-        data.setdefault("circuit_info", {})
-        data.setdefault("results", [])
-        for k in ["laps", "stints", "results", "weather", "drivers", "race_control"]:
-            if k in data:
-                data[k] = pd.DataFrame(data[k])
-        for key in ("telemetry", "location", "dashboard_telemetry", "dashboard_location"):
+        for key in ("laps", "stints", "results", "weather", "drivers", "race_control"):
+            if key in data:
+                data[key] = pd.DataFrame(data[key])
+        for key in self.FRAME_DICT_KEYS:
             if key in data:
                 data[key] = {k: pd.DataFrame(v) for k, v in data[key].items()}
+        return self._finalise_replay(data)
+
+    @staticmethod
+    def _finalise_replay(data: dict) -> dict:
+        """Defaults for keys a replay predates, and the source marker."""
+        data.setdefault("race_control", pd.DataFrame())
+        data.setdefault("compound_colors", {})
+        data.setdefault("circuit_info", {})
+        data.setdefault("results", pd.DataFrame())
+        data.setdefault("telemetry", {})
+        data.setdefault("location", {})
         data["source"] = "replay"
         return data
 
     def get_available_replays(self) -> list:
-        """List available replay files."""
-        files = list(self.replay_dir.glob("*.pkl"))
-        return sorted([f.name for f in files], reverse=True)
+        """Saved replays, newest first: directories plus legacy pickles."""
+        entries = [p.name for p in self.replay_dir.glob("*") if self._is_replay(p)]
+        return sorted(entries, reverse=True)
+
+    def _is_replay(self, path: Path) -> bool:
+        if path.is_dir():
+            return (path / self.META_FILE).is_file()
+        return path.suffix == ".pkl"
