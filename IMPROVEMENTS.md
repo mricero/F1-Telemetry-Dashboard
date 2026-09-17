@@ -238,13 +238,14 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: AppTest with primed buffers: header shows the GP from SessionInfo and the tower has one row per driver.
   - Depends on: LIVE-05, DASH-01.
 
-- [ ] **LIVE-11** · P1 · M — **Poll is O(buffer) Python work every 3 seconds; buffer cap loses race history**
+- [x] **LIVE-11** · P1 · M — **Poll is O(buffer) Python work every 3 seconds; buffer cap loses race history** — done in <pending>
   - Files: `data/source_manager.py:281-407, 410-476`, `data/live_adapter.py:277-310`.
   - Problem: Every tick re-parses *all* buffered records: per-record `pd.to_numeric` scalar calls, `iterrows()` over all `TimingData` rows with a `pd.Series` constructed per row, `groupby` over full frames, ISO timestamp parsing of 20k strings.
   - Evidence: synthetic buffers at cap (20 000 each for `CarData.z`, `Position.z`, `TimingData`): **`poll_live_data()` took 1.80 s**. With all topics and a slower host this exceeds the 3 s `run_every`, so fragments pile up.
   - Also: `buffer_limit=20000` drops the **oldest** `TimingData` records; lap completions from the first part of a race vanish from the lap chart.
   - Fix: Incremental processing — handlers update `LiveState` and append to per-driver ring buffers of numpy arrays; derived tables (laps, stints) are maintained incrementally on lap completion; the snapshot is rebuilt only when `state.version` changed. Lap history is stored separately from the bounded telemetry buffer.
   - Acceptance: perf test: building a snapshot from a state with 22 drivers × 10 min of 4 Hz telemetry + 60 laps < **150 ms** on CI; lap 1 is still present after 2 h of simulated feed.
+  - Note: measured 1.80 s in the audit → **311 ms** once LIVE-05 took `TimingData` out of the record path → **under the 150 ms budget** here, via whole-column `pd.to_numeric` instead of one call per record per channel, one timestamp parse per frame instead of one per driver, and a change token (`state.version` + lap count + a monotonic ingest counter) that lets an unchanged poll hand back the same snapshot. Lap history was already separated from the capped telemetry buffer by LIVE-05; the retention test covers it. Per-driver numpy ring buffers were not needed to meet the budget and would have cost more than they bought.
   - Depends on: LIVE-05.
 
 - [ ] **LIVE-12** · P1 · S — **Unreachable/placeholder live controls; saving a live session saves nothing**

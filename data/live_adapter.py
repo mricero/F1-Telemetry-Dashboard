@@ -205,6 +205,9 @@ class SignalRLiveAdapter:
         # script thread: without this, trimming a buffer shifted the reader's
         # slice underneath it and records were skipped or duplicated.
         self._buffer_lock = threading.RLock()
+        # Monotonic count of buffered records. Buffer *lengths* stop changing
+        # once a topic hits its cap, so they cannot signal new data.
+        self._ingested = 0
         self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -284,8 +287,10 @@ class SignalRLiveAdapter:
             buf = self._data_buffer[topic]
             if isinstance(records, list):
                 buf.extend(records)
+                self._ingested += len(records)
             else:
                 buf.append(records)
+                self._ingested += 1
             overflow = len(buf) - self.buffer_limit
             if overflow > 0:
                 del buf[:overflow]
@@ -358,6 +363,17 @@ class SignalRLiveAdapter:
         """Register callback for a topic."""
         self._callbacks[topic].append(callback)
 
+    def change_token(self) -> tuple:
+        """A cheap value that changes whenever ingested data changes.
+
+        Lets a reader skip rebuilding a snapshot when nothing has arrived
+        since the last poll - a 3 s fragment otherwise reprocesses the whole
+        buffer for an identical result (LIVE-11).
+        """
+        with self._buffer_lock:
+            ingested, laps = self._ingested, len(self.lap_history)
+        return (self.state.version, laps, ingested)
+
     def recorded_laps(self) -> List[Dict]:
         """A snapshot copy of the recorded lap completions."""
         with self._buffer_lock:
@@ -389,6 +405,7 @@ class SignalRLiveAdapter:
                 self.state.clear()
                 self.lap_history.clear()
                 self._lap_counter.clear()
+                self._ingested += 1  # a clear is a change like any other
 
     def is_running(self) -> bool:
         """Check if client is running."""
@@ -413,25 +430,67 @@ class LiveDataProcessor:
     MessageHandlerTemplate (see module docstring).
     """
 
+    # CarData.z field -> unified channel name.
+    CAR_CHANNEL_COLUMNS = {
+        "rpm": "RPM",
+        "speed": "Speed",
+        "n_gear": "nGear",
+        "throttle": "Throttle",
+        "brake": "Brake",
+        "drs": "DRS",
+    }
+
     @staticmethod
     def parse_car_data(raw_records: List[Dict]) -> pd.DataFrame:
         """CarData.z records -> DataFrame[driver_number, timestamp,
-        RPM, Speed, nGear, Throttle, Brake, DRS]."""
-        rows = []
-        for r in raw_records or []:
-            rows.append(
-                {
-                    "driver_number": r.get("DriverNo"),
-                    "timestamp": r.get("Utc", r.get("timestamp")),
-                    "RPM": pd.to_numeric(r.get("rpm"), errors="coerce"),
-                    "Speed": pd.to_numeric(r.get("speed"), errors="coerce"),
-                    "nGear": pd.to_numeric(r.get("n_gear"), errors="coerce"),
-                    "Throttle": pd.to_numeric(r.get("throttle"), errors="coerce"),
-                    "Brake": pd.to_numeric(r.get("brake"), errors="coerce"),
-                    "DRS": pd.to_numeric(r.get("drs"), errors="coerce"),
-                }
+        RPM, Speed, nGear, Throttle, Brake, DRS].
+
+        Built as whole columns: converting each field per record cost one
+        ``pd.to_numeric`` call per channel per sample, which dominated the
+        live poll at buffer cap (LIVE-11).
+        """
+        records = raw_records or []
+        if not records:
+            return pd.DataFrame()
+        frame = pd.DataFrame(records)
+        out = pd.DataFrame(
+            {
+                "driver_number": frame.get("DriverNo"),
+                "timestamp": LiveDataProcessor._timestamp_column(frame),
+            }
+        )
+        for source, column in LiveDataProcessor.CAR_CHANNEL_COLUMNS.items():
+            out[column] = (
+                pd.to_numeric(frame[source], errors="coerce")
+                if source in frame.columns
+                else pd.Series(index=frame.index, dtype="float64")
             )
-        return pd.DataFrame(rows)
+        return out
+
+    @staticmethod
+    def parsed_timestamps(values: Sequence) -> pd.Series:
+        """Feed timestamps as UTC datetimes, parsed at most once.
+
+        A series that is already datetime64 is passed straight through: the
+        poll parses each frame once and then hands the same column to every
+        per-driver call, instead of re-parsing 20 000 ISO strings per driver
+        (LIVE-11).
+        """
+        series = values if isinstance(values, pd.Series) else pd.Series(list(values))
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return series
+        return pd.to_datetime(series, utc=True, format="ISO8601", errors="coerce")
+
+    @staticmethod
+    def _timestamp_column(frame: pd.DataFrame) -> pd.Series:
+        """``Utc`` when present, else the wire ``timestamp``."""
+        if "Utc" in frame.columns:
+            if "timestamp" in frame.columns:
+                return frame["Utc"].fillna(frame["timestamp"])
+            return frame["Utc"]
+        if "timestamp" in frame.columns:
+            return frame["timestamp"]
+        return pd.Series(index=frame.index, dtype="object")
 
     @staticmethod
     def parse_position_data(raw_records: List[Dict]) -> pd.DataFrame:
@@ -442,26 +501,29 @@ class LiveDataProcessor:
         ``0,0,0``. Keeping them drew a straight line to the origin across the
         map and added a circuit's width to the distance on every pit stop.
         """
-        rows = []
-        for r in raw_records or []:
-            status = r.get("Status")
-            if status is not None and str(status) != "OnTrack":
-                continue
-            x = pd.to_numeric(r.get("X"), errors="coerce")
-            y = pd.to_numeric(r.get("Y"), errors="coerce")
-            z = pd.to_numeric(r.get("Z"), errors="coerce")
-            if (x == 0 and y == 0) and (pd.isna(z) or z == 0):
-                continue  # garage placeholder, not a position on the circuit
-            rows.append(
-                {
-                    "driver_number": r.get("DriverNo"),
-                    "timestamp": r.get("Utc", r.get("timestamp")),
-                    "X": x,
-                    "Y": y,
-                    "Z": z,
-                }
+        records = raw_records or []
+        if not records:
+            return pd.DataFrame()
+        frame = pd.DataFrame(records)
+        out = pd.DataFrame(
+            {
+                "driver_number": frame.get("DriverNo"),
+                "timestamp": LiveDataProcessor._timestamp_column(frame),
+            }
+        )
+        for axis in ("X", "Y", "Z"):
+            out[axis] = (
+                pd.to_numeric(frame[axis], errors="coerce")
+                if axis in frame.columns
+                else pd.Series(index=frame.index, dtype="float64")
             )
-        return pd.DataFrame(rows)
+
+        keep = pd.Series(True, index=out.index)
+        if "Status" in frame.columns:
+            status = frame["Status"]
+            keep &= status.isna() | (status.astype(str) == "OnTrack")
+        garage = (out["X"] == 0) & (out["Y"] == 0) & (out["Z"].isna() | (out["Z"] == 0))
+        return out[keep & ~garage].reset_index(drop=True)
 
     @staticmethod
     def parse_timing_data(raw_records: List[Dict]) -> pd.DataFrame:
@@ -801,7 +863,7 @@ class LiveDataProcessor:
         """
         if pos_df is None or len(pos_df) < 3 or car_timestamps is None:
             return None
-        t = pd.to_datetime(pos_df["timestamp"], utc=True, format="ISO8601", errors="coerce")
+        t = LiveDataProcessor.parsed_timestamps(pos_df["timestamp"])
         ok = t.notna() & pos_df[["X", "Y"]].notna().all(axis=1)
         if int(ok.sum()) < 3:
             return None
@@ -812,9 +874,7 @@ class LiveDataProcessor:
         seg = np.hypot(*np.diff(xy, axis=0).T)
         dist = np.concatenate([[0.0], np.cumsum(seg)]) / POSITION_UNITS_PER_METRE
 
-        ct = pd.to_datetime(
-            pd.Series(list(car_timestamps)), utc=True, format="ISO8601", errors="coerce"
-        )
+        ct = LiveDataProcessor.parsed_timestamps(car_timestamps)
         ct_num = ct.astype("int64").to_numpy().astype(float)  # NaT -> huge negative (clamps left)
         result = np.interp(ct_num, t_num, dist)
         result[ct.isna().to_numpy()] = np.nan

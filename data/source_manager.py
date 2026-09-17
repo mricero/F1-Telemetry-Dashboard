@@ -39,6 +39,9 @@ class DataSourceManager:
         self.live = live_adapter or get_live_adapter()
         self.replay_dir = Path(replay_dir or config.replay_dir)
         self.replay_dir.mkdir(parents=True, exist_ok=True)
+        # Last live snapshot and the ingest token it was built from.
+        self._live_snapshot: Optional[dict] = None
+        self._live_snapshot_token: Optional[tuple] = None
 
     def get_session_data(
         self,
@@ -331,6 +334,12 @@ class DataSourceManager:
         """
         adapter = self.live
 
+        # Nothing new since the last poll: hand back the same snapshot rather
+        # than reprocessing the buffers for an identical result (LIVE-11).
+        token = adapter.change_token()
+        if self._live_snapshot is not None and token == self._live_snapshot_token:
+            return self._live_snapshot
+
         car_df = LiveDataProcessor.parse_car_data(adapter.get_buffered_data("CarData.z"))
         pos_df = LiveDataProcessor.parse_position_data(adapter.get_buffered_data("Position.z"))
         weather_df = LiveDataProcessor.parse_weather_data(adapter.get_buffered_data("WeatherData"))
@@ -376,6 +385,12 @@ class DataSourceManager:
         acr_by_num = {}
         if not drivers_df.empty:
             acr_by_num = dict(zip(drivers_df["driver_number"], drivers_df["name_acronym"]))
+
+        # Timestamps are parsed once per frame here: every per-driver
+        # distance call used to re-parse its slice's ISO strings (LIVE-11).
+        for frame in (car_df, pos_df):
+            if not frame.empty and "timestamp" in frame.columns:
+                frame["timestamp"] = LiveDataProcessor.parsed_timestamps(frame["timestamp"])
 
         # --- per-driver GPS trails for the track map (with real distances) ---
         location: Dict[str, pd.DataFrame] = {}
@@ -455,7 +470,7 @@ class DataSourceManager:
             adapter.get_buffered_data("TrackStatus")
         )
 
-        return {
+        snapshot = {
             "session_info": {
                 **info,
                 "is_live": True,
@@ -475,6 +490,9 @@ class DataSourceManager:
             "source": "live",
             "is_live": True,
         }
+        self._live_snapshot = snapshot
+        self._live_snapshot_token = token
+        return snapshot
 
     @staticmethod
     def _ever_true(records: pd.DataFrame, column: str) -> bool:
