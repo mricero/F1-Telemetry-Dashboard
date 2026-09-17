@@ -548,13 +548,14 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
   - Files: see LIVE-16; plus `ui/layout.py:822-824` (`format_lap_time`, unused), `data/jolpica_adapter.py:134-311` (`get_driver_standings_df`, `get_race_results_df`, `get_lap_times_df`, `get_pit_stops_df`, `get_qualifying_df` — no callers), `config.py:18-22` (`default_year`, `default_gp`, `default_session`, `distance_step`, `cache_ttl_seconds` — never read; `TelemetryProcessor.DISTANCE_STEP` duplicates `distance_step`), `app.py:64-66` (`sys.path.insert`), `data/live_adapter.py:480-501` (`__main__` demo), `processing/telemetry_processor.py:297-317` (`__main__` demo).
   - Fix: delete or use (Jolpica standings are a natural P3 feature — FEAT-06). Add `vulture` to CI with an allow-list.
 
-- [x] **REPO-06** · P2 · S — **Lint rules are minimal** — done in <pending>
+- [x] **REPO-06** · P2 · S — **Lint rules are minimal** — done in eed74e4
   - Files: `pyproject.toml:19-22` (`select = ["E4","E7","E9","F"]`).
   - Fix: add `B` (bugbear), `UP`, `SIM`, `I` (isort), `PD` (pandas-vet), `NPY`, `PERF`, `RUF`, `S` (bandit: would have flagged `pickle`), `DTZ` (naive datetimes — relevant to earlier tz bugs). Fix or `noqa` with reasons.
   - Note: all ten families are on. 409 findings: 387 fixed (mostly `Dict`->`dict`, `Optional[X]`->`X | None`, import order), the rest by hand - UTC-aware `datetime.now()` everywhere, `raise ... from e`, `ClassVar` on the constant tables, context managers in tests. Four `noqa`s remain, each with a reason: the pickle loader (HIST-02), the recorder's long-lived append handle, `TOKEN_ENV_VAR` (a variable *name*, not a secret), and `S101` for tests. Side effect: mypy fell **19 -> 11** errors, since the implicit-`Optional` fixes are REPO-04's too.
 
-- [ ] **REPO-07** · P3 · S — **pre-commit configured in deps but not in repo** (`tasks.md §9` item)
+- [x] **REPO-07** · P3 · S — **pre-commit configured in deps but not in repo** (`tasks.md §9` item) — done in <pending>
   - Fix: `.pre-commit-config.yaml` with ruff (lint+format), mypy on `processing/`, end-of-file/trailing-whitespace, `check-added-large-files` (would have blocked `.venv311`).
+  - Note: all of that, with every repo pinned to a revision and `check-added-large-files` capped at 512 KB (a committed virtualenv is how REPO-01 happened). Formatting stays with black rather than `ruff-format`, to match CI. Documented in the readme; a test asserts the hooks and the pins stay in place.
 
 - [ ] **REPO-08** · P2 · M — **Row-wise pandas in hot paths**
   - Files: `data/live_adapter.py:277-310` (per-record `pd.to_numeric`), `data/source_manager.py:428-434` (`iterrows` + `pd.Series` per row), `processing/telemetry_processor.py:37-47` and `processing/timing.py:51-66` (`iterrows` for driver maps), `ui/layout.py:371-395` (one `go.Bar` trace per stint row), `processing/time_utils.py:63-65` (`seconds_series` is a Python loop despite "Vectorised" docstring).

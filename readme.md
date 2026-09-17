@@ -182,6 +182,17 @@ pytest
 ```
 (Pytest is configured via `pytest.ini` to collect only from `tests/`, so the network-dependent inspection scripts in `scripts/` are never executed automatically.)
 
+To reproduce CI exactly, install the pinned versions instead of the floors:
+```bash
+pip install -r requirements.lock
+```
+
+And run the same gates before each commit:
+```bash
+pre-commit install
+```
+This runs `ruff`, `black`, `mypy` (on `processing/`) and a large-file guard on staged files.
+
 ### 5. Setup Cache Directories
 The application will automatically create `./ff1_cache` and `./replay_sessions` if they do not exist. Ensure your user has write permissions to the repository folder.
 
