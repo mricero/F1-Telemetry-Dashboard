@@ -27,12 +27,15 @@ import threading
 import zlib
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Callable, Optional, Any, Sequence
+from typing import TYPE_CHECKING, Dict, List, Callable, Optional, Any, Sequence
 from collections import defaultdict
 
 # Position.z shares FastF1's 1/10 m position units - one definition, both paths.
 from data.fastf1_adapter import POSITION_UNITS_PER_METRE
 from data.live_state import STATE_TOPICS, LiveState, as_list
+
+if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
+    from data.live_recorder import LiveRecorder
 
 
 def decode_zipped(text: str) -> Any:
@@ -208,6 +211,8 @@ class SignalRLiveAdapter:
         # Monotonic count of buffered records. Buffer *lengths* stop changing
         # once a topic hits its cap, so they cannot signal new data.
         self._ingested = 0
+        # Optional raw-stream recorder; see data/live_recorder.py (LIVE-12).
+        self.recorder: Optional["LiveRecorder"] = None
         self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -222,6 +227,9 @@ class SignalRLiveAdapter:
         livef1 callback path still delivers pre-parsed records to
         :meth:`_buffer_topic`.
         """
+        if self.recorder is not None:
+            self.recorder.record(topic, payload, timestamp)
+
         if topic in STATE_TOPICS:
             if topic == "TimingData":
                 self._record_lap_progress(payload, timestamp)
@@ -275,7 +283,30 @@ class SignalRLiveAdapter:
 
     def seed_state(self, snapshot: Dict[str, Any]) -> None:
         """Apply a subscription snapshot: ``{topic: full_state}``."""
+        if self.recorder is not None:
+            self.recorder.record_snapshot(snapshot)
         self.state.seed(snapshot)
+
+    def start_recording(self, directory) -> "LiveRecorder":
+        """Record every message from here on, for later replay."""
+        from data.live_recorder import LiveRecorder
+
+        self.stop_recording()
+        self.recorder = LiveRecorder(directory)
+        self.recorder.record_snapshot(self.state.snapshot())
+        return self.recorder
+
+    def stop_recording(self) -> Optional[str]:
+        """Stop recording; returns where the recording was written."""
+        if self.recorder is None:
+            return None
+        directory = str(self.recorder.directory)
+        self.recorder.close()
+        self.recorder = None
+        return directory
+
+    def is_recording(self) -> bool:
+        return self.recorder is not None
 
     def subscribed_topics(self) -> List[str]:
         """Topics worth subscribing to, given whether a token is configured.

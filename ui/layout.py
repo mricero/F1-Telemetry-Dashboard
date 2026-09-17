@@ -10,8 +10,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional
 
+from config import config
 from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
@@ -877,6 +879,9 @@ def render_live_controls(live_client):
     st.markdown("---")
     st.subheader("🔴 Live Session Controls")
 
+    if live_client.is_recording():
+        st.caption(f"🔴 Recording · {live_client.recorder.message_count} messages captured")
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -889,10 +894,20 @@ def render_live_controls(live_client):
             )
 
     with col2:
-        if st.button("💾 Save Raw Stream"):
-            st.info("Use scripts/live_smoke.py to capture raw SignalR streams to file.")
+        # Records the raw messages, so a replay feeds the same handler the
+        # live client does (LIVE-12). Saving the processed session dict for a
+        # live session would have saved the empty dict it starts from.
+        if live_client.is_recording():
+            if st.button("⏹️ Stop Recording"):
+                where = live_client.stop_recording()
+                st.success(f"Raw stream saved to {where}")
+        elif st.button("💾 Record Raw Stream"):
+            directory = Path(config.replay_dir) / f"raw_{datetime.now():%Y%m%d_%H%M%S}"
+            live_client.start_recording(directory)
+            st.info(f"Recording to {directory}")
 
     with col3:
         if st.button("⏹️ Stop Live"):
+            live_client.stop_recording()
             live_client.stop()
             st.warning("Live session stopped")

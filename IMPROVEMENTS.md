@@ -248,13 +248,14 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Note: measured 1.80 s in the audit → **311 ms** once LIVE-05 took `TimingData` out of the record path → **under the 150 ms budget** here, via whole-column `pd.to_numeric` instead of one call per record per channel, one timestamp parse per frame instead of one per driver, and a change token (`state.version` + lap count + a monotonic ingest counter) that lets an unchanged poll hand back the same snapshot. Lap history was already separated from the capped telemetry buffer by LIVE-05; the retention test covers it. Per-driver numpy ring buffers were not needed to meet the budget and would have cost more than they bought.
   - Depends on: LIVE-05.
 
-- [ ] **LIVE-12** · P1 · S — **Unreachable/placeholder live controls; saving a live session saves nothing**
+- [x] **LIVE-12** · P1 · S — **Unreachable/placeholder live controls; saving a live session saves nothing** — done in <pending>
   - Files: `app.py:233-245` (returns), `app.py:287-288` (unreachable `render_live_controls`), `ui/layout.py:827-853`.
   - Problem: For live sessions `main()` returns at line 245, so `render_live_controls` (buffer counts, "Save Raw Stream", "Stop Live") never renders. "Save Raw Stream" only prints advice. For non-live sessions the "💾 Save Session for Replay" button saves the loaded dict; for live it would save the empty initial dict.
   - Fix: Render controls inside the live branch. Implement recording as **append-only JSONL** of raw messages (`subscribe.json` for the snapshot + `live.jsonl` for `[topic, data, timestamp]`), the format undercut-f1 uses; replay feeds the same handler (LIVE-05) with a virtual clock.
   - Acceptance: record 60 s from a replayed fixture → replay reproduces identical final state.
+  - Note: `data/live_recorder.py` writes `subscribe.json` + append-only `live.jsonl` (`[topic, data, timestamp]`), and `replay_recording()` feeds it back through the same `handle_message` the live client uses - the acceptance test records the whole recorded fixture and asserts the replayed state and lap history are identical to the direct feed, including a torn final line. The controls now render inside the live branch instead of after its `return`.
 
-- [x] **LIVE-13** · P1 · M — **Live telemetry comparisons use a meaningless x-axis** — done in <pending>
+- [x] **LIVE-13** · P1 · M — **Live telemetry comparisons use a meaningless x-axis** — done in c3ba370
   - Files: `data/source_manager.py:335-370`, `processing/timing.py:112-144`, `ui/layout.py:691-819`.
   - Problem: Live `Distance` is cumulative since the stream started (and per-driver tails of 2000 samples start at different points), so overlaying drivers, the head-to-head delta, micro-sectors and dominance are not comparable. Historical mode solved this with `telemetry_scope="fastest"`; live has no lap segmentation. Live telemetry frames also have `timestamp` instead of `Time`, so `micro_sector_times` returns `None`.
   - Fix: Segment live telemetry into laps using lap-completion events (`TimingData.NumberOfLaps` changes, with timestamps) and reset distance per lap; expose "current lap" and "last completed lap" per driver; compute comparisons only on completed laps.

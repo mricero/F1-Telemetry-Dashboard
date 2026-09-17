@@ -254,6 +254,9 @@ def main():
             if err:
                 st.error(f"Live client error: {err}")
             render_live_dashboard(data_manager, processor)
+        # Buffer counts, raw-stream recording and Stop Live. These sat after
+        # an unconditional return, so they never rendered (LIVE-12).
+        render_live_controls(live_client)
         return
 
     # --- Deep-dive analysis. The dashboard above answers "what happened";
@@ -295,9 +298,6 @@ def main():
         render_weather(session_data.get("weather"))
     with analysis[7]:
         render_race_control(session_data.get("race_control"))
-
-    if session_data.get("source") == "live":
-        render_live_controls(data_manager.live)
 
     # Replay Save Option
     if st.button("💾 Save Session for Replay"):
