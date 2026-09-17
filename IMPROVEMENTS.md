@@ -613,7 +613,7 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 
 ## 10. P3 — Documentation
 
-- [x] **DOC-01** · P1 · S — **Docs describe a live endpoint the code doesn't use** — done in <pending>
+- [x] **DOC-01** · P1 · S — **Docs describe a live endpoint the code doesn't use** — done in c4bf571
   - Files: `readme.md:24, 92, 271`, `data/live_adapter.py:1-20, 109-119`, `scripts/live_smoke.py:30`, `ARCHITECTURE.md §1.3`, `PHASE1_RESEARCH_SUMMARY.md`.
   - Fix: After LIVE-01, document the SignalR Core flow, the F1TV token requirement per topic, the IP-blocking risk, and that the project is unofficial. Until then, state plainly that live mode uses livef1's legacy client and may not connect.
   - Note: took the "until then" branch, since LIVE-01 is blocked. `readme.md`, `ARCHITECTURE.md`, the adapter docstring and `live_smoke.py` now say the legacy `/signalr/` hub is what runs, that live mode may not connect, which topics need `F1TV_SUBSCRIPTION_TOKEN` and which work without it, that the project is unofficial, and that hosting it publicly risks IP blocking. A test keeps an unqualified `/signalrcore` claim from creeping back.
