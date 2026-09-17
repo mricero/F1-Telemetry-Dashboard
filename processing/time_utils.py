@@ -62,12 +62,3 @@ def to_seconds(value) -> float | None:
 def seconds_series(values: pd.Series) -> pd.Series:
     """Vectorised :func:`to_seconds` over a Series -> float Series (NaN-safe)."""
     return pd.Series([to_seconds(v) for v in values], index=values.index, dtype="float64")
-
-
-def format_m_s(seconds: float | None) -> str:
-    """Format seconds as ``M:SS.mmm`` ('--' when missing)."""
-    if seconds is None or pd.isna(seconds):
-        return "--"
-    minutes = int(seconds // 60)
-    rest = seconds - minutes * 60
-    return f"{minutes}:{rest:06.3f}"

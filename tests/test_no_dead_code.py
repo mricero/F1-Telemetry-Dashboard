@@ -7,6 +7,7 @@ were never looked at.
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -14,15 +15,25 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = ("data", "processing")
 
-# Modules LIVE-16 covers. The unused Jolpica `*_df` helpers belong to REPO-05,
-# which decides whether to wire them up (FEAT-06 standings) or delete them.
-LIVE_MODULES = (
-    "data/live_adapter.py",
-    "data/live_state.py",
-    "data/live_recorder.py",
-    "data/live_service.py",
-    "processing/telemetry_processor.py",
-)
+# REPO-05 removed the orphans, so the rule now covers both packages.
+#
+# Allow-list, with the reason each entry is kept. Anything not listed here and
+# not referenced anywhere is dead code and fails the test.
+KEPT_WITHOUT_CALLERS = {
+    # Jolpica is an Ergast-compatible REST adapter: these are its query
+    # surface, paged and rate-limited by HIST-07, and FEAT-06 (standings
+    # panels) is the item that consumes them. Deleting them would mean
+    # rewriting the same requests against the same endpoints.
+    "data/jolpica_adapter.py": {
+        "get_session_results",
+        "get_qualifying_results",
+        "get_practice_results",
+        "get_driver_standings",
+        "get_constructor_standings",
+        "get_driver_info",
+        "get_constructor_info",
+    },
+}
 
 
 def _public_functions(path: Path):
@@ -42,12 +53,18 @@ def _public_functions(path: Path):
 
 
 def _sources(include_tests: bool = True) -> str:
+    """Every source file, as one string, for cheap reference counting.
+
+    This module is always excluded: it names the very functions it checks.
+    """
     folders = [*PACKAGES, "ui", "scripts"]
     if include_tests:
         folders.append("tests")
     parts = []
     for folder in folders:
         for path in (PROJECT_ROOT / folder).rglob("*.py"):
+            if path.resolve() == Path(__file__).resolve():
+                continue
             parts.append(path.read_text(encoding="utf-8"))
     parts.append((PROJECT_ROOT / "app.py").read_text(encoding="utf-8"))
     return chr(10).join(parts)
@@ -57,12 +74,14 @@ class TestNoUnusedPublicFunctions:
     def test_every_public_function_is_referenced(self):
         corpus = _sources()
         orphans = []
-        for module in LIVE_MODULES:
-            path = PROJECT_ROOT / module
-            for name in _public_functions(path):
-                # One definition plus at least one use.
-                if corpus.count(name) <= 1:
-                    orphans.append(f"{module}::{name}")
+        for package in PACKAGES:
+            for path in sorted((PROJECT_ROOT / package).rglob("*.py")):
+                relative = path.relative_to(PROJECT_ROOT).as_posix()
+                allowed = KEPT_WITHOUT_CALLERS.get(relative, set())
+                for name in _public_functions(path):
+                    # One definition plus at least one use.
+                    if corpus.count(name) <= 1 and name not in allowed:
+                        orphans.append(f"{relative}::{name}")
 
         assert not orphans, f"unused public functions: {orphans}"
 
@@ -113,3 +132,43 @@ class TestEverySubscribedTopicIsRead:
         # Lap progression comes from TimingData.NumberOfLaps; LapSeries only
         # duplicated it and nothing parsed it.
         assert "LapSeries" not in SignalRLiveAdapter.TELEMETRY_TOPICS
+
+
+class TestUnusedConfiguration:
+    """REPO-05: config fields nothing reads are a promise the app does not keep."""
+
+    def test_every_config_field_is_read(self):
+        import config as config_module
+
+        corpus = _sources()
+        unread = [
+            field
+            for field in config_module.Config.__dataclass_fields__
+            if f"config.{field}" not in corpus
+        ]
+
+        assert not unread, f"config fields nothing reads: {unread}"
+
+    def test_the_app_does_not_patch_sys_path(self):
+        """streamlit run puts the script's directory on sys.path itself."""
+        source = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
+
+        assert "sys.path.insert" not in source
+
+
+class TestTheAllowListStaysHonest:
+    """An allow-list is only useful while every entry is still true."""
+
+    def test_every_allowed_name_still_exists(self):
+        for module, names in KEPT_WITHOUT_CALLERS.items():
+            defined = set(_public_functions(PROJECT_ROOT / module))
+            stale = names - defined
+            assert not stale, f"{module}: allow-listed but gone: {stale}"
+
+    def test_nothing_allow_listed_has_quietly_gained_callers(self):
+        """Once something is used, it should leave the list."""
+        corpus = _sources()
+        for module, names in KEPT_WITHOUT_CALLERS.items():
+            # Word-boundary match: `_get_driver_info` is not `get_driver_info`.
+            used = {name for name in names if len(re.findall(rf"(?<![\w.]){name}", corpus)) > 1}
+            assert not used, f"{module}: now referenced, remove from the list: {used}"

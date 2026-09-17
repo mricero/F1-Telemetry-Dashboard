@@ -62,10 +62,6 @@ if __name__ == "__main__" and not streamlit_runtime_exists():
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-# Add project root to path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
-
 from config import config  # noqa: E402  (loads .env before adapters read it)
 
 # The adapters degrade to empty frames when an upstream call fails and say so

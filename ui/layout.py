@@ -17,7 +17,7 @@ from config import config
 from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
-from processing.time_utils import format_m_s, seconds_series
+from processing.time_utils import seconds_series
 from ui.dashboard import render_dashboard, wind_kmh
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
@@ -864,11 +864,6 @@ def _speed_on_grid(df: pd.DataFrame, grid: np.ndarray | None = None):
         if grid.size < 10:
             return None, None
     return grid, np.interp(grid, distance, speed)
-
-
-def format_lap_time(seconds: float | None) -> str:
-    """Format lap time in M:SS.mmm format ('--' when missing)."""
-    return format_m_s(seconds)
 
 
 def render_live_controls(live_client):

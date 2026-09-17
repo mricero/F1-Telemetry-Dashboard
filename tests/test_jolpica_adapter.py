@@ -217,7 +217,8 @@ class TestPagination:
         server = _PagingServer(1200, _laps_page)
         monkeypatch.setattr(adapter.session, "get", server)
 
-        laps = adapter.get_lap_times_df(2024, 1)
+        payload = adapter.get_lap_times(2024, 1)
+        laps = payload["MRData"]["RaceTable"]["Races"][0]["Laps"]
 
         assert len(laps) == 1200
         assert len(server.requests) == 12
@@ -226,7 +227,8 @@ class TestPagination:
         server = _PagingServer(45, _pit_stops_page)
         monkeypatch.setattr(adapter.session, "get", server)
 
-        stops = adapter.get_pit_stops_df(2024, 1)
+        payload = adapter.get_pit_stops(2024, 1)
+        stops = payload["MRData"]["RaceTable"]["Races"][0]["PitStops"]
 
         assert len(stops) == 45
 
