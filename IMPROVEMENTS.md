@@ -291,7 +291,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Resolve inside the manager: `path = self.replay_dir / Path(replay_file).name` (also prevents path traversal), verify it exists. Also hide the Season/GP/Session/Scope widgets when source is Replay (they're irrelevant but currently shown, `ui/layout.py:122`).
   - Acceptance: AppTest selects "Replay (Saved)" with one saved file → dashboard renders without error.
 
-- [x] **HIST-02** · P1 · M — **Replays use `pickle` (arbitrary code execution on load)** — done in <pending>
+- [x] **HIST-02** · P1 · M — **Replays use `pickle` (arbitrary code execution on load)** — done in f5af5a0
   - Files: `data/source_manager.py:532-599`.
   - Problem: `pickle.load` on a file from anywhere executes code. Replays are the one artefact users are likely to share.
   - Fix: A directory or zip per replay: `meta.json` (schema, app version, session_info, compound_colors, circuit_info rotation) + Parquet (or Arrow IPC) for each table and one Parquet per driver for telemetry/location (add `pyarrow` back to requirements, now with a real use). Keep a *read-only* legacy pickle loader behind an explicit "I trust this file" confirmation, and delete it in a later release. Live recordings use JSONL (LIVE-12).
