@@ -10,6 +10,7 @@ Either entry point works::
     python app.py            # re-enters through Streamlit automatically
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -65,7 +66,14 @@ import streamlit as st  # noqa: E402
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from config import config  # noqa: E402,F401  (loads .env before adapters read it)
+from config import config  # noqa: E402  (loads .env before adapters read it)
+
+# The adapters degrade to empty frames when an upstream call fails and say so
+# through logging; without this their warnings would never be emitted (REPO-11).
+logging.basicConfig(
+    level=getattr(logging, str(config.log_level).upper(), logging.WARNING),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 from data.runtime_cache import runtime_cache  # noqa: E402
 from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402

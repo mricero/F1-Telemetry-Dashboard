@@ -1,5 +1,6 @@
 """Data Source Manager - Unified interface with automatic fallback"""
 
+import logging
 import pickle
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from data.fastf1_adapter import (
 from data.jolpica_adapter import JolpicaAdapter
 from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
 from data.live_service import get_live_adapter
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourceManager:
@@ -114,7 +117,8 @@ class DataSourceManager:
         """
         try:
             return live_session_now(self.fastf1.get_available_sessions())
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not check for a live session: %s", exc)
             return None
 
     def _is_race_weekend(self) -> bool:
@@ -690,7 +694,8 @@ class DataSourceManager:
         """
         try:
             schedule = self.fastf1.get_available_sessions()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not read the event schedule: %s", exc)
             schedule = pd.DataFrame()
 
         event = latest_completed_event(schedule)
@@ -711,7 +716,8 @@ class DataSourceManager:
         """Host country for the header badge, or "" when unavailable."""
         try:
             return str(session.event["Country"])
-        except Exception:
+        except Exception as exc:
+            logger.debug("No country in the event schedule: %s", exc)
             return ""
 
     def _get_weather_from_session(self, session) -> pd.DataFrame:
@@ -720,7 +726,8 @@ class DataSourceManager:
             return (
                 session.weather_data.copy() if hasattr(session, "weather_data") else pd.DataFrame()
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Weather data unavailable for this session: %s", exc)
             return pd.DataFrame()
 
     def _get_driver_info(self, session) -> pd.DataFrame:
@@ -742,7 +749,8 @@ class DataSourceManager:
                     }
                 )
             return pd.DataFrame(drivers)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Driver list unavailable for this session: %s", exc)
             return pd.DataFrame()
 
     # Bump when the serialized layout changes; _load_replay rejects newer

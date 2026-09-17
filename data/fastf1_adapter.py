@@ -1,11 +1,14 @@
 """FastF1 Historical Data Adapter"""
 
+import logging
 from pathlib import Path
 
 import fastf1
 import fastf1.core
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # FastF1 position channels (X/Y/Z) are expressed in 1/10 meter.
 POSITION_UNITS_PER_METRE = 10.0
@@ -357,7 +360,8 @@ class FastF1Adapter:
         """
         try:
             results = session.results
-        except Exception:
+        except Exception as exc:
+            logger.warning("No results for this session: %s", exc)
             return pd.DataFrame()
         if results is None or len(results) == 0:
             return pd.DataFrame()
@@ -416,7 +420,8 @@ class FastF1Adapter:
         """Race control messages: flags, safety cars, incidents, penalties."""
         try:
             messages = session.race_control_messages
-        except Exception:
+        except Exception as exc:
+            logger.warning("Race control messages unavailable: %s", exc)
             return pd.DataFrame()
         if messages is None or len(messages) == 0:
             return pd.DataFrame()
@@ -434,7 +439,8 @@ class FastF1Adapter:
         """
         try:
             info = session.get_circuit_info()
-        except Exception:
+        except Exception as exc:
+            logger.warning("No circuit info: the map loses its corner markers (%s)", exc)
             return {}
         if info is None:
             return {}
@@ -458,7 +464,8 @@ class FastF1Adapter:
             import fastf1.plotting
 
             mapping = fastf1.plotting.get_compound_mapping(session)
-        except Exception:
+        except Exception as exc:
+            logger.warning("No compound colours for this season, using defaults: %s", exc)
             return {}
         return {str(k).upper(): v for k, v in (mapping or {}).items()}
 

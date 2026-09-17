@@ -23,6 +23,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import logging
 import os
 import threading
 import zlib
@@ -36,6 +37,8 @@ import pandas as pd
 # Position.z shares FastF1's 1/10 m position units - one definition, both paths.
 from data.fastf1_adapter import POSITION_UNITS_PER_METRE
 from data.live_state import STATE_TOPICS, LiveState, as_list
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
     from data.live_recorder import LiveRecorder
@@ -385,8 +388,10 @@ class SignalRLiveAdapter:
                 self.start_livef1_client(topics, log_file)
             except Exception as exc:
                 self._running = False
-                # Keep a reference for debugging; Streamlit threads are daemonic
+                # Keep a reference for the UI; Streamlit threads are daemonic
+                # and an exception here would otherwise vanish silently.
                 self._thread_error = exc
+                logger.error("Live client thread stopped: %s", exc, exc_info=exc)
 
         self._thread = threading.Thread(target=run_client, daemon=True)
         self._thread.start()
