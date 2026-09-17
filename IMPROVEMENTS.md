@@ -275,7 +275,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: unit tests with a frozen clock at FP1 start −10 min → live; Tuesday after the race → historical; `Auto` on a race weekend still shows historical selectors.
   - Note: `live_session_now(schedule, now)` uses the FastF1 schedule's own `SessionNDateUtc` and a per-session-type duration, with a 15 min lead-in and 30 min run-out. `Auto` now shows "a session is running now" plus a **Go live** button and keeps the historical selectors. Confirming with `SessionStatus` once connected waits on LIVE-01; `JolpicaAdapter.is_race_weekend` stays as the coarse calendar helper it always was, now documented as such.
 
-- [x] **LIVE-16** · P2 · S — **Dead/misleading live code** — done in <pending>
+- [x] **LIVE-16** · P2 · S — **Dead/misleading live code** — done in 0892874
   - Files: `data/live_adapter.py:201-208` (`start_fastf1_client` ignores `topics`, blocks, unused), `data/live_adapter.py:469-477` (`check_live_session_available`, unused), `processing/telemetry_processor.py:267-294` (`process_live_telemetry`, unused, uses `index*100` pseudo-distance), `data/live_adapter.py:122-136` (`LapSeries`, `CurrentTyres`, `PitLaneTimeCollection` subscribed but never parsed).
   - Fix: delete, or wire up with tests. `CurrentTyres` + `TimingAppData` are exactly what the tower needs for live tyre compound/age (see DASH-11); `PitLaneTimeCollection` gives pit lane durations.
   - Acceptance: `vulture`/grep shows no unused public functions in `data/` and `processing/`.
@@ -613,9 +613,10 @@ The dashboard (`layout.md` spec → `processing/timing.py`, `ui/dashboard.py`, `
 
 ## 10. P3 — Documentation
 
-- [ ] **DOC-01** · P1 · S — **Docs describe a live endpoint the code doesn't use**
+- [x] **DOC-01** · P1 · S — **Docs describe a live endpoint the code doesn't use** — done in <pending>
   - Files: `readme.md:24, 92, 271`, `data/live_adapter.py:1-20, 109-119`, `scripts/live_smoke.py:30`, `ARCHITECTURE.md §1.3`, `PHASE1_RESEARCH_SUMMARY.md`.
   - Fix: After LIVE-01, document the SignalR Core flow, the F1TV token requirement per topic, the IP-blocking risk, and that the project is unofficial. Until then, state plainly that live mode uses livef1's legacy client and may not connect.
+  - Note: took the "until then" branch, since LIVE-01 is blocked. `readme.md`, `ARCHITECTURE.md`, the adapter docstring and `live_smoke.py` now say the legacy `/signalr/` hub is what runs, that live mode may not connect, which topics need `F1TV_SUBSCRIPTION_TOKEN` and which work without it, that the project is unofficial, and that hosting it publicly risks IP blocking. A test keeps an unqualified `/signalrcore` claim from creeping back.
 
 - [ ] **DOC-02** · P2 · S — **readme drift**
   - Problems: repository tree omits `ui/dashboard.py`, `ui/theme.py`, `ui/track_map.py`, `processing/timing.py`, `processing/time_utils.py`, `layout.md`, `.github/`; two sections numbered "### 5."; clone URL is a placeholder (`your-username/f1-telemetry-dashboard`); "Auto-Detection … based on real-time endpoint probing" is inaccurate (LIVE-15); "Intelligent Fallback" promises the most recent GP but falls back to 2025 (HIST-04); "LiveF1 (Historical)" advertised though broken (HIST-03).

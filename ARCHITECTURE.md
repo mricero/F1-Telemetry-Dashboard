@@ -4,7 +4,7 @@
 
 A professional Formula 1 Telemetry Dashboard built with **Streamlit + Plotly** supporting:
 - **Historical Race Playback** via FastF1 (local caching, full telemetry)
-- **Real-time Live Telemetry (FREE)** via FastF1 SignalR client or LiveF1 package - connects directly to official F1 feed `wss://livetiming.formula1.com/signalrcore`
+- **Real-time Live Telemetry** via the LiveF1 package. This is an **unofficial** use of undocumented endpoints: LiveF1 connects to the legacy `/signalr/` hub, not the `wss://livetiming.formula1.com/signalrcore` endpoint FastF1 uses (LIVE-01), and car telemetry/positions need an `F1TV_SUBSCRIPTION_TOKEN` subscription token.
 - **Graceful Fallback** when no live session is active (defaults to most recent cached race)
 - **Session Recording & Replay** - save live sessions for offline replay
 
@@ -175,7 +175,7 @@ class JolpicaAdapter:
 ### 1.3 Live Telemetry Adapter (`data/live_adapter.py`)
 
 **Wire format (verified against LiveF1 source & FastF1 docs):**
-- Endpoint: `wss://livetiming.formula1.com/signalrcore`
+- Endpoint in use: the legacy `https://livetiming.formula1.com/signalr/` hub (LiveF1). FastF1 uses `/signalrcore`; see LIVE-01.
 - Compressed topics (`CarData.z`, `Position.z`) carry base64-encoded **raw DEFLATE**
   JSON (`zlib.decompress(b64decode(text), -zlib.MAX_WBITS)`).
 - CarData channels: `0`=RPM, `2`=Speed, `3`=Gear, `4`=Throttle, `5`=Brake, `45`=DRS.
@@ -191,7 +191,7 @@ class SignalRLiveAdapter:
     Two implementations available:
     1. LiveF1 package: livef1.adapters.RealF1Client (async callbacks)
     2. FastF1 built-in: fastf1.livetiming.SignalRClient (saves raw stream to file)
-    Both use: wss://livetiming.formula1.com/signalrcore
+    LiveF1 uses the legacy /signalr/ hub; FastF1 uses /signalrcore (LIVE-01).
     """
 
     TELEMETRY_TOPICS = [

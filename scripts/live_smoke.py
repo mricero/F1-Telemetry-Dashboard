@@ -27,7 +27,8 @@ def main(duration: int = 30):
     counts: Counter = Counter()
 
     adapter.register_callback("CarData.z", lambda d: counts.update(["CarData.z"]))
-    print(f"Connecting to wss://livetiming.formula1.com/signalrcore " f"for {duration}s ...")
+    # LiveF1 targets the legacy /signalr/ hub, not /signalrcore (LIVE-01).
+    print(f"Connecting to F1 live timing (legacy /signalr/ hub) for {duration}s ...")
     log_file = __import__("os").environ.get("F1_LIVE_LOG")
     adapter.start_async(log_file=log_file)
 

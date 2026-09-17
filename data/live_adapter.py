@@ -159,7 +159,8 @@ class SignalRLiveAdapter:
     Two implementations available:
     1. LiveF1 package: livef1.adapters.RealF1Client (async callbacks)
     2. FastF1 built-in: fastf1.livetiming.SignalRClient (saves raw stream to file)
-    Both use: wss://livetiming.formula1.com/signalrcore
+    NOTE: LiveF1 connects to the legacy /signalr/ hub, not the
+    wss://livetiming.formula1.com/signalrcore endpoint FastF1 uses (LIVE-01).
 
     NOTE: all topics below have dedicated parsers inside LiveF1's function_map;
     subscribing to unknown topics would raise ParsingError on every message.

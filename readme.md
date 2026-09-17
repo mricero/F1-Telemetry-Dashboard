@@ -20,10 +20,13 @@ Dive deep into the archives using the powerful `FastF1` library.
 - View detailed car data (speed, throttle, brake, RPM, gear, DRS) aligned by track distance for pixel-perfect accuracy.
 - Includes historical session metadata, lap times, tire stints, and track conditions.
 
-### 2. **Real-Time Live Telemetry (100% Free)**
-The dashboard connects directly to the official Formula 1 live timing endpoint (`wss://livetiming.formula1.com/signalrcore`).
-- Uses the `LiveF1 RealF1Client` (with `FastF1 SignalRClient` as the file-recording alternative).
-- No paid subscription is required.
+### 2. **Real-Time Live Telemetry**
+This is an **unofficial** project reading undocumented endpoints; F1 does not support this use.
+
+- **Which endpoint:** live mode currently goes through `LiveF1`'s `RealF1Client`, which connects to the **legacy** `https://livetiming.formula1.com/signalr/` hub. F1 moved live timing to `/signalrcore` during 2025 and FastF1 3.7+ documents the old endpoints as deprecated, so **live mode may simply not connect**. Replacing the client is tracked as LIVE-01 in `IMPROVEMENTS.md`.
+- **What needs a subscription token:** since the 2025 Dutch GP, car telemetry (`CarData.z`), positions (`Position.z`), pit-stop times, championship prediction and team radio require a valid F1TV token. Set your own in `F1TV_SUBSCRIPTION_TOKEN` - it stays on your machine, and those topics are simply not subscribed without it.
+- **What works without one:** timing, tyres, race control, weather, track status and the driver list. The live view renders all of them and tells you what is missing.
+- **Running it publicly is a risk:** F1 has IP-blocked heavy and hosted consumers (f1-dash sunset citing "increasing IP restrictions"; matteocelani/f1-telemetry's hosted instance is down "due to IP blocking by Formula 1"). Run it locally, with one connection, on your own token.
 - Subscribes to topics such as `CarData.z`, `Position.z`, `TimingData`, `TyreStintSeries`, `WeatherData`, `DriverList`, and more in real time.
 - The live view auto-refreshes every 3 seconds: telemetry channels, GPS track map with driver trails, tyre stints and timing all update while the session runs.
 
@@ -89,7 +92,7 @@ The application is structured into a modern layered architecture, separating UI,
 ### Data Sources breakdown:
 - **Primary Historical**: `FastF1` (Pickle caching to avoid rate limiting).
 - **Secondary Historical**: `Jolpica F1 API` (Ergast-compatible REST) used as a fallback for schedule and calendar data.
-- **Live**: Official `wss://livetiming.formula1.com/signalrcore` via `SignalRClient`.
+- **Live**: F1's live timing hub via `LiveF1`'s `RealF1Client`, which targets the legacy `/signalr/` endpoint (F1 moved to `/signalrcore`; see LIVE-01). One connection per process, shared by every browser tab.
 
 ---
 
@@ -268,7 +271,7 @@ DRS was removed under the 2026 technical regulations (replaced by active-aero X/
 
 ### The SignalR WebSocket
 Formula 1's live timing uses Microsoft's SignalR protocol.
-- **Endpoint**: `wss://livetiming.formula1.com/signalrcore`
+- **Endpoint**: what this app uses today is the legacy hub at `https://livetiming.formula1.com/signalr/` (via LiveF1). FastF1 uses the current `wss://livetiming.formula1.com/signalrcore`; moving over is LIVE-01.
 - We subscribe to the Hub and listen for `M` (Method) and `R` (Data) packets.
 - **Critical topics**: `CarData.z` (compressed telemetry), `Position.z` (compressed GPS), and `SessionInfo`.
 - The data comes base64 encoded and zlib compressed, which our adapters automatically decompress and decode into Pandas DataFrames.
