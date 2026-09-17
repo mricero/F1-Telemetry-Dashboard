@@ -392,6 +392,17 @@ class DataSourceManager:
             if not frame.empty and "timestamp" in frame.columns:
                 frame["timestamp"] = LiveDataProcessor.parsed_timestamps(frame["timestamp"])
 
+        # Lap boundaries let each driver's trace cover one completed lap, so
+        # Distance runs 0 -> lap length and drivers are comparable (LIVE-13).
+        boundaries = LiveDataProcessor.lap_boundaries(adapter.recorded_laps())
+        shown_lap: Dict[str, int] = {}
+        current_lap: Dict[str, int] = {}
+        for entry in adapter.recorded_laps():
+            driver = str(entry.get("driver_number"))
+            lap = entry.get("LapNumber")
+            if isinstance(lap, int):
+                current_lap[driver] = max(current_lap.get(driver, 0), lap + 1)
+
         # --- per-driver GPS trails for the track map (with real distances) ---
         location: Dict[str, pd.DataFrame] = {}
         pos_distance_by_num: Dict[Any, pd.DataFrame] = {}
@@ -399,7 +410,15 @@ class DataSourceManager:
             pos_df = pos_df.dropna(subset=["X", "Y"])
             for num, grp in pos_df.groupby("driver_number"):
                 name = acr_by_num.get(num, f"#{num}")
-                d = grp.sort_values("timestamp").tail(3000).reset_index(drop=True)
+                ordered = grp.sort_values("timestamp")
+                lap_slice = LiveDataProcessor.last_completed_lap(
+                    ordered, boundaries.get(str(num), [])
+                )
+                if lap_slice is not None:
+                    d = lap_slice
+                    shown_lap[name] = current_lap.get(str(num), 1) - 1
+                else:
+                    d = ordered.tail(3000).reset_index(drop=True)
                 # Cumulative metres travelled along the driver's own GPS path
                 dist = LiveDataProcessor.distance_at(d, d["timestamp"])
                 if dist is not None:
@@ -416,7 +435,15 @@ class DataSourceManager:
             car_df = car_df.dropna(subset=["Speed"])
             for num, grp in car_df.groupby("driver_number"):
                 name = acr_by_num.get(num, f"#{num}")
-                d = grp.sort_values("timestamp").tail(2000).reset_index(drop=True).copy()
+                ordered = grp.sort_values("timestamp")
+                lap_slice = LiveDataProcessor.last_completed_lap(
+                    ordered, boundaries.get(str(num), [])
+                )
+                d = (
+                    lap_slice.copy()
+                    if lap_slice is not None
+                    else ordered.tail(2000).reset_index(drop=True).copy()
+                )
                 # Real distance interpolated from this driver's GPS trail;
                 # fall back to an index-based pseudo-distance without GPS.
                 pos_d = pos_distance_by_num.get(num)
@@ -476,6 +503,13 @@ class DataSourceManager:
                 "is_live": True,
                 "source": "signalr_live",
                 "track_status": track_status,
+                # "lap" once traces are segmented at lap completions; until
+                # then Distance is cumulative since the stream started.
+                "telemetry_scope": "lap" if shown_lap else "session",
+                "telemetry_lap": shown_lap,
+                "current_lap": {
+                    acr_by_num.get(num, f"#{num}"): lap for num, lap in current_lap.items()
+                },
             },
             "telemetry": telemetry,
             "laps": laps_df,

@@ -3,21 +3,24 @@
   "year": 2023,
   "meeting": "Bahrain",
   "session": "Race",
-  "message_cap": 60,
-  "telemetry_skip": 4750,
+  "message_cap": 80,
+  "window": [
+    "01:25:00",
+    "01:28:00"
+  ],
   "topics": {
     "SessionInfo": 1,
-    "TimingData": 60,
-    "TimingAppData": 60,
-    "TyreStintSeries": 60,
-    "DriverList": 60,
-    "RaceControlMessages": 60,
-    "WeatherData": 60,
+    "TimingData": 80,
+    "TimingAppData": 54,
+    "TyreStintSeries": 80,
+    "DriverList": 80,
+    "RaceControlMessages": 73,
+    "WeatherData": 80,
     "TrackStatus": 11,
     "LapCount": 57,
     "SessionStatus": 5,
     "ExtrapolatedClock": 2,
-    "CarData.z": 60,
-    "Position.z": 60
+    "CarData.z": 80,
+    "Position.z": 80
   }
 }

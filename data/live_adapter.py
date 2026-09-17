@@ -224,12 +224,12 @@ class SignalRLiveAdapter:
         """
         if topic in STATE_TOPICS:
             if topic == "TimingData":
-                self._record_lap_progress(payload)
+                self._record_lap_progress(payload, timestamp)
             self.state.update(topic, payload)
             return
         self._buffer_topic(topic, payload)
 
-    def _record_lap_progress(self, payload: Any) -> None:
+    def _record_lap_progress(self, payload: Any, timestamp: Optional[str] = None) -> None:
         """Note completed laps as TimingData messages arrive.
 
         ``NumberOfLaps`` and ``LastLapTime`` usually come in separate partial
@@ -263,7 +263,14 @@ class SignalRLiveAdapter:
                 continue  # the same completion repeated in a later message
             with self._buffer_lock:
                 self.lap_history.append(
-                    {"driver_number": driver, "LapNumber": lap_number, "LapTime": value}
+                    {
+                        "driver_number": driver,
+                        "LapNumber": lap_number,
+                        "LapTime": value,
+                        # When the lap ended: the boundary live telemetry is
+                        # segmented at (LIVE-13).
+                        "Utc": timestamp,
+                    }
                 )
 
     def seed_state(self, snapshot: Dict[str, Any]) -> None:
@@ -670,6 +677,41 @@ class LiveDataProcessor:
         if not frame.empty:
             frame = frame.dropna(subset=["Compound"]).reset_index(drop=True)
         return frame
+
+    @staticmethod
+    def lap_boundaries(lap_history: Sequence[Dict]) -> Dict[str, List[pd.Timestamp]]:
+        """When each driver's completed laps ended, oldest first.
+
+        Live ``Distance`` is cumulative since the stream started, so without
+        these the traces of two drivers share no axis (LIVE-13).
+        """
+        boundaries: Dict[str, List[pd.Timestamp]] = {}
+        for entry in lap_history or []:
+            moment = pd.to_datetime(entry.get("Utc"), utc=True, errors="coerce")
+            if pd.isna(moment):
+                continue
+            boundaries.setdefault(str(entry.get("driver_number")), []).append(moment)
+        for times in boundaries.values():
+            times.sort()
+        return boundaries
+
+    @staticmethod
+    def last_completed_lap(
+        frame: pd.DataFrame, boundaries: Sequence[pd.Timestamp]
+    ) -> Optional[pd.DataFrame]:
+        """The slice of a driver's samples covering their last full lap.
+
+        Returns None when the lap is not covered by the buffered samples, so
+        the caller can fall back to the running tail.
+        """
+        if frame is None or frame.empty or len(boundaries) < 2:
+            return None
+        if "timestamp" not in frame.columns:
+            return None
+        stamps = LiveDataProcessor.parsed_timestamps(frame["timestamp"])
+        start, end = boundaries[-2], boundaries[-1]
+        window = frame[(stamps >= start) & (stamps <= end)]
+        return window.reset_index(drop=True) if len(window) >= 3 else None
 
     @staticmethod
     def laps_from_history(

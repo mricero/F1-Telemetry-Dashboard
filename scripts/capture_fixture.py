@@ -50,11 +50,17 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (F1-Telemetry-Dashboard fixture capture)"}
 # for state-bearing topics. For car telemetry and positions they are cars
 # sitting in the garage reporting 0,0,0, so a mid-session window is taken as
 # well - keeping a few of the garage samples, which are their own edge case.
-TELEMETRY_TOPICS = ("CarData.z", "Position.z")
-# Cars only start reporting real coordinates once they leave the garage, which
-# at Bahrain 2023 is ~4700 messages into a ~9500-message race stream.
-DEFAULT_TELEMETRY_SKIP = 4750
-TELEMETRY_HEAD = 6
+# Topics sampled both at the start (for the keyframe) and mid-session (where
+# the interesting running is). Without the mid-session window a race fixture
+# holds only the formation lap: no lap completions, no car movement.
+WINDOWED_TOPICS = ("CarData.z", "Position.z", "TimingData", "TimingAppData")
+# Streams run from well before a session starts, so the opening messages are
+# cars in the garage reporting 0,0,0 and timing lines with no laps. Each topic
+# has a different message rate, so the interesting window is chosen by the
+# stream's own session-relative clock rather than by message offset.
+DEFAULT_WINDOW = ("01:25:00", "01:28:00")
+# Messages kept from the very start, so the keyframe is never lost.
+TELEMETRY_HEAD = 12
 
 
 def _get(url: str, timeout: int = 60) -> Optional[bytes]:
@@ -108,17 +114,18 @@ def parse_stream(text: str) -> List[list]:
     return records
 
 
-def select(records: List[list], topic: str, cap: int, skip: int) -> List[list]:
-    """Which recorded messages to keep for a topic."""
-    if topic not in TELEMETRY_TOPICS or len(records) <= skip:
+def select(records: List[list], topic: str, cap: int, window: tuple) -> List[list]:
+    """Which recorded messages to keep: the keyframe plus a session window."""
+    if topic not in WINDOWED_TOPICS:
         return records[:cap]
+    start, end = window
     head = records[:TELEMETRY_HEAD]
-    body = records[skip : skip + max(cap - TELEMETRY_HEAD, 0)]
-    return head + body
+    body = [record for record in records if start <= str(record[0]) <= end]
+    return head + body[: max(cap - len(head), 0)]
 
 
 def capture(
-    year: int, meeting: str, session: str, cap: int, skip: int = DEFAULT_TELEMETRY_SKIP
+    year: int, meeting: str, session: str, cap: int, window: tuple = DEFAULT_WINDOW
 ) -> Dict[str, int]:
     path = find_session(year, meeting, session)
     print(f"session path: {path}")
@@ -137,7 +144,7 @@ def capture(
         raw = _get(f"{BASE_URL}/{path}{topic}.jsonStream")
         if raw is None:
             continue
-        records = select(parse_stream(_decode(raw)), topic, cap, skip)
+        records = select(parse_stream(_decode(raw)), topic, cap, window)
         if not records:
             continue
         _write(topic, records)
@@ -149,7 +156,7 @@ def capture(
         "meeting": meeting,
         "session": session,
         "message_cap": cap,
-        "telemetry_skip": skip,
+        "window": list(window),
         "topics": written,
     }
     (FIXTURE_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -172,15 +179,16 @@ def main() -> None:
     parser.add_argument("--session", default="Race")
     parser.add_argument("--messages", type=int, default=DEFAULT_MESSAGE_CAP)
     parser.add_argument(
-        "--telemetry-skip",
-        type=int,
-        default=DEFAULT_TELEMETRY_SKIP,
-        help="messages to skip before sampling CarData.z/Position.z (cars are "
-        "in the garage at 0,0,0 at the start of a stream)",
+        "--window",
+        nargs=2,
+        metavar=("START", "END"),
+        default=list(DEFAULT_WINDOW),
+        help="session-relative HH:MM:SS range to sample the running session "
+        "from (the opening messages are cars in the garage)",
     )
     args = parser.parse_args()
 
-    written = capture(args.year, args.meeting, args.session, args.messages, args.telemetry_skip)
+    written = capture(args.year, args.meeting, args.session, args.messages, tuple(args.window))
     total = sum(f.stat().st_size for f in FIXTURE_DIR.glob("*.gz"))
     print(f"\n{len(written)} topics, {total / 1024:.1f} KiB total in {FIXTURE_DIR}")
 

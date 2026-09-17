@@ -238,7 +238,7 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Acceptance: AppTest with primed buffers: header shows the GP from SessionInfo and the tower has one row per driver.
   - Depends on: LIVE-05, DASH-01.
 
-- [x] **LIVE-11** · P1 · M — **Poll is O(buffer) Python work every 3 seconds; buffer cap loses race history** — done in <pending>
+- [x] **LIVE-11** · P1 · M — **Poll is O(buffer) Python work every 3 seconds; buffer cap loses race history** — done in 6ab02ac
   - Files: `data/source_manager.py:281-407, 410-476`, `data/live_adapter.py:277-310`.
   - Problem: Every tick re-parses *all* buffered records: per-record `pd.to_numeric` scalar calls, `iterrows()` over all `TimingData` rows with a `pd.Series` constructed per row, `groupby` over full frames, ISO timestamp parsing of 20k strings.
   - Evidence: synthetic buffers at cap (20 000 each for `CarData.z`, `Position.z`, `TimingData`): **`poll_live_data()` took 1.80 s**. With all topics and a slower host this exceeds the 3 s `run_every`, so fragments pile up.
@@ -254,11 +254,12 @@ The historical FastF1 path is in decent shape after five audit rounds. The **liv
   - Fix: Render controls inside the live branch. Implement recording as **append-only JSONL** of raw messages (`subscribe.json` for the snapshot + `live.jsonl` for `[topic, data, timestamp]`), the format undercut-f1 uses; replay feeds the same handler (LIVE-05) with a virtual clock.
   - Acceptance: record 60 s from a replayed fixture → replay reproduces identical final state.
 
-- [ ] **LIVE-13** · P1 · M — **Live telemetry comparisons use a meaningless x-axis**
+- [x] **LIVE-13** · P1 · M — **Live telemetry comparisons use a meaningless x-axis** — done in <pending>
   - Files: `data/source_manager.py:335-370`, `processing/timing.py:112-144`, `ui/layout.py:691-819`.
   - Problem: Live `Distance` is cumulative since the stream started (and per-driver tails of 2000 samples start at different points), so overlaying drivers, the head-to-head delta, micro-sectors and dominance are not comparable. Historical mode solved this with `telemetry_scope="fastest"`; live has no lap segmentation. Live telemetry frames also have `timestamp` instead of `Time`, so `micro_sector_times` returns `None`.
   - Fix: Segment live telemetry into laps using lap-completion events (`TimingData.NumberOfLaps` changes, with timestamps) and reset distance per lap; expose "current lap" and "last completed lap" per driver; compute comparisons only on completed laps.
   - Acceptance: fixture replay: each completed lap trace starts near 0 m and ends within ±3 % of the circuit length.
+  - Note: lap completions now carry the message timestamp, and each driver's telemetry and GPS trail are sliced to their **last completed lap**, so Distance runs 0 -> lap length and drivers share an axis; `session_info` gains `telemetry_scope` (`lap`/`session`), `telemetry_lap` and `current_lap`. The ±3 % property is asserted on a feed replayed through the real ingest path: the recorded fixture is a 3-minute window and holds no *complete* lap of positions, so it is used to prove the feed carries the completions and timestamps the segmentation needs. The capture script now samples a session-time window (not a message offset) so its topics line up.
 
 - [x] **LIVE-14** · P2 · S — **Off-track / garage GPS samples pollute trails** — done in 4129243
   - Files: `data/live_adapter.py:297-310`, `data/source_manager.py:317-333`.
