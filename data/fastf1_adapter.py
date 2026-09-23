@@ -499,6 +499,11 @@ class FastF1Adapter:
             "Sector1Time",
             "Sector2Time",
             "Sector3Time",
+            # When each sector was completed, on the session clock: the replay
+            # reveals a sector time only once it has been set (REPLAY-03).
+            "Sector1SessionTime",
+            "Sector2SessionTime",
+            "Sector3SessionTime",
             "Position",
             "Compound",
             "Stint",

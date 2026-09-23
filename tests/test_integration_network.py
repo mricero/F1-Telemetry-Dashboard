@@ -456,3 +456,26 @@ class TestReplayStreamsOnRealSessions:
         assert len(starts) == 3
         assert starts == sorted(starts) and len(set(starts)) == 3
         assert starts[0] == info["session_start"]
+
+
+class TestReplayModelOnARealRace:
+    """REPLAY-03 acceptance 9: the model agrees with FastF1's own lap data."""
+
+    def test_the_tower_after_lap_ten(self):
+        from processing.replay_model import snapshot_at, tower_series
+        from processing.timing import build_timing_rows
+
+        race = _bahrain("R")
+        laps = race["laps"]
+        tenth = laps[laps["LapNumber"] == 10].copy()
+        tenth["end"] = tenth["Time"].dt.total_seconds()
+        leader_end = float(tenth["end"].min())
+
+        rows = build_timing_rows(snapshot_at(race, leader_end + 1, tower_series(race)))
+        expected = tenth.sort_values("Position")["Driver"].head(3).tolist()
+
+        assert [row["code"] for row in rows[:3]] == expected
+        ver = tenth.set_index("Driver").loc["VER", "end"]
+        per = tenth.set_index("Driver").loc["PER", "end"]
+        gap = float(next(row["gap"] for row in rows if row["code"] == "PER").lstrip("+"))
+        assert abs(gap - (per - ver)) < 0.5

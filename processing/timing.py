@@ -19,6 +19,9 @@ import pandas as pd
 
 from processing.time_utils import to_seconds
 
+# Missing values in the tower read as an en dash (UI guideline 5.7).
+MISSING = "\u2013"
+
 # Each of the three sectors is split into this many micro-sectors for the
 # heat strip under the sector time (spec section 3.8).
 SEGMENTS_PER_SECTOR = 5
@@ -787,13 +790,122 @@ def _classify_race(rows: list[dict], results: dict[str, dict]) -> list[dict]:
     return ordered
 
 
+def _in_progress(laps: pd.DataFrame) -> pd.Series:
+    """Rows standing for the lap a driver is on, not a completed one."""
+    if "IsInProgress" not in laps.columns:
+        return pd.Series(False, index=laps.index)
+    return laps["IsInProgress"].astype("boolean").fillna(False).astype(bool)
+
+
+def _value(value):
+    """A standings cell as a plain Python value (None for NA)."""
+    if value is None:
+        return None
+    try:
+        return None if pd.isna(value) else value
+    except (TypeError, ValueError):
+        return value
+
+
+def _rows_from_standings(session_data: dict, standings: pd.DataFrame) -> list[dict]:
+    """Tower rows for a replay snapshot, ordered by its ``standings``.
+
+    Order, gap, interval, status, last/best lap and the sector cells come
+    from the standings (the replay model's series at that moment), so the
+    final ``results`` are never read. The micro-sector strips are left
+    empty: they come from fastest-lap telemetry set later in the session.
+    """
+    laps_df = session_data.get("laps")
+    if laps_df is None or laps_df.empty or "Driver" not in laps_df.columns:
+        laps_df = pd.DataFrame(columns=["Driver", "LapNumber"])
+    meta = _driver_meta(session_data.get("drivers"))
+    running = _in_progress(laps_df)
+    by_driver = {
+        str(code): group.sort_values("LapNumber")
+        for code, group in laps_df.groupby(laps_df["Driver"].astype(str), sort=False)
+    }
+    empty_states = ["NONE"] * SEGMENTS_PER_SECTOR
+
+    rows = []
+    for record in standings.to_dict("records"):
+        code = str(record["Driver"])
+        own = by_driver.get(code, laps_df.iloc[0:0])
+        done = own[~running.reindex(own.index, fill_value=False)]
+        info = meta.get(code, {})
+        sectors = []
+        for index in range(1, SECTORS + 1):
+            seconds = _value(record.get(f"S{index}"))
+            sectors.append(
+                {
+                    "seconds": float(seconds) if seconds is not None else None,
+                    "display": f"{float(seconds):.3f}" if seconds is not None else MISSING,
+                    "segments": list(empty_states),
+                }
+            )
+        best_sectors = _best_sectors(done)
+        status = _value(record.get("Status")) or "ON TRACK"
+        best_seconds = _value(record.get("BestSeconds"))
+        last_seconds = _value(record.get("LastSeconds"))
+        speed = _speed_trap(done)
+        rows.append(
+            {
+                "code": code,
+                "full_name": info.get("full_name", code),
+                "team_name": info.get("team_name", ""),
+                "team_colour": info.get("team_colour", ""),
+                "status": status,
+                "position": int(record["Position"]),
+                "gap": _value(record.get("Gap")) or MISSING,
+                "interval": _value(record.get("Interval")) or MISSING,
+                "best_seconds": float(best_seconds) if best_seconds is not None else None,
+                "best_lap": _value(record.get("BestLap")) or MISSING,
+                "last_lap": _value(record.get("LastLap")) or MISSING,
+                "last_seconds": float(last_seconds) if last_seconds is not None else None,
+                "last_is_session_best": record.get("LastFlag") == "sb",
+                "last_is_personal_best": record.get("LastFlag") == "pb",
+                "sectors": sectors,
+                "best_sectors": best_sectors,
+                "personal_ideal": _ideal_lap(best_sectors),
+                "tyre_history": _tyre_history(
+                    own, _driver_stints(session_data.get("stints"), code)
+                ),
+                "speed_kmh": 0.0 if status == "IN PIT" else speed,
+                "laps_completed": len(done),
+                "last_position": None,
+                "pits": _value(record.get("Pits")),
+                "knocked_out": status == "KO",
+                "segment": None,
+                "partition": _value(record.get("Partition")),
+            }
+        )
+
+    fastest = min(
+        (r for r in rows if r["best_seconds"] is not None),
+        key=lambda r: r["best_seconds"],
+        default=None,
+    )
+    best_possible = theoretical_best(rows)
+    for row in rows:
+        row["is_overall_best"] = row is fastest
+        if row["best_seconds"] is not None and best_possible is not None:
+            row["diff"] = format_delta(row["best_seconds"] - best_possible)
+        else:
+            row["diff"] = "----"
+    return rows
+
+
 def build_timing_rows(session_data: dict) -> list[dict]:
     """Build the leaderboard rows for one session.
 
     Ordering, gaps and the knock-out partition all depend on the session
     type - see :func:`_classify_race`, :func:`_classify_qualifying` and
-    :func:`_classify_by_best_lap`.
+    :func:`_classify_by_best_lap`. A replay snapshot carries ``standings``
+    (the tower as it stood at that moment), which then decide instead.
     """
+    standings = session_data.get("standings")
+    if isinstance(standings, pd.DataFrame) and not standings.empty:
+        return _rows_from_standings(session_data, standings)
+
     laps_df = session_data.get("laps")
     if laps_df is None or laps_df.empty or "Driver" not in laps_df.columns:
         return []

@@ -13,6 +13,8 @@ from collections.abc import Sequence
 import pandas as pd
 import streamlit as st
 
+from processing.replay import format_clock, positions_at
+from processing.replay_model import TRACK_STATUS_FLAGS, flag_state, race_clock_text
 from processing.time_utils import to_seconds
 from processing.timing import (
     build_timing_rows,
@@ -93,16 +95,9 @@ def wind_kmh(wind_speed) -> float | None:
     return float(wind_speed) * MS_TO_KMH
 
 
-# Official TrackStatus codes -> header flag states. The live feed reports the
-# track state directly, so nothing else is consulted while a session is live.
-TRACK_STATUS_FLAGS = {
-    "1": "GREEN",
-    "2": "YELLOW",
-    "4": "SAFETY CAR",
-    "5": "RED",
-    "6": "VSC",
-    "7": "VSC",
-}
+def _is_snapshot(session_data: dict) -> bool:
+    """Whether this dict is one moment of a replay (REPLAY-03), not a session."""
+    return (session_data.get("session_info") or {}).get("replay_time") is not None
 
 
 def _flag_state(session_data: dict) -> str:
@@ -113,6 +108,9 @@ def _flag_state(session_data: dict) -> str:
     messages count - otherwise a finished session reported "YELLOW FLAG"
     because some sector went yellow once.
     """
+    if _is_snapshot(session_data):
+        return flag_state(session_data)
+
     info = session_data.get("session_info") or {}
     status = info.get("track_status")
     if isinstance(status, dict):
@@ -142,12 +140,6 @@ def _flag_state(session_data: dict) -> str:
 CLOCK_PLACEHOLDER = "--:--:--"
 
 
-def _format_clock(seconds: float) -> str:
-    """``5130`` -> ``'1:25:30'``. Sessions run well past an hour."""
-    total = round(seconds)
-    return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
-
-
 def _session_clock(session_data: dict) -> str:
     """What the header's clock slot should read.
 
@@ -166,7 +158,7 @@ def _session_clock(session_data: dict) -> str:
     seconds = laps["Time"].map(to_seconds).dropna()
     if seconds.empty:
         return CLOCK_PLACEHOLDER
-    return _format_clock(float(seconds.max()))
+    return format_clock(float(seconds.max()))
 
 
 def header_html(session_data: dict) -> str:
@@ -179,7 +171,18 @@ def header_html(session_data: dict) -> str:
 
     flag = _flag_state(session_data)
     bg, fg, label = FLAG_STATES.get(flag, FLAG_STATES["FINISHED"])
-    clock_label = "Remaining" if session_data.get("is_live") else "Duration"
+    if _is_snapshot(session_data):
+        clock_label, clock_value = race_clock_text(info)
+    else:
+        clock_label = "Remaining" if session_data.get("is_live") else "Duration"
+        clock_value = _session_clock(session_data)
+    lap_now, lap_total = info.get("current_lap"), info.get("total_laps")
+    lap_text = (
+        f'<span class="f1-env-label">Lap</span>'
+        f'<span class="f1-clock f1-mono">{lap_now}/{lap_total}</span>'
+        if _is_snapshot(session_data) and lap_now and lap_total
+        else ""
+    )
 
     event = _esc(info.get("gp") or "Session")
     country = _esc(info.get("country") or "")
@@ -216,8 +219,9 @@ def header_html(session_data: dict) -> str:
     <span class="f1-event-session">{session_type}</span>
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
+    {lap_text}
     <span class="f1-env-label">{clock_label}</span>
-    <span class="f1-clock f1-mono" title="{clock_label}">{_session_clock(session_data)}</span>
+    <span class="f1-clock f1-mono" title="{clock_label}">{clock_value}</span>
     <span class="f1-flag" style="background:{bg};color:{fg};">{label}</span>
   </div>
   <div class="f1-env">
@@ -400,10 +404,40 @@ def _last_positions(location: dict[str, pd.DataFrame], rows: Sequence[dict]) -> 
     return markers
 
 
+def _replay_markers(session_data: dict, rows: Sequence[dict]) -> list[dict]:
+    """Every car where it was at the snapshot's moment."""
+    meta = _driver_meta(rows)
+    moment = float((session_data.get("session_info") or {}).get("replay_time") or 0.0)
+    markers = positions_at(session_data.get("positions"), moment)
+    for marker in markers:
+        info = meta.get(marker["code"], {})
+        marker["team_colour"] = team_color(info.get("team_name"), info.get("team_colour"))
+    return markers
+
+
 def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
-    """Track map with dominance colouring, corners and a benchmark overlay."""
+    """Track map with dominance colouring, corners and a benchmark overlay.
+
+    A replay snapshot draws the outline, corners and every car at that
+    moment instead: the dominance layer comes from fastest laps set later
+    in the session.
+    """
     telemetry, location = dashboard_frames(session_data)
     laps = session_data.get("laps")
+    if _is_snapshot(session_data):
+        svg = build_track_svg(
+            location,
+            circuit_info=session_data.get("circuit_info"),
+            driver_meta=_driver_meta(rows),
+            markers=_replay_markers(session_data, rows),
+        )
+        if svg is None:
+            return (
+                '<div style="padding:32px;color:#8a8a8a;text-align:center;">'
+                "No GPS telemetry for this session, so the track map cannot be drawn."
+                "</div>"
+            )
+        return f'<div class="f1-map-wrap">{svg}</div>'
 
     micro = {}
     for code, frame in telemetry.items():
@@ -443,7 +477,8 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
         )
 
     best = theoretical_best(rows)
-    leader = rows[0]["best_lap"] if rows else "—"
+    fastest = next((row for row in rows if row.get("is_overall_best")), rows[0] if rows else None)
+    leader = fastest["best_lap"] if fastest else "—"
     ideal = (
         f'<div class="f1-bench-label" style="margin-top:4px">'
         f"Session ideal {format_lap(best)}</div>"
