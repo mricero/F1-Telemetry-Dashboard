@@ -241,7 +241,7 @@ class TestHeaderAndSectors:
     def test_header_without_weather_uses_placeholders(self):
         html = header_html({"session_info": {"gp": "Test GP"}, "is_live": False})
 
-        assert "--:--" in html and "SESSION ENDED" in html
+        assert "--:--" in html and "ENDED" in html
 
     def test_header_flags_rain(self):
         weather = pd.DataFrame({"Time": pd.to_timedelta([0], unit="s"), "Rainfall": [True]})

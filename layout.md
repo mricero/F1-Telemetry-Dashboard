@@ -469,3 +469,75 @@ To drive this dashboard, incoming real-time socket frames must conform to standa
 
 
 4. **Sector Top 3 Widget Overlay**: Positioned absolute over map canvas top-right, updated on sector transition triggers.
+
+---
+
+## 9. Replay screen
+
+The contract the browser replay player (`ui/components/replay_player/`, IMPROVEMENTS.md REPLAY-05) implements. Sizes are CSS px; colours are the guideline 5.4 tokens (`ui/theme.py`, mirrored once in the player's `:root`). Desktop is 1200 px wide or more.
+
+```
++------------------------------------------------------------------------------------------+
+| BAHRAIN GRAND PRIX 2023 · RACE    LAP 23/57    0:41:07    [GREEN]    AIR 26° TRACK 31° DRY |  header 48
++--------------------------------+---------------------------------------------------------+
+| POS  DRIVER        GAP     TYRE  PIT |                                                   |
+|  1 | VER   1     LEADER    M 14   1  |              track map (SVG, 60 %)                |
+|  2 | PER  11     +4.211    M 14   1  |    cars: 9 px circles in team colour,             |
+|  3 | ALO  14    +21.030    H  3   2  |    optional 3-letter labels, focused car 12 px    |
+|  … 22 rows x 30 px (40 %)            |    with accent ring                               |
+|                                      +---------------------------------------------------+
+| [Gap | Interval]                     | RACE CONTROL   L22 14:02  TRACK LIMITS CAR 16 T4  |  3 lines
++--------------------------------------+---------------------------------------------------+
+| [play] [-30s] [-5s] [+5s] [+30s]  Previous lap  Next lap   Speed 1x v   ----o------------ |  controls 36
+| lap ticks every 5 · SC/VSC shaded (flag colour 30 %) · red flag shaded · pit, out, fastest |  timeline 28
++------------------------------------------------------------------------------------------+
+```
+
+### 9.1 Regions
+
+| Region | Size | Content |
+|---|---|---|
+| Header | 48 high, full width | Event name (Titillium 700, 22, uppercase) · session · `LAP n/N` · race time `H:MM:SS` from lights out (segment time `Q2 12:04` in qualifying) · flag chip · weather as text (`AIR 26° TRACK 31° DRY`, wind `12 km/h NE`) |
+| Tower | 40 % of the width, 22 rows × 30 | See 9.2 |
+| Map | 60 % of the width | Track ribbon 14 wide in `--surface-2` with a 1 px darker edge; start/finish a short white line; corner numbers 10 in `--text-dim`, no circles; cars 9 px team-colour circles with a 1 px `--bg` stroke and optional 3-letter labels; the focused car 12 px with an `--accent` ring; no shadows, no glow; `role="img"` and a `<title>` naming the session and moment |
+| Race control | 3 lines under the map | The last messages at or before the cursor: `L22 14:02 TRACK LIMITS CAR 16 T4` |
+| Controls | 36 high, full width | See 9.4 |
+| Timeline | 28 high, full width | See 9.3 |
+
+### 9.2 Tower
+
+- Race columns: `POS` (28, right-aligned) · 4 px team bar · driver code (Titillium 600, 44) + racing number (`--text-dim`, 24) · `GAP` or `INTERVAL` (a `[Gap | Interval]` toggle under the tower; 80, right) · `LAST` (80; `--best` text for a session best, `--pb` for a personal best) · tyre badge + age · `PIT` count (28) · status chip (`PIT`, `OUT`, `FIN`; empty on track).
+- Qualifying and practice columns: `POS`, driver, `BEST`, `GAP`, `LAST`, S1/S2/S3 of the lap in progress, tyre.
+- Rows 30 high, zebra `--surface` / `--surface-2`, no row dividers. The focused row has a 2 px `--accent` left border and a `--surface-2` background. `OUT` rows use `--text-dim` text **and** the `OUT` chip. An interval under 1.000 s is `--text` (overtaking range); others `--text-dim`.
+- Rows are absolutely positioned and move with `transform: translateY(rank × 30)` and a 350 ms ease-out transition, so overtakes animate; text is rewritten only when a value changes.
+- Values are formatted in Python (guideline 5.7): `LEADER`, `+1.234`, `+1:02.3`, `+1 LAP`, `+2 LAPS`, `1:32.456`, `–` for missing.
+
+### 9.3 Timeline
+
+- Full width, 28 high. Lap ticks labelled every 5 laps in `--text-dim`; hover shows `Lap n · 0:41:07`; click or drag seeks.
+- Safety car and VSC periods shaded in the amber flag colour at 30 %; red flags in the red flag colour at 30 %.
+- Event markers are 6 px shapes with distinct forms - pit stop a square, retirement a cross drawn with SVG lines, fastest lap a diamond - each with a `title`, so no marker depends on colour alone.
+
+### 9.4 Transport
+
+- Only play/pause is an icon (inline SVG `<symbol>` from guideline 5.8, with `aria-label` and `title`); every other control is text: `-30s`, `-5s`, `+5s`, `+30s`, `Previous lap`, `Next lap`, and a speed select `0.5x 1x 2x 4x 8x 16x 32x 64x`.
+- Keyboard: Space play/pause, ←/→ ±5 s, Shift+←/→ ±30 s, `[`/`]` previous/next lap, `1`–`8` speed, `F` follow the focused driver. Clicking a tower row or a car focuses that driver (others dimmed, the focused car larger with a halo). The focus ring is `--accent`, 2 px.
+
+### 9.5 Flag chip words
+
+`GREEN`, `YELLOW`, `SC`, `VSC`, `RED`, `CHEQUERED` (`ui.theme.FLAG_STATES` labels). The keys stay `GREEN`, `YELLOW`, `SAFETY CAR`, `VSC`, `RED`, `CHEQUERED`; the player's `flags` payload carries the keys.
+
+### 9.6 Responsive
+
+| Width | Layout |
+|---|---|
+| ≥ 1200 | As drawn: tower 40 %, map 60 % |
+| 900–1199 | Map 55 %; the tower drops `LAST` and `PIT` |
+| < 900 | Map on top (50 vh), tower below at full width, race control behind a "Race control" text toggle |
+
+No horizontal page scroll at any width from 360 px.
+
+### 9.7 Motion and accessibility
+
+- Motion only when data moves: rows sliding to a new position (350 ms ease-out), cars moving continuously (interpolated), the playhead, and a 600 ms flash (`--best` / `--pb` at 25 %) on a lap-time cell when a session-best or personal-best lap completes. `prefers-reduced-motion: reduce` turns the row transitions and flashes off; positions still update.
+- Contrast: body text at least 4.5:1, large text and UI boundaries at least 3:1. Every coloured state has a text equivalent (chip text, compound letter, `title`). No information only on hover.

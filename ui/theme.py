@@ -79,20 +79,21 @@ COMPOUND_RING = {
 }
 
 # Flag state -> (background, foreground, label). The chip always carries the
-# word, so the state never depends on telling the colours apart.
+# word, so the state never depends on telling the colours apart. The labels
+# are the chip words of layout.md section 9.5; the keys stay as they are.
 FLAG_GREEN = "#2fbf5b"
 FLAG_YELLOW = "#e6c229"
 FLAG_AMBER = "#f2a900"
 FLAG_RED = "#e5484d"
 FLAG_STATES = {
-    "GREEN": (FLAG_GREEN, "#06200e", "GREEN FLAG"),
-    "YELLOW": (FLAG_YELLOW, "#1f1a00", "YELLOW FLAG"),
+    "GREEN": (FLAG_GREEN, "#06200e", "GREEN"),
+    "YELLOW": (FLAG_YELLOW, "#1f1a00", "YELLOW"),
     "DOUBLE YELLOW": (FLAG_YELLOW, "#1f1a00", "DOUBLE YELLOW"),
-    "RED": (FLAG_RED, WHITE, "RED FLAG"),
-    "SAFETY CAR": (FLAG_AMBER, "#1f1500", "SAFETY CAR"),
-    "VSC": (FLAG_AMBER, "#1f1500", "VIRTUAL SC"),
+    "RED": (FLAG_RED, WHITE, "RED"),
+    "SAFETY CAR": (FLAG_AMBER, "#1f1500", "SC"),
+    "VSC": (FLAG_AMBER, "#1f1500", "VSC"),
     "CHEQUERED": (TEXT, BG, "CHEQUERED"),
-    "FINISHED": (LINE, TEXT_DIM, "SESSION ENDED"),
+    "FINISHED": (LINE, TEXT_DIM, "ENDED"),
 }
 
 # --- Typography (guideline 5.3) -----------------------------------------

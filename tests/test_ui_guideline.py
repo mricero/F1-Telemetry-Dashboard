@@ -299,3 +299,35 @@ class TestSelfContainedTypography:
         assert text_on("#ffffff") == BLACK
         assert text_on("#3671c6") == WHITE
         assert text_on("#ffd12e") == BLACK
+
+
+class TestReplayScreenSpec:
+    """UI-04: the replay screen contract is written down, and the chips match it."""
+
+    def test_the_flag_chips_say_the_chip_words(self):
+        from ui.theme import FLAG_STATES
+
+        labels = {key: label for key, (_, _, label) in FLAG_STATES.items()}
+
+        assert labels["GREEN"] == "GREEN"
+        assert labels["YELLOW"] == "YELLOW"
+        assert labels["SAFETY CAR"] == "SC"
+        assert labels["VSC"] == "VSC"
+        assert labels["RED"] == "RED"
+        assert labels["CHEQUERED"] == "CHEQUERED"
+
+    def test_layout_md_has_the_replay_screen_section(self):
+        text = (ROOT / "layout.md").read_text(encoding="utf-8")
+        section = text[text.index("## 9. Replay screen") :]
+
+        for value in (
+            "48",
+            "30",
+            "350 ms",
+            "600 ms",
+            "0.5x 1x 2x 4x 8x 16x 32x 64x",
+            "900",
+            "1200",
+        ):
+            assert value in section, value
+        assert "prefers-reduced-motion" in section

@@ -516,7 +516,7 @@ class TestTheDashboardDrawsAMoment:
     def test_the_header_flag_is_the_flag_at_that_moment(self, race, race_series):
         from ui.dashboard import header_html
 
-        assert "SAFETY CAR" in header_html(snapshot_at(race, fx.SC_START + 5, race_series))
+        assert ">SC<" in header_html(snapshot_at(race, fx.SC_START + 5, race_series))
 
     def test_the_map_shows_every_car_and_no_dominance(self, race, race_series):
         import base64
