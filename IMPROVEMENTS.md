@@ -137,7 +137,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
 
 ## 3. Items — replay and repo hygiene
 
-- [ ] **REPO-14** · P0 · S — **Line-ending churn: ~55 files "modified" with no content change**
+- [x] **REPO-14** · P0 · S — **Line-ending churn: ~55 files "modified" with no content change** — done in 50816d7
   - Files: new `.gitattributes`; every tracked text file.
   - Problem: on 2026-09-23 `git status` lists ~55 modified files (`app.py`, all of `data/`, `processing/`, `ui/`, the docs… — the exact count drifts, don't hardcode it) with equal insertions and deletions; `git diff --ignore-cr-at-eol --stat` shows only genuinely edited files (none apart from this document's own revision) — the working tree has CRLF, the index LF, and there is no `.gitattributes`. Any commit made now would either carry thousands of noise lines or hide real edits among them.
   - Fix: add
@@ -151,7 +151,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     then `git add --renormalize .`. Because the index is already LF, this stages nothing but `.gitattributes` — that is expected, not a failure. Commit **only** that as `chore(REPO-14): normalise line endings`; afterwards the CRLF files stop showing as modified (on Windows, `git checkout -- .` or a fresh checkout converts the working tree if they still do, **after** confirming `git diff --ignore-cr-at-eol` is empty so no real edit is lost). Commit the rewritten `IMPROVEMENTS.md` separately afterwards as `docs: rewrite IMPROVEMENTS.md as the replay and UI plan`. Add `_to_delete/` to `.gitignore` (it holds a stale lock file moved aside on 2026-09-23; delete the folder).
   - Acceptance: after the commit, `git status --short` is empty (or lists only genuinely edited files); `tests/test_repo_hygiene.py` asserts `.gitattributes` contains `eol=lf`.
 
-- [ ] **REPLAY-01** · P0 · M — **Replay clock, O(1) position lookup and interpolation**
+- [x] **REPLAY-01** · P0 · M — **Replay clock, O(1) position lookup and interpolation** — done in fa58d73
   - Files: `processing/replay.py`, `data/fastf1_adapter.py` (`get_position_timeline`), `ui/replay_view.py`, `tests/test_replay_playback.py`, `tests/test_replay_view.py` (its asserts of a global `replay_cursor == 0.0` are **rewritten** — the cursor becomes per-session and starts at `lights_out`), `tests/perf/test_hot_paths.py`.
   - Problem: D4, D5 (snapping), D6.
   - Fix:
@@ -170,7 +170,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     - Unit test with a fake session: a driver whose first lap has NaT `LapStartTime` gets timeline rows from `session_start` (Q/FP out-lap no longer missing).
     - Existing `tests/test_replay_playback.py` / `tests/test_replay_view.py` updated, all green.
 
-- [ ] **REPLAY-02** · P0 · M — **Carry the timing stream, track status and segment boundaries in the session dict**
+- [x] **REPLAY-02** · P0 · M — **Carry the timing stream, track status and segment boundaries in the session dict** — done in f5a17a8
   - Files: `data/fastf1_adapter.py` (new `get_timing_stream`, `get_track_status`, `get_segment_starts`), `data/source_manager.py` (`_load_fastf1_session`, `REPLAY_SCHEMA_VERSION`, `_finalise_replay` defaults), `processing/time_utils.py` (new `parse_gap`), `CLAUDE.md` (contract block), `tests/test_fastf1_adapter.py`, `tests/test_replay_format.py`, `tests/test_integration_network.py`.
   - Problem: D8.
   - Fix:
@@ -199,7 +199,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     - Network (`F1_NETWORK_TESTS=1`): 2023 Bahrain R → ≥ 20 drivers, ≥ 20 000 stream rows, VER `Position == 1` on its last row, `segment_starts == []`; `track_status` non-empty; 2023 Bahrain Q → 3 strictly increasing `segment_starts`, the first equal to `session_start`.
   - Depends on: REPLAY-01 (for `ReplayClock`).
 
-- [ ] **REPLAY-03** · P0 · L — **`processing/replay_model.py`: tower change-point series and `snapshot_at(t)`**
+- [x] **REPLAY-03** · P0 · L — **`processing/replay_model.py`: tower change-point series and `snapshot_at(t)`** — done in 9280b9f
   - Files: new `processing/replay_model.py`; `processing/timing.py` (`build_timing_rows` learns `standings` and snapshot mode); `data/fastf1_adapter.py` (`get_laps` must also keep `Sector1SessionTime`, `Sector2SessionTime`, `Sector3SessionTime` — today it drops them); `ui/dashboard.py`; new `tests/replay_fixtures.py` (synthetic sessions); new `tests/test_replay_model.py`; `tests/test_timing.py`.
   - Problem: D1, D2, D7 — all renderers read end-of-session aggregates.
   - Fix:
@@ -352,7 +352,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
 
 > Every item here is measured against §5. UI-00 comes first because it installs the automated checks that keep the rest honest.
 
-- [ ] **UI-00** · P1 · M — **Remove every emoji and install the guideline checks**
+- [x] **UI-00** · P1 · M — **Remove every emoji and install the guideline checks** — done in 7fd6da4
   - Files: `app.py`, `ui/layout.py`, `ui/replay_view.py`, `ui/dashboard.py`, `ui/theme.py`, new `tests/test_ui_guideline.py`, tests that assert on emoji labels (`tests/test_replay_view.py`, `tests/test_live_view.py`, `tests/test_app_sources.py`, `tests/test_session_selector.py` — update their expected strings).
   - Problem: 50+ emoji in interface strings (inventory in §1). Emoji are also used as **state indicators** (`ui/layout.TRACK_STATUS` circles, flag icons, `"🔧 PIT OUT"` chart text), where they carry meaning that disappears for anyone who can't tell the colours apart.
   - Fix:
@@ -361,7 +361,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     3. Add `tests/test_ui_guideline.py` implementing all checks in §5.12. Checks that current code cannot pass yet (e.g. hex literals outside `ui/theme.py`, Google Fonts URL) are marked `xfail(strict=True)` with the item that will fix them (UI-01 for URLs/`st.title`, UI-05 for hex literals), so they flip to real assertions when that item lands.
   - Acceptance: `tests/test_ui_guideline.py::test_no_emoji` passes over `app.py` and `ui/`; no test asserts on an emoji string; the live, replay and app-source AppTests still pass with the new labels.
 
-- [ ] **UI-01** · P1 · M — **Dark theme, self-contained typography, clean shell**
+- [x] **UI-01** · P1 · M — **Dark theme, self-contained typography, clean shell** — done in e16295b
   - Files: new `.streamlit/config.toml`; new `ui/fonts.py`, new `ui/assets/fonts/` (Titillium Web 600/700 woff2 + `OFL.txt`); `ui/layout.py` (`render_header`), `ui/theme.py` (tokens and CSS), `app.py`.
   - Fix:
     ```toml
@@ -387,13 +387,13 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
   - Acceptance: `test_ui_guideline` checks 4 (no URLs) and 7 (no `st.title`, no emoji `page_icon`) now pass without xfail (check 5, hex literals, is finished by UI-05); a unit test asserts `ui.fonts.font_face_css()` contains `@font-face` and `font/woff2` when the files exist and returns `""` when they don't; `.streamlit/config.toml` has `base = "dark"`.
   - Depends on: UI-00.
 
-- [ ] **UI-02** · P1 · M — **Sidebar session picker with an explicit Load**
+- [x] **UI-02** · P1 · M — **Sidebar session picker with an explicit Load** — done in 763a271
   - Files: `ui/layout.py` (`render_session_selector`), `app.py`, `tests/test_session_selector.py`.
   - Fix: move selection to `st.sidebar` inside `st.form("session_picker")` with a **Load session** submit button (the one primary button on the sidebar); the form result is stored in `st.session_state["selection"]` and only a submit changes it, so browsing the dropdowns never triggers a load. Seasons `range(now.year, 2017, -1)` (FastF1 has timing and telemetry from 2018). Under the form, a "Recent" list of the last 5 loaded sessions as plain text buttons ("2023 Bahrain – Race"). Mirror `year/gp/session` into `st.query_params` on load and read them on first run, so a URL reopens the same session. Data source and telemetry scope move into a collapsed "Advanced" expander inside the form. The live notice ("A session is running now") stays at the top of the sidebar with a **Go live** button — text only, no red-circle emoji.
   - Acceptance: AppTest — changing the Grand Prix select without pressing Load does not call `get_session_data` (stub manager counts calls); pressing Load calls it once; `?year=2023&gp=Bahrain Grand Prix&session=R` preselects and auto-loads on first run.
   - Depends on: UI-01.
 
-- [ ] **UI-03** · P1 · M — **Pages instead of one long scroll**
+- [x] **UI-03** · P1 · M — **Pages instead of one long scroll** — done in e17a075
   - Files: `app.py`, `ui/layout.py`, new `ui/pages.py`, tests.
   - Fix: load once (before navigation), put the session dict in `st.session_state["session_data"]`, then `st.navigation([...], position="top")` with function pages named exactly as §5.9:
     - **Replay** (default for historical/saved sessions) — REPLAY-04/05; until REPLAY-04 lands it calls the existing `render_session_replay`.
