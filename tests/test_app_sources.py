@@ -84,6 +84,15 @@ def session_dict(source: str, is_live: bool = False) -> dict:
             }
         ),
         "location": {d: _location() for d in drivers},
+        # Two cars going round for a minute, so the Replay page has a timeline.
+        "positions": pd.DataFrame(
+            {
+                "Time": np.tile(np.arange(0.0, 60.0, 0.5), len(drivers)),
+                "Driver": np.repeat(drivers, 120),
+                "X": np.tile(np.cos(np.arange(120) / 20) * 1000, len(drivers)),
+                "Y": np.tile(np.sin(np.arange(120) / 20) * 600, len(drivers)),
+            }
+        ),
         "weather": pd.DataFrame(
             {
                 "Time": pd.to_timedelta([0, 600], unit="s"),
@@ -222,20 +231,74 @@ class TestSourcesRenderEndToEnd:
     def test_key_panels_render_for_a_historical_session(self):
         app_test = _run_for("fastf1")
 
-        tab_labels = [tab.label for tab in app_test.tabs]
-        for expected in ("Telemetry", "Lap times", "Weather", "Race control"):
-            assert expected in tab_labels
-
-        # Panels that fell back to their "no data" notice would show up here.
-        notices = " ".join(info.value for info in app_test.info)
-        assert "No weather data available" not in notices
-        assert "No race control messages" not in notices
+        for section, notice in (
+            ("Weather", "No weather data available"),
+            ("Race control", "No race control messages"),
+        ):
+            _open(app_test, "analysis", analysis_section=section)
+            assert not app_test.exception, app_test.exception
+            # A panel that fell back to its "no data" notice would show up here.
+            notices = " ".join(info.value for info in app_test.info)
+            assert notice not in notices
 
     def test_records_panel_reports_the_session(self):
-        app_test = _run_for("fastf1")
+        app_test = _open(_run_for("fastf1"), "records")
 
         markdown = " ".join(block.value for block in app_test.markdown)
         assert "Italian Grand Prix" in markdown
+
+
+def _open(app_test: AppTest, url_path: str, **state) -> AppTest:
+    """Switch to one of the navigation's function pages and rerun.
+
+    ``AppTest.switch_page`` only takes file paths; a function page is keyed
+    by the hash of its URL path, which is what this sets.
+    """
+    from streamlit.util import calc_hash
+
+    for key, value in state.items():
+        app_test.session_state[key] = value
+    app_test._page_hash = calc_hash(url_path)
+    app_test.run()
+    return app_test
+
+
+class TestPages:
+    """UI-03: a page per job instead of one long scroll."""
+
+    def test_the_page_names_follow_the_guideline(self):
+        from tests.replay_fixtures import race_session
+        from ui.pages import page_specs
+
+        titles = [title for _, title, _ in page_specs(race_session())]
+
+        assert titles == ["Replay", "Results", "Analysis", "Records"]
+
+    def test_a_live_session_opens_on_the_live_page(self):
+        from ui.pages import page_specs
+
+        titles = [title for _, title, _ in page_specs({"is_live": True})]
+
+        assert titles == ["Live", "Records"]
+
+    def test_a_historical_session_opens_on_the_replay(self):
+        app_test = _run_for("fastf1")
+
+        assert any(button.label == "Lights out" for button in app_test.button)
+        assert not any(exp.label == "Diagnostics" for exp in app_test.expander)
+
+    def test_analysis_draws_only_the_chosen_panel(self):
+        app_test = _run_for("fastf1")
+
+        telemetry = _open(app_test, "analysis", analysis_section="Telemetry")
+        assert len(telemetry.get("plotly_chart")) == 6  # one per channel
+        lap_times = _open(app_test, "analysis", analysis_section="Lap times")
+        assert len(lap_times.get("plotly_chart")) == 1
+
+    def test_the_records_and_diagnostics_have_their_own_page(self):
+        app_test = _open(_run_for("fastf1"), "records")
+
+        assert any(exp.label == "Diagnostics" for exp in app_test.expander)
 
 
 # Paths for the real-manager replay test; set by the fixture below.
@@ -300,5 +363,6 @@ class TestReplayEndToEndWithARealManager:
         assert not app_test.exception, app_test.exception
         errors = " ".join(err.value for err in app_test.error)
         assert "Failed to load session" not in errors
+        _open(app_test, "records")
         markdown = " ".join(block.value for block in app_test.markdown)
         assert "Italian Grand Prix" in markdown

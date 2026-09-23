@@ -74,22 +74,9 @@ from data.runtime_cache import runtime_cache  # noqa: E402
 from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
-from ui.dashboard import render_dashboard  # noqa: E402
-from ui.layout import (  # noqa: E402
-    render_driver_comparison,
-    render_header,
-    render_lap_times,
-    render_live_controls,
-    render_live_dashboard,
-    render_position_changes,
-    render_race_control,
-    render_session_selector,
-    render_telemetry_charts,
-    render_tire_strategy,
-    render_track_map,
-    render_weather,
-)
-from ui.replay_view import render_session_replay, session_key  # noqa: E402
+from ui.layout import render_header, render_session_selector  # noqa: E402
+from ui.pages import CONTEXT_KEY, pages_for  # noqa: E402
+from ui.replay_view import session_key  # noqa: E402
 
 
 def load_session_data(data_manager, selection: dict) -> dict:
@@ -162,8 +149,62 @@ def init_browser_session() -> None:
         st.session_state.metrics_store = MetricsStore()
 
 
+def processed_views(session_data: dict, key: str, processor) -> dict:
+    """Laps, stints and colours for the pages, built once per session.
+
+    Streamlit reruns the whole script on every click; redoing this on each
+    replay step would make the step controls sluggish. Telemetry alignment is
+    the expensive part and only the Analysis page needs it, so it is built
+    on first use.
+    """
+    cache_key = f"processed:{key}"
+    cached = st.session_state.get(cache_key)
+    if cached is not None and cached["session_data"] is session_data:
+        return cached
+
+    drivers_df = ensure_driver_table(session_data)
+    laps = processor.process_laps(session_data["laps"], drivers_df)
+    views: dict = {
+        "session_data": session_data,
+        "color_map": processor.build_driver_color_map(drivers_df),
+        "laps": laps,
+        "stints": processor.process_stints(session_data["stints"], latest_lap=max_lap_number(laps)),
+    }
+
+    def telemetry() -> dict:
+        if "telemetry_frames" not in views:
+            if session_data.get("is_live"):
+                views["telemetry_frames"] = {
+                    d: processor.normalize_units(df.copy())
+                    for d, df in session_data["telemetry"].items()
+                }
+            else:
+                aligned = processor.align_drivers_by_distance(session_data["telemetry"])
+                views["telemetry_frames"] = {
+                    d: processor.normalize_units(df) for d, df in aligned.items()
+                }
+        return views["telemetry_frames"]
+
+    views["telemetry"] = telemetry
+    st.session_state[cache_key] = views
+    return views
+
+
+def record_metrics(metrics_store, label: str, views: dict, key: str) -> None:
+    """Fold the session into the persistent records, once per session."""
+    done_key = f"recorded:{key}"
+    if st.session_state.get(done_key):
+        return
+    if not views["laps"].empty:
+        metrics_store.update_laps(label, views["laps"])
+    telemetry = views["telemetry"]()
+    if telemetry:
+        metrics_store.update_telemetry(label, telemetry)
+    st.session_state[done_key] = True
+
+
 def main():
-    """Main Streamlit application."""
+    """Main Streamlit application: select, load once, then navigate."""
     render_header()
 
     init_browser_session()
@@ -182,143 +223,34 @@ def main():
     # Load Data (runtime-cached: repeat selections are instant, and
     # everything evaporates when the app closes)
     session_data = load_session_data(data_manager, selection)
-
-    # Build color map (live feeds may not have DriverList yet)
-    drivers_df = ensure_driver_table(session_data)
-    color_map = processor.build_driver_color_map(drivers_df)
-
-    # Process telemetry (live snapshots already carry real distances derived
-    # from Position.z; resampling them again would waste cycles, so only
-    # align historical data)
-    if session_data.get("is_live"):
-        telemetry_processed = {
-            d: processor.normalize_units(df.copy()) for d, df in session_data["telemetry"].items()
-        }
-    else:
-        telemetry_aligned = processor.align_drivers_by_distance(session_data["telemetry"])
-        telemetry_processed = {
-            d: processor.normalize_units(df) for d, df in telemetry_aligned.items()
-        }
-
-    # Process laps & stints (latest known lap helps bound live tyre stints)
-    laps_processed = processor.process_laps(session_data["laps"], session_data["drivers"])
-    stints_processed = processor.process_stints(
-        session_data["stints"], latest_lap=max_lap_number(laps_processed)
-    )
-
+    key = session_key(session_data, selection)
+    views = processed_views(session_data, key, processor)
     info = session_data["session_info"]
 
-    # --- Live timing dashboard (layout.md): header bar, leaderboard matrix,
-    # sector widgets and the vector track map on the 60/40 grid. For a live
-    # session this dict is still empty; the auto-refreshing fragment renders
-    # the dashboard from each poll instead (LIVE-10).
-    if not session_data.get("is_live"):
-        render_dashboard(session_data)
-
-    # Metrics label + persistent record keeping (survives app restarts)
     # The selection only overrides the session's own identity where it says
     # something: a replay selects a file, leaving year/GP/session unset.
     chosen = {k: v for k, v in selection.items() if v is not None}
     metrics_label = MetricsStore.make_label({**info, **chosen})
-    if not laps_processed.empty:
-        metrics_store.update_laps(metrics_label, laps_processed)
-    if telemetry_processed:
-        metrics_store.update_telemetry(metrics_label, telemetry_processed)
+    if not session_data.get("is_live"):
+        record_metrics(metrics_store, metrics_label, views, key)
 
-    with st.expander("Records", expanded=True):
-        rec_lines = metrics_store.summary_lines(metrics_store.session_records(metrics_label))
-        if rec_lines:
-            st.markdown(f"**This session — {metrics_label}**")
-            for line in rec_lines:
-                st.markdown(f"- {line}")
-        else:
-            st.info("No records yet for this session.")
-        at_lines = metrics_store.summary_lines(metrics_store.all_time())
-        if at_lines:
-            st.markdown("**All-time (across sessions viewed here)**")
-            for line in at_lines:
-                st.markdown(f"- {line}")
-        cache_stats = runtime_cache.stats()
-        used_mb = cache_stats["bytes"] / (1024 * 1024)
-        budget_mb = cache_stats["max_bytes"] / (1024 * 1024)
-        st.caption(
-            f"Runtime cache: {cache_stats['entries']} session(s) hot · "
-            f"{used_mb:.0f} / {budget_mb:.0f} MB · "
-            f"{cache_stats['hits']} hits / {cache_stats['misses']} misses · "
-            f"app open for {cache_stats['age_seconds']}s "
-            f"(cache clears automatically when the app closes; "
-            f"records above are kept)"
-        )
+    st.session_state[CONTEXT_KEY] = {
+        **views,
+        "session_key": key,
+        "metrics_store": metrics_store,
+        "metrics_label": metrics_label,
+        "data_manager": data_manager,
+        "processor": processor,
+    }
 
-    # Live mode handling - auto-refreshing fragment polls the SignalR buffers
-    if session_data.get("is_live"):
-        live_client = session_data.get("live_client")
-        if live_client and not live_client.is_running():
-            if st.button("Start live stream"):
-                live_client.start_async()
-                st.rerun()
-        elif live_client and live_client.is_running():
-            err = live_client.last_error()
-            if err:
-                st.error(f"Live client error: {err}")
-            render_live_dashboard(data_manager, processor)
-        # Buffer counts, raw-stream recording and Stop Live. These sat after
-        # an unconditional return, so they never rendered (LIVE-12).
-        render_live_controls(live_client)
-        return
+    if not session_data.get("is_live"):
+        with st.sidebar:
+            if st.button("Save session for replay"):
+                name = f"{info.get('gp', 'race')}_{info.get('session_type', 'R')}"
+                path = data_manager.save_replay(session_data, name)
+                st.success(f"Saved to {path}")
 
-    # --- Deep-dive analysis. The dashboard above answers "what happened";
-    # these tabs are for digging into a single channel or driver.
-    st.markdown("---")
-    analysis = st.tabs(
-        [
-            "Telemetry",
-            "Head-to-head",
-            "Lap times",
-            "Positions",
-            "Tyres",
-            "Track",
-            "Replay",
-            "Weather",
-            "Race control",
-        ]
-    )
-    with analysis[0]:
-        scope_note = {
-            "fastest": "Each driver's fastest lap — distance runs 0 → lap length, "
-            "so drivers line up at the same track position.",
-            "session": "Every lap of the session — distance accumulates across the "
-            "full run, so drivers are not aligned by track position.",
-        }.get(info.get("telemetry_scope"))
-        if scope_note:
-            st.caption(scope_note)
-        render_telemetry_charts(telemetry_processed, color_map)
-    with analysis[1]:
-        render_driver_comparison(telemetry_processed, color_map)
-    with analysis[2]:
-        render_lap_times(laps_processed, color_map)
-    with analysis[3]:
-        render_position_changes(laps_processed, color_map)
-    with analysis[4]:
-        render_tire_strategy(stints_processed, color_map, session_data.get("compound_colors"))
-    with analysis[5]:
-        render_track_map(session_data["location"], color_map)
-    with analysis[6]:
-        st.caption(
-            "Play the session back from the start: every car where it actually "
-            "was, the running order at that moment, and the lap they were on."
-        )
-        render_session_replay(session_data, session_key(session_data, selection))
-    with analysis[7]:
-        render_weather(session_data.get("weather"))
-    with analysis[8]:
-        render_race_control(session_data.get("race_control"))
-
-    # Replay Save Option
-    if st.button("Save session for replay"):
-        name = f"{info.get('gp', 'race')}_{info.get('session_type', 'R')}"
-        path = data_manager.save_replay(session_data, name)
-        st.success(f"Saved to {path}")
+    st.navigation(pages_for(session_data), position="top").run()
 
 
 if __name__ == "__main__":

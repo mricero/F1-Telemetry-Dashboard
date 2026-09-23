@@ -568,65 +568,6 @@ def render_tire_strategy(
     st.plotly_chart(fig, width="stretch")
 
 
-def render_track_map(location_data: dict[str, pd.DataFrame], color_map: dict[str, str]):
-    """Render track map with driver positions."""
-    if not location_data:
-        st.info("GPS data not available for track map")
-        return
-
-    # Circuit outline from the first driver with valid GPS data
-    valid_driver = None
-    for driver, loc_df in location_data.items():
-        if not loc_df.empty and {"X", "Y"}.issubset(loc_df.columns):
-            valid_driver = driver
-            break
-
-    if not valid_driver:
-        st.info("Track map requires GPS data (X, Y coordinates)")
-        return
-
-    circuit_df = location_data[valid_driver]
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter(
-            x=circuit_df["X"],
-            y=circuit_df["Y"],
-            mode="lines",
-            line=dict(color="#444", width=2),
-            name="Circuit",
-            showlegend=False,
-        )
-    )
-
-    for driver, loc_df in location_data.items():
-        if loc_df.empty or "X" not in loc_df.columns:
-            continue
-        last_pos = loc_df.iloc[-1]
-        fig.add_trace(
-            go.Scatter(
-                x=[last_pos["X"]],
-                y=[last_pos["Y"]],
-                mode="markers+text",
-                marker=dict(color=color_map.get(driver, "#888"), size=12),
-                text=[driver],
-                textposition="top center",
-                name=driver,
-                showlegend=False,
-            )
-        )
-
-    fig.update_layout(
-        title="Track Map - Driver Positions",
-        xaxis=dict(visible=False),
-        # Circuits must not be distorted by the container's aspect ratio.
-        yaxis=dict(visible=False, scaleanchor="x", scaleratio=1),
-        height=500,
-        showlegend=False,
-    )
-    st.plotly_chart(fig, width="stretch")
-
-
 @st.fragment(run_every=3)
 def render_live_dashboard(data_manager, processor):
     """Auto-refreshing live view: polls the SignalR buffers every 3 s and
@@ -671,20 +612,19 @@ def render_live_dashboard(data_manager, processor):
     color_map = processor.build_driver_color_map(snapshot["drivers"])
 
     # No "Timing" tab: the dashboard above is the timing view.
-    tabs = st.tabs(["Telemetry", "Track map", "Tyres", "Race control", "Weather"])
+    # The track map is the dashboard's SVG map above; there is one map.
+    tabs = st.tabs(["Telemetry", "Tyres", "Race control", "Weather"])
     with tabs[0]:
         render_telemetry_charts(
             {d: processor.normalize_units(df.copy()) for d, df in telemetry.items()}, color_map
         )
     with tabs[1]:
-        render_track_map(location, color_map)
-    with tabs[2]:
         render_tire_strategy(stints_df, color_map, snapshot.get("compound_colors"))
         if not stints_df.empty:
             st.dataframe(stints_df, width="stretch", height=250)
-    with tabs[3]:
+    with tabs[2]:
         render_race_control(snapshot.get("race_control"), limit=25)
-    with tabs[4]:
+    with tabs[3]:
         render_weather(snapshot.get("weather"))
 
 

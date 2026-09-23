@@ -101,34 +101,42 @@ class TestAppSmoke:
     run context widgets return defaults and ``st.stop()`` is a no-op.
     """
 
-    def test_app_runs_without_exceptions(self, tmp_path, monkeypatch):
+    @staticmethod
+    def _loaded_app(tmp_path, monkeypatch):
+        """The real app opened on a shared link, so it loads without a click."""
         from streamlit.testing.v1 import AppTest
 
         # Keep the developer's real records file out of the test.
         monkeypatch.setenv("F1_METRICS_STORE", str(tmp_path / "metrics.json"))
 
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=600)
+        app.query_params["year"] = "2023"
+        app.query_params["gp"] = "Bahrain Grand Prix"
+        app.query_params["session"] = "R"
         app.run()
+        return app
+
+    @staticmethod
+    def _open(app, url_path: str, **state):
+        from streamlit.util import calc_hash
+
+        for key, value in state.items():
+            app.session_state[key] = value
+        app._page_hash = calc_hash(url_path)
+        app.run()
+        return app
+
+    def test_app_runs_without_exceptions(self, tmp_path, monkeypatch):
+        app = self._loaded_app(tmp_path, monkeypatch)
 
         assert not app.exception, [str(e.value) for e in app.exception]
         assert not app.error, [str(e.value) for e in app.error]
-
-        # The timing dashboard renders through st.html, which AppTest does not
-        # expose as an element - its markup is covered directly in
-        # tests/test_track_map.py. Here we assert the analysis tabs below it.
-        labels = [t.label for t in app.tabs]
-        for expected in (
-            "Telemetry",
-            "Head-to-head",
-            "Lap times",
-            "Positions",
-            "Tyres",
-            "Track",
-            "Weather",
-            "Race control",
-        ):
-            assert expected in labels, f"missing analysis tab {expected!r}"
-        assert any(r.label == "Telemetry scope" for r in app.radio)
+        # The Replay page opens first; its tower and map are st.html, which
+        # AppTest does not expose, so the controls stand in for it.
+        assert any(button.label == "Lights out" for button in app.button)
+        for url_path in ("results", "analysis", "records"):
+            self._open(app, url_path)
+            assert not app.exception, (url_path, [str(e.value) for e in app.exception])
 
     def test_app_renders_panels_from_previously_unused_data(self, tmp_path, monkeypatch):
         """Weather, race control and lap Position were fetched then discarded.
@@ -136,18 +144,19 @@ class TestAppSmoke:
         Each panel reports its own "no data" notice, so an empty render shows
         up here rather than passing silently.
         """
-        from streamlit.testing.v1 import AppTest
+        app = self._loaded_app(tmp_path, monkeypatch)
 
-        monkeypatch.setenv("F1_METRICS_STORE", str(tmp_path / "metrics.json"))
-
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=600)
-        app.run()
-
-        notices = [i.value for i in app.info] + [w.value for w in app.warning]
-        for absent in ("No weather data", "No race control messages", "No position data"):
+        for section, absent in (
+            ("Weather", "No weather data"),
+            ("Race control", "No race control messages"),
+            ("Positions", "No position data"),
+        ):
+            self._open(app, "analysis", analysis_section=section)
+            notices = [i.value for i in app.info] + [w.value for w in app.warning]
             assert not any(absent in n for n in notices), f"{absent!r} - panel got no data"
 
         # Weather readings render as st.metric tiles.
+        self._open(app, "analysis", analysis_section="Weather")
         metric_labels = [m.label for m in app.metric]
         assert "Air" in metric_labels and "Track" in metric_labels
 

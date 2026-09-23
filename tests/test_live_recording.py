@@ -130,19 +130,17 @@ class TestAdapterIntegration:
 class TestControlsAreReachable:
     """LIVE-12: main() returned before the live controls ever rendered."""
 
-    def test_the_live_branch_renders_the_controls(self):
+    def test_the_live_page_renders_the_controls(self):
         import inspect
 
-        import app
+        from ui.pages import live_page
 
-        source = inspect.getsource(app.main)
-        live_branch = source[source.index('if session_data.get("is_live"):') :]
-        lines = [line.strip() for line in live_branch.splitlines()]
-        controls = lines.index("render_live_controls(live_client)")
-        # The bare `return` that ends the live branch, not the word in a comment.
-        returns = lines.index("return")
+        lines = [line.strip() for line in inspect.getsource(live_page).splitlines()]
 
-        assert controls < returns, "the controls are still behind the return"
+        # Unconditional, and nothing returns before it (UI-03 moved the live
+        # branch of main() onto its own page).
+        assert "render_live_controls(live_client)" in lines
+        assert "return" not in lines
 
     def test_the_controls_offer_recording(self, tmp_path, monkeypatch):
         from streamlit.testing.v1 import AppTest

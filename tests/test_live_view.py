@@ -217,11 +217,11 @@ class TestLiveDashboardRendersInTheFragment:
     def test_the_app_skips_the_static_dashboard_for_live_sessions(self):
         import inspect
 
-        import app
+        from ui.pages import live_page, page_specs, results_page
 
-        source = inspect.getsource(app.main)
         # The pre-poll dict is empty for a live session, so rendering the
-        # dashboard there unconditionally is what LIVE-10 removed.
-        guard = 'if not session_data.get("is_live"):'
-        position = source.index(guard)
-        assert "render_dashboard(session_data)" in source[position : position + 200]
+        # dashboard from it is what LIVE-10 removed: a live session has no
+        # Results page, and the Live page renders only from the fragment.
+        pages = [page for page, _, _ in page_specs({"is_live": True})]
+        assert results_page not in pages
+        assert "render_dashboard" not in inspect.getsource(live_page)
