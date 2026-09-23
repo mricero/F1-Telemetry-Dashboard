@@ -34,3 +34,12 @@ def test_virtualenv_directories_are_ignored():
     gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
     for pattern in (".venv/", ".venv311/", "venv/"):
         assert pattern in gitignore, f"{pattern} missing from .gitignore"
+
+
+def test_line_endings_are_normalised():
+    """REPO-14: without `.gitattributes` a Windows checkout showed ~55 files
+    as modified with no content change (CRLF worktree vs LF index)."""
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "eol=lf" in attributes
+    for binary in ("*.parquet", "*.gz"):
+        assert f"{binary} binary" in attributes

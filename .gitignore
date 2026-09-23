@@ -68,3 +68,6 @@ dmypy.json
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Scratch folder for files moved aside before deletion
+_to_delete/
