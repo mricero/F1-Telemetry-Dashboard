@@ -234,8 +234,10 @@ def main():
     if not session_data.get("is_live"):
         record_metrics(metrics_store, metrics_label, views, key)
 
+    pages = pages_for(session_data)
     st.session_state[CONTEXT_KEY] = {
         **views,
+        "pages": {page.title: page for page in pages},
         "session_key": key,
         "metrics_store": metrics_store,
         "metrics_label": metrics_label,
@@ -250,7 +252,7 @@ def main():
                 path = data_manager.save_replay(session_data, name)
                 st.success(f"Saved to {path}")
 
-    st.navigation(pages_for(session_data), position="top").run()
+    st.navigation(pages, position="top").run()
 
 
 if __name__ == "__main__":

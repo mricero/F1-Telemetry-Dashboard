@@ -8,6 +8,7 @@ SVG rather than a scatter plot: the geometry is a fixed shape that should
 stay crisp at any size, and the overlays need precise placement.
 """
 
+import base64
 import html
 from collections.abc import Sequence
 
@@ -25,6 +26,14 @@ PADDING = 62
 # Mini-sectors used for the dominance layer. 3 sectors x 5 segments matches
 # the leaderboard's micro-sector strips so the two views agree.
 DOMINANCE_SEGMENTS = 15
+
+# A standalone SVG document needs its namespace. It is an identifier, not a
+# request: nothing is fetched (guideline 5.13 records the exception).
+SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+
+# Text inside the map is drawn by the image's own document, which sees
+# neither the page's CSS variables nor its embedded fonts.
+SVG_FONT = "Titillium Web, system-ui, Segoe UI, Roboto, Arial, sans-serif"
 
 # A full-session trace holds every lap (~300 km, tens of thousands of points)
 # and is drawn three times over. Resampling at uniform distance keeps the
@@ -241,7 +250,7 @@ def build_track_svg(
             layers.append(
                 f'<text x="{lx:.1f}" y="{ly + 3.5:.1f}" text-anchor="middle" '
                 'fill="#cfcfcf" font-size="11" font-weight="700" '
-                f'style="font-family:var(--font-label)">{html.escape(label)}</text>'
+                f'font-family="{SVG_FONT}">{html.escape(label)}</text>'
             )
 
     # Driver position nodes.
@@ -257,12 +266,12 @@ def build_track_svg(
         layers.append(
             f'<text x="{point[0]:.1f}" y="{point[1] - 14:.1f}" text-anchor="middle" '
             'fill="#ffffff" font-size="11" font-weight="700" '
-            f'style="font-family:var(--font-label)">{code}</text>'
+            f'font-family="{SVG_FONT}">{code}</text>'
         )
 
     body = "\n".join(layers)
     return (
-        f'<svg viewBox="0 0 {VIEW_W} {VIEW_H}" width="100%" height="100%" '
+        f'<svg viewBox="0 0 {VIEW_W} {VIEW_H}" width="100%" '
         'style="display:block;max-height:560px;">\n'
         f"{body}\n</svg>"
     )
@@ -288,4 +297,19 @@ def dominance_legend(
         )
     return (
         '<div class="f1-legend"><span>Fastest per mini-sector:</span>' + "".join(chips) + "</div>"
+    )
+
+
+def svg_image(svg: str, label: str) -> str:
+    """The map as an ``<img>`` of a standalone SVG document.
+
+    ``st.html`` sanitises its markup and drops inline ``<svg>``, so the map
+    never reached the screen as inline markup; an image with a ``data:`` URI
+    passes the sanitiser. ``label`` is the alternative text.
+    """
+    standalone = svg.replace("<svg ", f'<svg xmlns="{SVG_NAMESPACE}" ', 1)
+    encoded = base64.b64encode(standalone.encode("utf-8")).decode("ascii")
+    return (
+        f'<img class="f1-map" src="data:image/svg+xml;base64,{encoded}" '
+        f'alt="{html.escape(label)}" style="display:block;width:100%;height:auto">'
     )

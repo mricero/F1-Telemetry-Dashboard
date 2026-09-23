@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import seconds_series, to_seconds
+from processing.time_utils import seconds_series
 from processing.timing import is_race_session
 
 # Position data arrives at roughly 4 Hz. Half-second steps track the cars
@@ -318,51 +318,6 @@ def positions_at(source: "PositionCube | pd.DataFrame | None", moment: float) ->
         for d, code in enumerate(cube.codes)
         if not np.isnan(point[d, 0])
     ]
-
-
-def _laps_completed_by(laps: pd.DataFrame, moment: float) -> pd.DataFrame:
-    """Laps whose end time has passed at ``moment``."""
-    if laps is None or laps.empty or "Time" not in laps.columns:
-        return pd.DataFrame()
-    seconds = laps["Time"].map(to_seconds)
-    return laps[seconds.notna() & (seconds <= float(moment))]
-
-
-def order_at(laps: pd.DataFrame, moment: float) -> list[dict]:
-    """The running order as it stood at ``moment``.
-
-    Taken from each driver's most recently completed lap, which is how a
-    timing screen knows the order between two timing lines.
-    """
-    done = _laps_completed_by(laps, moment)
-    if done.empty or "Driver" not in done.columns:
-        return []
-
-    latest = done.sort_values("LapNumber").groupby("Driver", sort=False).last().reset_index()
-    if "Position" in latest.columns:
-        latest = latest.sort_values("Position", na_position="last")
-    else:  # no on-road position recorded: most laps first
-        latest = latest.sort_values("LapNumber", ascending=False)
-
-    order = []
-    for index, row in enumerate(latest.itertuples(), start=1):
-        position = getattr(row, "Position", None)
-        order.append(
-            {
-                "code": str(row.Driver),
-                "position": int(position) if position is not None and pd.notna(position) else index,
-                "lap": int(row.LapNumber) if pd.notna(row.LapNumber) else None,
-            }
-        )
-    return order
-
-
-def lap_at(laps: pd.DataFrame, moment: float) -> int:
-    """The leader's lap number at ``moment`` (1 before anyone has finished one)."""
-    done = _laps_completed_by(laps, moment)
-    if done.empty or "LapNumber" not in done.columns:
-        return 1
-    return int(pd.to_numeric(done["LapNumber"], errors="coerce").max())
 
 
 def format_clock(seconds: float) -> str:

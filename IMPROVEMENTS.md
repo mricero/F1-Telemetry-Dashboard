@@ -580,7 +580,9 @@ Rules: colour is never the only carrier of meaning (every coloured state also ha
 
 ### 5.13 Exceptions log
 
-Record any deliberate exception here with the reason and the item that introduced it. (Empty.)
+Record any deliberate exception here with the reason and the item that introduced it.
+
+- **SVG namespace URL** (REPLAY-04). `st.html` sanitises its markup and drops inline `<svg>`, so the track map is embedded as an `<img>` of a standalone SVG document, which must declare `xmlns="http://www.w3.org/2000/svg"`. It is a namespace identifier, not a request; check 4 of `tests/test_ui_guideline.py` allows exactly this string.
 
 ---
 

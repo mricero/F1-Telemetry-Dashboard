@@ -31,7 +31,9 @@ EMOJI_RANGES = (
 EMOJI = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in EMOJI_RANGES) + "]")
 DECORATION = re.compile(r"gradient\(|backdrop-filter|text-shadow|filter:\s*blur|drop-shadow")
 RADIUS = re.compile(r"border-radius:\s*([0-9.]+)px")
-REMOTE = re.compile(r"https?://")
+# The SVG namespace names the document type; nothing is fetched from it
+# (guideline 5.13 exception, recorded with REPLAY-04).
+REMOTE = re.compile(r"https?://(?!www\.w3\.org/2000/svg)")
 HEX = re.compile(r"(?<![&\w])#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
 HYPE = re.compile(
     r"\b(unlock|seamless|powerful|supercharge|elevate|effortless|magic|oops|let's|dive into"

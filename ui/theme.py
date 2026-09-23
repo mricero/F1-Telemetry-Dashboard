@@ -199,7 +199,7 @@ CSS_TOKENS = f"""
 # Shell rules for the main document. The only rule aimed at Streamlit's own
 # markup is the block padding (guideline 5.6).
 APP_CSS = """
-.block-container { padding-top: 1rem; }
+.block-container { padding-top: 3.5rem; }
 """
 
 # Injected with every dashboard render. Scoped under .f1-dash so it cannot

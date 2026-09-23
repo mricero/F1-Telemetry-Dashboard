@@ -40,6 +40,7 @@ from ui.track_map import (
     dominance_legend,
     dominance_segments,
     reference_driver,
+    svg_image,
 )
 
 # Column headers for the leaderboard matrix (spec section 3).
@@ -412,6 +413,12 @@ def _last_positions(location: dict[str, pd.DataFrame], rows: Sequence[dict]) -> 
     return markers
 
 
+def info_time(session_data: dict) -> str:
+    """The snapshot's moment as race time, for the map's alternative text."""
+    info = session_data.get("session_info") or {}
+    return format_clock(float(info.get("elapsed") or 0.0))
+
+
 def _replay_markers(session_data: dict, rows: Sequence[dict]) -> list[dict]:
     """Every car where it was at the snapshot's moment."""
     meta = _driver_meta(rows)
@@ -445,7 +452,8 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
                 "No GPS telemetry for this session, so the track map cannot be drawn."
                 "</div>"
             )
-        return f'<div class="f1-map-wrap">{svg}</div>'
+        label = f"Track map with every car at {info_time(session_data)}"
+        return f'<div class="f1-map-wrap">{svg_image(svg, label)}</div>'
 
     micro = {}
     for code, frame in telemetry.items():
@@ -497,7 +505,9 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
         '<div class="f1-bench"><div class="f1-bench-label">Session best</div>'
         f'<div class="f1-bench-time f1-num">{_esc(leader)}</div>{ideal}</div>'
     )
-    return f'<div class="f1-map-wrap">{bench}{svg}</div>{dominance_legend(dominance, meta)}'
+    label = "Track map coloured by the fastest driver through each mini-sector"
+    image = svg_image(svg, label)
+    return f'<div class="f1-map-wrap">{bench}{image}</div>{dominance_legend(dominance, meta)}'
 
 
 def render_dashboard(session_data: dict) -> None:

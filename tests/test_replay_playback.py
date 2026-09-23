@@ -17,8 +17,6 @@ from processing.replay import (
     build_position_cube,
     build_position_timeline,
     format_clock,
-    lap_at,
-    order_at,
     positions_at,
     replay_clock,
     timeline_bounds,
@@ -194,56 +192,6 @@ class TestTimelineBounds:
 
     def test_an_empty_timeline_has_a_zero_window(self):
         assert timeline_bounds(build_position_timeline({})) == (0.0, 0.0)
-
-
-def _laps() -> pd.DataFrame:
-    """Two drivers, three laps, with the session time each lap ended."""
-    return pd.DataFrame(
-        {
-            "Driver": ["VER", "HAM"] * 3,
-            "LapNumber": [1, 1, 2, 2, 3, 3],
-            "Position": [1.0, 2.0, 2.0, 1.0, 1.0, 2.0],
-            "LapTime": pd.to_timedelta([90.0, 91.0, 89.0, 88.0, 90.0, 92.0], unit="s"),
-            "Time": pd.to_timedelta([90.0, 91.0, 179.0, 179.0, 269.0, 271.0], unit="s"),
-        }
-    )
-
-
-class TestOrderAt:
-    def test_before_the_first_lap_nobody_is_classified(self):
-        assert order_at(_laps(), 10.0) == []
-
-    def test_it_reports_the_order_as_of_that_moment(self):
-        order = order_at(_laps(), 100.0)
-
-        assert [entry["code"] for entry in order] == ["VER", "HAM"]
-
-    def test_the_order_changes_when_the_race_does(self):
-        order = order_at(_laps(), 200.0)
-
-        assert [entry["code"] for entry in order] == ["HAM", "VER"]
-
-    def test_it_carries_the_lap_each_driver_is_on(self):
-        order = order_at(_laps(), 200.0)
-
-        assert order[0]["lap"] == 2
-
-    def test_laps_without_a_time_column_give_nothing(self):
-        laps = _laps().drop(columns=["Time"])
-
-        assert order_at(laps, 100.0) == []
-
-
-class TestLapAt:
-    def test_it_counts_the_leader_lap(self):
-        assert lap_at(_laps(), 100.0) == 1
-        assert lap_at(_laps(), 200.0) == 2
-
-    def test_before_the_first_lap_it_is_lap_one(self):
-        assert lap_at(_laps(), 5.0) == 1
-
-    def test_it_never_exceeds_the_last_lap(self):
-        assert lap_at(_laps(), 9_999.0) == 3
 
 
 class TestFormatClock:

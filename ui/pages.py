@@ -55,9 +55,18 @@ def _context() -> dict:
 
 
 def replay_page() -> None:
-    """The session as it unfolded, from lights out to the flag."""
+    """The session as it unfolded, from lights out to the flag.
+
+    "Final result" switches to the Results page: a snapshot at the flag has
+    no official classification by design (REPLAY-03).
+    """
     context = _context()
-    render_session_replay(context["session_data"], context["session_key"])
+    results = (context.get("pages") or {}).get(PAGE_RESULTS)
+    render_session_replay(
+        context["session_data"],
+        context["session_key"],
+        on_final=(lambda: st.switch_page(results)) if results is not None else None,
+    )
 
 
 def results_page() -> None:

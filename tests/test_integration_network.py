@@ -417,19 +417,6 @@ class TestReplayTimelineOnRealSession:
         assert shared, "no driver present at both moments"
         assert any(early[code] != later[code] for code in shared), "cars did not move"
 
-    def test_the_order_at_a_moment_matches_the_laps(self):
-        from processing.replay import lap_at, order_at, timeline_bounds
-
-        session = self._race()
-        start, end = timeline_bounds(session["positions"])
-        middle = start + (end - start) / 2
-
-        order = order_at(session["laps"], middle)
-
-        assert len(order) >= 15
-        assert order[0]["position"] == 1
-        assert lap_at(session["laps"], middle) > 1
-
 
 _SESSIONS: dict = {}
 

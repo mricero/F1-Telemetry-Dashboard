@@ -1,41 +1,45 @@
-"""Watch a session unfold (IMPROVEMENTS.md FEAT-04).
+"""The Replay page: the session as it stood at the cursor (REPLAY-04).
 
-The other panels answer "what happened overall"; this one answers "what was
-happening at this moment" - cars on the map where they actually were, the
-running order as it stood, and the lap they were on - from lights out to the
-flag, either scrubbed by hand or played back.
+The whole timing dashboard - header, tower, sector cards, map - is drawn
+from :func:`processing.replay_model.snapshot_at` at the cursor, so it shows
+the race as it was at that moment: grid order at lights out, the safety car
+while it was out, the final order only at the flag. The end-of-session view
+is the Results page, one click away.
 
-Streamlit reruns the script on every widget change, so playback is a fragment
-that advances a cursor kept in session state; the map itself is the same SVG
-builder the dashboard uses.
+The cursor lives in ``st.session_state["replay_cursor:<session key>"]``
+(float session seconds), so switching session starts the new one at lights
+out. Step controls and the scrubber move it; playback here is the server
+fallback (one frame a second) until the browser player takes over.
 """
 
-import pandas as pd
 import streamlit as st
 
-from processing.replay import (
-    DEFAULT_STEP_SECONDS,
-    ReplayClock,
-    format_clock,
-    lap_at,
-    order_at,
-    positions_at,
-    replay_clock,
+from processing.replay import ReplayClock, format_clock
+from processing.replay_model import (
+    TowerSeries,
+    events,
+    lap_table,
+    session_clock,
+    snapshot_at,
+    tower_series,
 )
-from ui.theme import DASHBOARD_CSS, team_color
-from ui.track_map import build_track_svg
+from ui.dashboard import render_dashboard
 
 # How much session time one second of playback covers, per speed setting.
 SPEED_OPTIONS = {"1x": 1.0, "5x": 5.0, "20x": 20.0, "60x": 60.0}
-# How often the playback fragment redraws. Faster than this and Streamlit
-# spends longer rerunning the script than the frame is on screen for.
-FRAME_INTERVAL_SECONDS = 0.5
+# The server fallback redraws the whole dashboard, so once a second is the
+# most it can do without Streamlit spending longer rerunning than drawing.
+FRAME_INTERVAL_SECONDS = 1.0
+# "Next lap" lands just after the leader crosses the line, so the new lap's
+# order is already on the tower.
+LAP_LANDING_SECONDS = 1.0
 
-# Per-session state keys (IMPROVEMENTS.md ground rules): switching session
-# must not carry the previous session's cursor into the new one.
 CURSOR_PREFIX = "replay_cursor"
 PLAYING_PREFIX = "replay_playing"
 SPEED_PREFIX = "replay_speed"
+SLIDER_PREFIX = "replay_slider"
+JUMP_PREFIX = "replay_jump"
+MODEL_PREFIX = "replay_model"
 
 
 def session_key(session_data: dict, selection: dict | None = None) -> str:
@@ -58,16 +62,7 @@ def cursor_key(key: str) -> str:
 
 def clock_for(session_data: dict) -> ReplayClock:
     """The session's replay clock: stored at load time, or derived here."""
-    info = session_data.get("session_info") or {}
-    stored = ReplayClock.from_dict(info.get("replay_clock"))
-    if stored is not None:
-        return stored
-    return replay_clock(
-        session_data.get("laps"),
-        session_data.get("positions"),
-        info.get("session_type"),
-        info.get("session_start"),
-    )
+    return session_clock(session_data)
 
 
 def advance(cursor: float, speed_label: str, end: float, interval: float) -> float:
@@ -76,143 +71,180 @@ def advance(cursor: float, speed_label: str, end: float, interval: float) -> flo
     return min(cursor + step, end)
 
 
-def driver_meta(drivers: pd.DataFrame) -> dict:
-    """Acronym -> team name/colour, for the map markers and the order list."""
-    if drivers is None or drivers.empty or "name_acronym" not in drivers.columns:
-        return {}
-    meta = {}
-    for row in drivers.itertuples():
-        code = str(getattr(row, "name_acronym", "") or "")
-        if code:
-            meta[code] = {
-                "team_name": getattr(row, "team_name", "") or "",
-                "team_colour": getattr(row, "team_colour", "") or "",
-            }
-    return meta
+def lap_marks(session_data: dict, series: TowerSeries) -> list[float]:
+    """Moments a lap was completed: by the leader in a race, by anyone otherwise."""
+    if series.kind == "race" and len(series.leader_lap):
+        return [float(t) for t in series.leader_lap.t.tolist() if t > 0]
+    table = lap_table(session_data.get("laps"))
+    return sorted({round(float(t), 3) for t in table["end"].dropna().tolist()})
 
 
-def order_html(order: list, meta: dict) -> str:
-    """Compact running order for the moment being shown."""
-    if not order:
-        return '<div class="f1-dim" style="padding:8px">No completed laps yet.</div>'
-
-    rows = []
-    for entry in order[:22]:
-        info = meta.get(entry["code"], {})
-        accent = team_color(info.get("team_name"), info.get("team_colour"))
-        lap = entry.get("lap")
-        rows.append(
-            f'<div style="display:flex;align-items:center;gap:8px;padding:2px 0">'
-            f'<span style="width:22px;text-align:right;color:#8a8a8a">{entry["position"]}</span>'
-            f'<span style="width:4px;height:14px;background:{accent};display:inline-block"></span>'
-            f'<span style="font-weight:700">{entry["code"]}</span>'
-            f'<span style="margin-left:auto;color:#8a8a8a">L{lap if lap else "-"}</span>'
-            f"</div>"
-        )
-    return f'<div class="f1-dash" style="padding:10px">{"".join(rows)}</div>'
+def next_lap_moment(
+    marks: "list[float] | tuple[float, ...]", cursor: float, clock: ReplayClock
+) -> float:
+    """Just after the next lap completion after ``cursor``."""
+    for mark in marks:
+        if mark + LAP_LANDING_SECONDS > cursor + 1e-6:
+            return clock.clamp(mark + LAP_LANDING_SECONDS)
+    return clock.end
 
 
-def _frame(session_data: dict, clock: ReplayClock, moment: float) -> None:
-    """Draw one moment: the map, the order, and the clock."""
-    timeline = session_data.get("positions")
+def previous_lap_moment(
+    marks: "list[float] | tuple[float, ...]", cursor: float, clock: ReplayClock
+) -> float:
+    """Just after the lap completion before the one the cursor has passed."""
+    earlier = [mark for mark in marks if mark + LAP_LANDING_SECONDS < cursor - 1e-6]
+    if earlier:
+        return clock.clamp(earlier[-1] + LAP_LANDING_SECONDS)
+    return clock.lights_out
+
+
+def replay_model(session_data: dict, key: str) -> tuple[TowerSeries, list]:
+    """The session's change-point series and events, built once per session."""
+    state_key = f"{MODEL_PREFIX}:{key}"
+    cached = st.session_state.get(state_key)
+    if cached is not None and cached[0] is session_data:
+        return cached[1], cached[2]
+    series = tower_series(session_data)
+    found = events(session_data, series)
+    st.session_state[state_key] = (session_data, series, found)
+    return series, found
+
+
+def _move(key: str, moment: float, clock: ReplayClock) -> None:
+    st.session_state[cursor_key(key)] = clock.clamp(moment)
+
+
+def _shift(key: str, delta: float, clock: ReplayClock) -> None:
+    _move(key, st.session_state[cursor_key(key)] + delta, clock)
+
+
+def _to_lap(key: str, marks: list[float], clock: ReplayClock, forward: bool) -> None:
+    cursor = st.session_state[cursor_key(key)]
+    step = next_lap_moment if forward else previous_lap_moment
+    _move(key, step(marks, cursor, clock), clock)
+
+
+def _jump(key: str, targets: dict, clock: ReplayClock) -> None:
+    chosen = st.session_state.get(f"{JUMP_PREFIX}:{key}")
+    if chosen in targets:
+        _move(key, targets[chosen], clock)
+    st.session_state[f"{JUMP_PREFIX}:{key}"] = None
+
+
+def _scrub(key: str, clock: ReplayClock) -> None:
+    race_seconds = st.session_state[f"{SLIDER_PREFIX}:{key}"]
+    _move(key, clock.lights_out + float(race_seconds), clock)
+
+
+def _toggle_play(key: str) -> None:
+    playing = f"{PLAYING_PREFIX}:{key}"
+    st.session_state[playing] = not st.session_state.get(playing, False)
+
+
+def _event_label(moment: float, clock: ReplayClock, label: str) -> str:
+    return f"{format_clock(moment - clock.lights_out)}  {label}"
+
+
+def render_session_replay(session_data: dict, key: str | None = None, on_final=None) -> None:
+    """The Replay page: step and scrub through the session.
+
+    ``on_final`` is called when "Final result" is pressed (the Results page
+    switch); without it the button is not offered.
+    """
     laps = session_data.get("laps")
-    meta = driver_meta(session_data.get("drivers"))
-
-    markers = positions_at(timeline, moment)
-    for marker in markers:
-        info = meta.get(marker["code"], {})
-        marker["team_colour"] = team_color(info.get("team_name"), info.get("team_colour"))
-
-    left, right = st.columns([6, 4], gap="small")
-    with left:
-        svg = build_track_svg(
-            session_data.get("location") or {},
-            circuit_info=session_data.get("circuit_info"),
-            driver_meta=meta,
-            markers=markers,
-        )
-        if svg is None:
-            st.info("No GPS data for this session, so the track cannot be drawn.")
-        else:
-            st.html(f'<div class="f1-dash">{svg}</div>')
-
-    with right:
-        st.metric("Race time", format_clock(moment - clock.lights_out))
-        st.metric("Lap", lap_at(laps, moment))
-        st.caption(f"{len(markers)} car(s) on track")
-        st.html(order_html(order_at(laps, moment), meta))
-
-
-def render_session_replay(session_data: dict, key: str | None = None) -> None:
-    """Scrub or play back a whole session, from lights out."""
-    st.html(DASHBOARD_CSS)
-
-    timeline = session_data.get("positions")
-    if timeline is None or getattr(timeline, "empty", True):
-        st.info(
-            "This session has no position timeline to replay. Load a session from "
-            "FastF1 (or save it as a replay) and it will be built automatically."
-        )
+    if laps is None or getattr(laps, "empty", True):
+        st.info("This session has no lap data to replay.")
         return
 
     clock = clock_for(session_data)
-    start, end = clock.start, clock.end
-    if end <= start:
-        st.info("The position timeline covers no time.")
+    if clock.end <= clock.start:
+        st.info("This session covers no time to replay.")
         return
 
     key = key or session_key(session_data)
+    series, found = replay_model(session_data, key)
+    marks = lap_marks(session_data, series)
     cursor, playing, speed = cursor_key(key), f"{PLAYING_PREFIX}:{key}", f"{SPEED_PREFIX}:{key}"
     st.session_state.setdefault(cursor, clock.lights_out)
     st.session_state.setdefault(playing, False)
     st.session_state.setdefault(speed, "5x")
+    st.session_state[cursor] = clock.clamp(st.session_state[cursor])
+    is_playing = st.session_state[playing]
 
-    controls = st.columns([1, 1, 2, 6])
-    with controls[0]:
-        if st.button("Pause" if st.session_state[playing] else "Play"):
-            st.session_state[playing] = not st.session_state[playing]
-            st.rerun()
-    with controls[1]:
-        if st.button("Lights out"):
-            st.session_state[cursor] = clock.lights_out
-            st.session_state[playing] = False
-            st.rerun()
-    with controls[2]:
-        st.session_state[speed] = st.selectbox(
-            "Speed",
-            list(SPEED_OPTIONS),
-            index=list(SPEED_OPTIONS).index(st.session_state[speed]),
-            label_visibility="collapsed",
-        )
-    with controls[3]:
-        # The slider is the source of truth while paused; playback writes to
-        # the same cursor, so scrubbing and playing cannot disagree.
-        chosen = st.slider(
-            "Session time",
-            min_value=float(start),
-            max_value=float(end),
-            value=float(clock.clamp(st.session_state[cursor])),
-            step=float(DEFAULT_STEP_SECONDS),
-            format="%.1f s",
-            label_visibility="collapsed",
-            disabled=st.session_state[playing],
-        )
-        if not st.session_state[playing]:
-            st.session_state[cursor] = chosen
+    # Row 1: the step controls. Row 2: the scrubber with the clock, the
+    # jump list, speed and the switch to the final result.
+    buttons = st.columns(8, gap="small")
+    buttons[0].button(
+        "Pause" if is_playing else "Play",
+        on_click=_toggle_play,
+        args=(key,),
+        width="stretch",
+    )
+    buttons[1].button(
+        "Lights out", on_click=_move, args=(key, clock.lights_out, clock), width="stretch"
+    )
+    for column, delta in zip(buttons[2:6], (-30, -5, 5, 30), strict=True):
+        column.button(f"{delta:+d}s", on_click=_shift, args=(key, delta, clock), width="stretch")
+    buttons[6].button(
+        "Previous lap", on_click=_to_lap, args=(key, marks, clock, False), width="stretch"
+    )
+    buttons[7].button("Next lap", on_click=_to_lap, args=(key, marks, clock, True), width="stretch")
 
-    if st.session_state[playing]:
-        _play(session_data, clock, key)
+    moment = st.session_state[cursor]
+    slider_key = f"{SLIDER_PREFIX}:{key}"
+    # The scrubber follows the cursor, whichever control moved it last.
+    st.session_state[slider_key] = moment - clock.lights_out
+    scrub, readout, jump, pace, final = st.columns([5, 1.6, 2.2, 0.9, 1.3], gap="small")
+    scrub.slider(
+        "Session time",
+        min_value=float(clock.start - clock.lights_out),
+        max_value=float(clock.end - clock.lights_out),
+        step=float(clock.step),
+        format="%.0f s",
+        key=slider_key,
+        on_change=_scrub,
+        args=(key, clock),
+        label_visibility="collapsed",
+        disabled=is_playing,
+    )
+    targets = {_event_label(moment, clock, label): moment for moment, _, label in found}
+    jump.selectbox(
+        "Jump to",
+        list(targets),
+        index=None,
+        placeholder="Jump to",
+        key=f"{JUMP_PREFIX}:{key}",
+        on_change=_jump,
+        args=(key, targets, clock),
+        label_visibility="collapsed",
+    )
+    pace.selectbox("Speed", list(SPEED_OPTIONS), key=speed, label_visibility="collapsed")
+    if on_final is not None and final.button("Final result", width="stretch"):
+        on_final()
+
+    if is_playing:
+        _play(session_data, series, clock, key)
     else:
-        _frame(session_data, clock, st.session_state[cursor])
+        _readout(readout, series, moment, clock)
+        render_dashboard(snapshot_at(session_data, moment, series))
+
+
+def _readout(container, series: TowerSeries, moment: float, clock: ReplayClock) -> None:
+    """``0:41:07 · Lap 23/57`` beside the scrubber."""
+    text = format_clock(moment - clock.lights_out)
+    lap = series.leader_lap.at(moment) if len(series.leader_lap) else None
+    if lap and series.total_laps:
+        text += f" \N{MIDDLE DOT} Lap {lap}/{series.total_laps}"
+    container.markdown(f"**{text}**")
 
 
 @st.fragment(run_every=FRAME_INTERVAL_SECONDS)
-def _play(session_data: dict, clock: ReplayClock, key: str) -> None:
+def _play(session_data: dict, series: TowerSeries, clock: ReplayClock, key: str) -> None:
     """Advance the cursor and redraw, without rerunning the whole script."""
     cursor, playing = cursor_key(key), f"{PLAYING_PREFIX}:{key}"
     if not st.session_state.get(playing):
         return
-
     moment = advance(
         st.session_state[cursor],
         st.session_state[f"{SPEED_PREFIX}:{key}"],
@@ -220,9 +252,7 @@ def _play(session_data: dict, clock: ReplayClock, key: str) -> None:
         FRAME_INTERVAL_SECONDS,
     )
     st.session_state[cursor] = moment
-
-    _frame(session_data, clock, moment)
-
+    _readout(st, series, moment, clock)
+    render_dashboard(snapshot_at(session_data, moment, series))
     if moment >= clock.end:
         st.session_state[playing] = False
-        st.caption("Chequered flag - replay finished.")
