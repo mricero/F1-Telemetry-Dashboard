@@ -89,7 +89,7 @@ from ui.layout import (  # noqa: E402
     render_track_map,
     render_weather,
 )
-from ui.replay_view import render_session_replay  # noqa: E402
+from ui.replay_view import render_session_replay, session_key  # noqa: E402
 
 
 def load_session_data(data_manager, selection: dict) -> dict:
@@ -305,7 +305,7 @@ def main():
             "Play the session back from the start: every car where it actually "
             "was, the running order at that moment, and the lap they were on."
         )
-        render_session_replay(session_data)
+        render_session_replay(session_data, session_key(session_data, selection))
     with analysis[7]:
         render_weather(session_data.get("weather"))
     with analysis[8]:

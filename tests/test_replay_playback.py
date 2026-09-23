@@ -12,11 +12,15 @@ import pytest
 
 from processing.replay import (
     DEFAULT_STEP_SECONDS,
+    END_PADDING_SECONDS,
+    ReplayClock,
+    build_position_cube,
     build_position_timeline,
     format_clock,
     lap_at,
     order_at,
     positions_at,
+    replay_clock,
     timeline_bounds,
 )
 
@@ -55,6 +59,22 @@ class TestBuildPositionTimeline:
         times = sorted(timeline["Time"].unique())
 
         assert np.allclose(np.diff(times), DEFAULT_STEP_SECONDS)
+
+    def test_a_long_silence_is_not_bridged(self):
+        """A car in the garage is absent, not gliding down the pit lane."""
+        raw = pd.DataFrame(
+            {
+                "SessionTime": pd.to_timedelta([0.0, 0.5, 60.0, 60.5], unit="s"),
+                "X": [100.0, 110.0, 900.0, 910.0],
+                "Y": [50.0, 50.0, 50.0, 50.0],
+                "Status": ["OnTrack"] * 4,
+            }
+        )
+
+        frame = build_position_timeline({"VER": raw})
+
+        assert frame[(frame["Time"] > 1.0) & (frame["Time"] < 59.5)].empty
+        assert np.isclose(frame["Time"], 60.0).any()
 
     def test_it_covers_the_whole_session(self, timeline):
         assert timeline["Time"].min() == 0.0
@@ -126,11 +146,37 @@ class TestPositionsAt:
         assert {marker["code"] for marker in markers} == {"VER", "HAM"}
         assert all({"x", "y"} <= set(marker) for marker in markers)
 
-    def test_it_snaps_to_the_nearest_grid_time(self, timeline):
-        exact = positions_at(timeline, 5.0)
-        nudged = positions_at(timeline, 5.1)
+    def test_it_interpolates_between_grid_frames(self):
+        """REPLAY-01: cars move smoothly instead of snapping to 0.5 s frames."""
+        timeline = pd.DataFrame(
+            {"Time": [0.0, 0.5], "Driver": ["VER", "VER"], "X": [0.0, 10.0], "Y": [5.0, 5.0]}
+        )
 
-        assert exact == nudged
+        (marker,) = positions_at(timeline, 0.25)
+
+        assert marker["x"] == pytest.approx(5.0)
+        assert marker["y"] == pytest.approx(5.0)
+
+    def test_a_cube_and_its_timeline_agree(self, timeline):
+        cube = build_position_cube(timeline)
+
+        assert positions_at(cube, 7.3) == positions_at(timeline, 7.3)
+
+    def test_a_car_missing_from_one_frame_uses_the_nearer_sample(self):
+        timeline = pd.DataFrame(
+            {
+                "Time": [0.0, 0.5, 0.5],
+                "Driver": ["VER", "VER", "HAM"],
+                "X": [0.0, 10.0, 99.0],
+                "Y": [0.0, 0.0, 0.0],
+            }
+        )
+
+        early = {m["code"] for m in positions_at(timeline, 0.1)}
+        late = {m["code"]: m["x"] for m in positions_at(timeline, 0.4)}
+
+        assert early == {"VER"}
+        assert late["HAM"] == pytest.approx(99.0)
 
     def test_a_time_outside_the_session_gives_nothing(self, timeline):
         assert positions_at(timeline, 9_999.0) == []
@@ -203,7 +249,65 @@ class TestLapAt:
 class TestFormatClock:
     @pytest.mark.parametrize(
         "seconds,expected",
-        [(0, "0:00"), (65, "1:05"), (3661, "1:01:01"), (5400, "1:30:00")],
+        [(0, "0:00:00"), (65, "0:01:05"), (3661, "1:01:01"), (5400, "1:30:00"), (-3, "0:00:00")],
     )
     def test_it_reads_as_a_session_clock(self, seconds, expected):
         assert format_clock(seconds) == expected
+
+
+def _race_laps(lap1_starts=(3600.0, 3600.0)) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Driver": ["VER", "HAM", "VER", "HAM"],
+            "LapNumber": [1, 1, 2, 2],
+            "LapStartTime": pd.to_timedelta([*lap1_starts, 3690.0, 3691.0], unit="s"),
+            "Time": pd.to_timedelta([3690.0, 3691.0, 3780.0, 3782.0], unit="s"),
+        }
+    )
+
+
+def _timeline(start: float, end: float) -> pd.DataFrame:
+    times = np.arange(start, end + 0.25, 0.5)
+    return pd.DataFrame({"Time": times, "Driver": "VER", "X": times, "Y": times})
+
+
+class TestReplayClock:
+    def test_a_race_starts_at_lights_out(self):
+        clock = replay_clock(_race_laps(), _timeline(3500.0, 4000.0), "R")
+
+        assert clock.lights_out == 3600.0
+        assert clock.start == 3500.0
+
+    def test_one_missing_lap_one_start_does_not_move_lights_out(self):
+        laps = _race_laps(lap1_starts=(float("nan"), 3600.0))
+
+        assert replay_clock(laps, _timeline(3500.0, 4000.0), "R").lights_out == 3600.0
+
+    def test_other_sessions_start_at_the_session_start(self):
+        clock = replay_clock(_race_laps(), _timeline(3500.0, 4000.0), "Q", session_start=3550.0)
+
+        assert clock.lights_out == 3550.0
+
+    def test_without_a_session_start_the_first_lap_start_counts(self):
+        assert replay_clock(_race_laps(), _timeline(3500.0, 4000.0), "FP1").lights_out == 3600.0
+
+    def test_the_end_is_the_last_lap_plus_padding_capped_by_the_timeline(self):
+        long_timeline = _timeline(3500.0, 9000.0)
+        short_timeline = _timeline(3500.0, 3800.0)
+
+        assert replay_clock(_race_laps(), long_timeline, "R").end == 3782.0 + END_PADDING_SECONDS
+        assert replay_clock(_race_laps(), short_timeline, "R").end == 3800.0
+
+    def test_it_round_trips_through_a_plain_dict(self):
+        clock = ReplayClock(start=1.0, lights_out=2.0, end=3.0)
+
+        assert ReplayClock.from_dict(clock.to_dict()) == clock
+        assert ReplayClock.from_dict({"start": 1}) is None
+        assert ReplayClock.from_dict(None) is None
+
+    def test_clamp_keeps_the_cursor_inside_the_window(self):
+        clock = ReplayClock(start=10.0, lights_out=20.0, end=30.0)
+
+        assert clock.clamp(5.0) == 10.0
+        assert clock.clamp(99.0) == 30.0
+        assert clock.clamp(25.0) == 25.0

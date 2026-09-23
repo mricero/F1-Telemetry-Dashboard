@@ -372,7 +372,10 @@ class FastF1Adapter:
         return pd.DataFrame(results[present]).reset_index(drop=True)
 
     def get_position_timeline(
-        self, session: fastf1.core.Session, drivers: Sequence[str]
+        self,
+        session: fastf1.core.Session,
+        drivers: Sequence[str],
+        include_pre_race: bool = False,
     ) -> pd.DataFrame:
         """Every driver's position across the whole session, on one clock.
 
@@ -381,6 +384,13 @@ class FastF1Adapter:
         and the merge is what makes telemetry loading expensive. Note that
         this data must never be `.add_distance()`d: it carries no Speed
         channel (see CLAUDE.md).
+
+        ``Laps.get_pos_data()`` starts at the first ``LapStartTime``. In
+        qualifying and practice that can be NaT for a driver's first lap,
+        which would drop their first out-lap, so those drivers are read from
+        the raw ``session.pos_data`` from the session start instead.
+        ``include_pre_race`` does the same for every driver, adding the grid
+        and formation lap; it is off by default to keep the payload small.
         """
         frames = {}
         for driver in drivers:
@@ -388,7 +398,8 @@ class FastF1Adapter:
                 laps = session.laps.pick_drivers(driver)
                 if laps is None or laps.empty:
                     continue
-                positions = laps.get_pos_data()
+                raw = self._raw_positions(session, laps, include_pre_race)
+                positions = raw if raw is not None else laps.get_pos_data()
             except Exception as exc:
                 logger.warning("No position data for %s: %s", driver, exc)
                 continue
@@ -396,6 +407,39 @@ class FastF1Adapter:
                 frames[driver] = pd.DataFrame(positions)
 
         return build_position_timeline(frames)
+
+    @staticmethod
+    def _raw_positions(session, laps, include_pre_race: bool) -> pd.DataFrame | None:
+        """Raw position samples from the session start to the driver's last lap.
+
+        None when the lap-sliced data is complete (the first lap has a start
+        time) and the pre-race was not asked for. Position data only: never
+        distance-integrate it (no Speed channel).
+        """
+        ordered = laps.sort_values("LapNumber") if "LapNumber" in laps.columns else laps
+        has_start = "LapStartTime" in ordered.columns
+        first_start = ordered["LapStartTime"].iloc[0] if has_start else pd.NaT
+        if not include_pre_race and pd.notna(first_start):
+            return None
+
+        if "DriverNumber" not in ordered.columns:
+            return None
+        number = str(ordered["DriverNumber"].iloc[0])
+        pos_data = getattr(session, "pos_data", None) or {}
+        if number not in pos_data:
+            return None
+        raw = pd.DataFrame(pos_data[number])
+        if "SessionTime" not in raw.columns:
+            return None
+
+        times = raw["SessionTime"]
+        keep = times.notna()
+        if "Time" in ordered.columns and ordered["Time"].notna().any():
+            keep &= times <= ordered["Time"].max()
+        begin = getattr(session, "session_start_time", None)
+        if not include_pre_race and begin is not None and pd.notna(begin):
+            keep &= times >= begin
+        return raw[keep]
 
     def get_laps(self, session: fastf1.core.Session) -> pd.DataFrame:
         """Get lap timing data with a boolean pit-out flag.

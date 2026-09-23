@@ -5,7 +5,11 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from ui.replay_view import SPEED_OPTIONS, advance, driver_meta, order_html
+from ui.replay_view import SPEED_OPTIONS, advance, driver_meta, order_html, session_key
+
+KEY = "fastf1:2026:Italian Grand Prix:R"
+CURSOR = f"replay_cursor:{KEY}"
+PLAYING = f"replay_playing:{KEY}"
 
 
 def _session(samples: int = 121) -> dict:
@@ -46,6 +50,8 @@ def _session(samples: int = 121) -> dict:
                 "Position": [1.0, 2.0, 2.0, 1.0],
                 "LapTime": pd.to_timedelta([30.0, 31.0, 29.0, 28.0], unit="s"),
                 "Time": pd.to_timedelta([30.0, 31.0, 59.0, 59.0], unit="s"),
+                # Lights out 2 s into the timeline: the replay opens there.
+                "LapStartTime": pd.to_timedelta([2.0, 2.0, 30.0, 31.0], unit="s"),
             }
         ),
         "drivers": pd.DataFrame(
@@ -89,7 +95,7 @@ class TestControls:
         labels = [button.label for button in app.button]
 
         assert "▶️ Play" in labels
-        assert "⏮️ Start" in labels
+        assert "Lights out" in labels
         assert len(app.slider) == 1, "the session needs a time scrubber"
 
     def test_the_scrubber_spans_the_whole_session(self, app):
@@ -98,9 +104,17 @@ class TestControls:
         assert scrubber.min == 0.0
         assert scrubber.max == pytest.approx(60.0, abs=0.5)
 
-    def test_it_starts_at_the_beginning_and_paused(self, app):
-        assert app.session_state["replay_cursor"] == 0.0
-        assert app.session_state["replay_playing"] is False
+    def test_it_starts_at_lights_out_and_paused(self, app):
+        assert app.session_state[CURSOR] == 2.0
+        assert app.session_state[PLAYING] is False
+
+    def test_the_cursor_is_kept_per_session(self):
+        session = _session()
+        other = {**session, "session_info": {**session["session_info"], "gp": "Monaco"}}
+
+        assert session_key(session) == KEY
+        assert session_key(other) != KEY
+        assert session_key(session, {"source": "replay", "replay_file": "a"}) == "replay:a"
 
     def test_speeds_are_offered(self, app):
         assert list(app.selectbox[0].options) == list(SPEED_OPTIONS)
@@ -110,13 +124,13 @@ class TestScrubbing:
     def test_moving_the_scrubber_moves_the_cursor(self, app):
         app.slider[0].set_value(45.0).run()
 
-        assert app.session_state["replay_cursor"] == pytest.approx(45.0)
+        assert app.session_state[CURSOR] == pytest.approx(45.0)
 
-    def test_the_clock_follows_the_cursor(self, app):
-        app.slider[0].set_value(45.0).run()
+    def test_the_race_clock_counts_from_lights_out(self, app):
+        app.slider[0].set_value(47.0).run()
         values = [metric.value for metric in app.metric]
 
-        assert "0:45" in values
+        assert "0:00:45" in values
 
     def test_the_lap_follows_the_cursor(self, app):
         app.slider[0].set_value(45.0).run()
@@ -145,18 +159,18 @@ class TestScrubbing:
         assert svg.count("<circle") >= 2  # one node per car
         assert "VER" in svg and "HAM" in svg
 
-    def test_pressing_start_rewinds(self, app):
+    def test_pressing_lights_out_rewinds(self, app):
         app.slider[0].set_value(45.0).run()
-        next(button for button in app.button if button.label == "⏮️ Start").click().run()
+        next(button for button in app.button if button.label == "Lights out").click().run()
 
-        assert app.session_state["replay_cursor"] == 0.0
+        assert app.session_state[CURSOR] == 2.0
 
 
 class TestPlayback:
     def test_play_toggles_the_state(self, app):
         next(button for button in app.button if button.label == "▶️ Play").click().run()
 
-        assert app.session_state["replay_playing"] is True
+        assert app.session_state[PLAYING] is True
 
     def test_the_scrubber_is_disabled_while_playing(self, app):
         next(button for button in app.button if button.label == "▶️ Play").click().run()

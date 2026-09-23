@@ -7,6 +7,7 @@ raises) and that ``session.laps`` has ``PitOutTime`` rather than a boolean
 production crash pass CI.
 """
 
+from typing import ClassVar
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -509,3 +510,78 @@ class TestLapTimeColumns:
         laps = FastF1Adapter().get_laps(session)
 
         assert "Time" not in laps.columns
+
+
+class _Laps(pd.DataFrame):
+    """A FastF1 ``Laps`` stand-in: a DataFrame that can slice position data.
+
+    ``get_pos_data()`` mirrors FastF1: it starts at the first *non-NaT*
+    ``LapStartTime``, so a qualifying driver whose first lap has none loses
+    their out-lap.
+    """
+
+    _metadata: ClassVar = ["pos_data"]
+
+    @property
+    def _constructor(self):
+        return _Laps
+
+    def pick_drivers(self, driver):
+        picked = _Laps(self[self["Driver"] == driver])
+        picked.pos_data = self.pos_data
+        return picked
+
+    def get_pos_data(self):
+        raw = self.pos_data[str(self["DriverNumber"].iloc[0])]
+        begin = self["LapStartTime"].dropna().min()
+        return raw[(raw["SessionTime"] >= begin) & (raw["SessionTime"] <= self["Time"].max())]
+
+
+def _qualifying_session(first_lap_start):
+    seconds = np.arange(0.0, 400.0, 0.25)
+    raw = pd.DataFrame(
+        {
+            "SessionTime": pd.to_timedelta(seconds, unit="s"),
+            "X": 100.0 + seconds,
+            "Y": 50.0 + seconds,
+            "Z": 0.0,
+            "Status": "OnTrack",
+        }
+    )
+    laps = _Laps(
+        {
+            "Driver": ["VER", "VER"],
+            "DriverNumber": ["1", "1"],
+            "LapNumber": [1.0, 2.0],
+            "LapStartTime": pd.to_timedelta([first_lap_start, 200.0], unit="s"),
+            "Time": pd.to_timedelta([200.0, 300.0], unit="s"),
+        }
+    )
+    laps.pos_data = {"1": raw}
+    session = Mock()
+    session.laps = laps
+    session.pos_data = {"1": raw}
+    session.session_start_time = pd.Timedelta(50, unit="s")
+    return session
+
+
+class TestPositionTimelineOutLap:
+    """REPLAY-01: a Q/FP driver's first out-lap is not dropped."""
+
+    def test_a_nat_first_lap_start_reads_from_the_session_start(self):
+        timeline = FastF1Adapter().get_position_timeline(_qualifying_session(np.nan), ["VER"])
+
+        assert timeline["Time"].min() == pytest.approx(50.0)
+        assert timeline["Time"].max() == pytest.approx(300.0)
+
+    def test_a_timed_first_lap_uses_the_lap_slice(self):
+        timeline = FastF1Adapter().get_position_timeline(_qualifying_session(120.0), ["VER"])
+
+        assert timeline["Time"].min() == pytest.approx(120.0)
+
+    def test_pre_race_can_be_asked_for(self):
+        timeline = FastF1Adapter().get_position_timeline(
+            _qualifying_session(120.0), ["VER"], include_pre_race=True
+        )
+
+        assert timeline["Time"].min() == pytest.approx(0.0)

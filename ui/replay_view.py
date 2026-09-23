@@ -15,11 +15,12 @@ import streamlit as st
 
 from processing.replay import (
     DEFAULT_STEP_SECONDS,
+    ReplayClock,
     format_clock,
     lap_at,
     order_at,
     positions_at,
-    timeline_bounds,
+    replay_clock,
 )
 from ui.theme import DASHBOARD_CSS, team_color
 from ui.track_map import build_track_svg
@@ -30,9 +31,43 @@ SPEED_OPTIONS = {"1x": 1.0, "5x": 5.0, "20x": 20.0, "60x": 60.0}
 # spends longer rerunning the script than the frame is on screen for.
 FRAME_INTERVAL_SECONDS = 0.5
 
-CURSOR_KEY = "replay_cursor"
-PLAYING_KEY = "replay_playing"
-SPEED_KEY = "replay_speed"
+# Per-session state keys (IMPROVEMENTS.md ground rules): switching session
+# must not carry the previous session's cursor into the new one.
+CURSOR_PREFIX = "replay_cursor"
+PLAYING_PREFIX = "replay_playing"
+SPEED_PREFIX = "replay_speed"
+
+
+def session_key(session_data: dict, selection: dict | None = None) -> str:
+    """``source:year:gp:session_type``, or ``replay:<file>`` for a saved replay."""
+    chosen = selection or {}
+    if chosen.get("source") == "replay" and chosen.get("replay_file"):
+        return f"replay:{chosen['replay_file']}"
+    info = session_data.get("session_info") or {}
+    source = chosen.get("source") or session_data.get("source") or "fastf1"
+    year = chosen.get("year") or info.get("year")
+    gp = chosen.get("gp") or info.get("gp")
+    session_type = chosen.get("session_type") or info.get("session_type")
+    return f"{source}:{year}:{gp}:{session_type}"
+
+
+def cursor_key(key: str) -> str:
+    """Where the authoritative replay cursor for one session lives."""
+    return f"{CURSOR_PREFIX}:{key}"
+
+
+def clock_for(session_data: dict) -> ReplayClock:
+    """The session's replay clock: stored at load time, or derived here."""
+    info = session_data.get("session_info") or {}
+    stored = ReplayClock.from_dict(info.get("replay_clock"))
+    if stored is not None:
+        return stored
+    return replay_clock(
+        session_data.get("laps"),
+        session_data.get("positions"),
+        info.get("session_type"),
+        info.get("session_start"),
+    )
 
 
 def advance(cursor: float, speed_label: str, end: float, interval: float) -> float:
@@ -77,7 +112,7 @@ def order_html(order: list, meta: dict) -> str:
     return f'<div class="f1-dash" style="padding:10px">{"".join(rows)}</div>'
 
 
-def _frame(session_data: dict, moment: float) -> None:
+def _frame(session_data: dict, clock: ReplayClock, moment: float) -> None:
     """Draw one moment: the map, the order, and the clock."""
     timeline = session_data.get("positions")
     laps = session_data.get("laps")
@@ -102,14 +137,14 @@ def _frame(session_data: dict, moment: float) -> None:
             st.html(f'<div class="f1-dash">{svg}</div>')
 
     with right:
-        st.metric("Session clock", format_clock(moment))
+        st.metric("Race time", format_clock(moment - clock.lights_out))
         st.metric("Lap", lap_at(laps, moment))
         st.caption(f"{len(markers)} car(s) on track")
         st.html(order_html(order_at(laps, moment), meta))
 
 
-def render_session_replay(session_data: dict) -> None:
-    """Scrub or play back a whole session."""
+def render_session_replay(session_data: dict, key: str | None = None) -> None:
+    """Scrub or play back a whole session, from lights out."""
     st.html(DASHBOARD_CSS)
 
     timeline = session_data.get("positions")
@@ -120,30 +155,33 @@ def render_session_replay(session_data: dict) -> None:
         )
         return
 
-    start, end = timeline_bounds(timeline)
+    clock = clock_for(session_data)
+    start, end = clock.start, clock.end
     if end <= start:
         st.info("The position timeline covers no time.")
         return
 
-    st.session_state.setdefault(CURSOR_KEY, start)
-    st.session_state.setdefault(PLAYING_KEY, False)
-    st.session_state.setdefault(SPEED_KEY, "5x")
+    key = key or session_key(session_data)
+    cursor, playing, speed = cursor_key(key), f"{PLAYING_PREFIX}:{key}", f"{SPEED_PREFIX}:{key}"
+    st.session_state.setdefault(cursor, clock.lights_out)
+    st.session_state.setdefault(playing, False)
+    st.session_state.setdefault(speed, "5x")
 
     controls = st.columns([1, 1, 2, 6])
     with controls[0]:
-        if st.button("⏸️ Pause" if st.session_state[PLAYING_KEY] else "▶️ Play"):
-            st.session_state[PLAYING_KEY] = not st.session_state[PLAYING_KEY]
+        if st.button("⏸️ Pause" if st.session_state[playing] else "▶️ Play"):
+            st.session_state[playing] = not st.session_state[playing]
             st.rerun()
     with controls[1]:
-        if st.button("⏮️ Start"):
-            st.session_state[CURSOR_KEY] = start
-            st.session_state[PLAYING_KEY] = False
+        if st.button("Lights out"):
+            st.session_state[cursor] = clock.lights_out
+            st.session_state[playing] = False
             st.rerun()
     with controls[2]:
-        st.session_state[SPEED_KEY] = st.selectbox(
+        st.session_state[speed] = st.selectbox(
             "Speed",
             list(SPEED_OPTIONS),
-            index=list(SPEED_OPTIONS).index(st.session_state[SPEED_KEY]),
+            index=list(SPEED_OPTIONS).index(st.session_state[speed]),
             label_visibility="collapsed",
         )
     with controls[3]:
@@ -153,37 +191,38 @@ def render_session_replay(session_data: dict) -> None:
             "Session time",
             min_value=float(start),
             max_value=float(end),
-            value=float(st.session_state[CURSOR_KEY]),
+            value=float(clock.clamp(st.session_state[cursor])),
             step=float(DEFAULT_STEP_SECONDS),
             format="%.1f s",
             label_visibility="collapsed",
-            disabled=st.session_state[PLAYING_KEY],
+            disabled=st.session_state[playing],
         )
-        if not st.session_state[PLAYING_KEY]:
-            st.session_state[CURSOR_KEY] = chosen
+        if not st.session_state[playing]:
+            st.session_state[cursor] = chosen
 
-    if st.session_state[PLAYING_KEY]:
-        _play(session_data, end)
+    if st.session_state[playing]:
+        _play(session_data, clock, key)
     else:
-        _frame(session_data, st.session_state[CURSOR_KEY])
+        _frame(session_data, clock, st.session_state[cursor])
 
 
 @st.fragment(run_every=FRAME_INTERVAL_SECONDS)
-def _play(session_data: dict, end: float) -> None:
+def _play(session_data: dict, clock: ReplayClock, key: str) -> None:
     """Advance the cursor and redraw, without rerunning the whole script."""
-    if not st.session_state.get(PLAYING_KEY):
+    cursor, playing = cursor_key(key), f"{PLAYING_PREFIX}:{key}"
+    if not st.session_state.get(playing):
         return
 
     moment = advance(
-        st.session_state[CURSOR_KEY],
-        st.session_state[SPEED_KEY],
-        end,
+        st.session_state[cursor],
+        st.session_state[f"{SPEED_PREFIX}:{key}"],
+        clock.end,
         FRAME_INTERVAL_SECONDS,
     )
-    st.session_state[CURSOR_KEY] = moment
+    st.session_state[cursor] = moment
 
-    _frame(session_data, moment)
+    _frame(session_data, clock, moment)
 
-    if moment >= end:
-        st.session_state[PLAYING_KEY] = False
+    if moment >= clock.end:
+        st.session_state[playing] = False
         st.caption("Chequered flag - replay finished.")

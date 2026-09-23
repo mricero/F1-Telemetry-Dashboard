@@ -215,3 +215,29 @@ class TestStintChartTraces:
         elapsed = _elapsed(lambda: stint_traces(stints, {}))
 
         assert elapsed < 0.5, f"{rows} stints took {elapsed * 1000:.0f} ms"
+
+
+class TestReplayPositionLookup:
+    """REPLAY-01: a replay frame must not scan the whole timeline."""
+
+    def test_a_lookup_on_a_full_race_cube_is_under_two_milliseconds(self):
+        from processing.replay import PositionCube, positions_at
+
+        frames, drivers = 14_000, 22
+        rng = np.random.default_rng(1)
+        cube = PositionCube(
+            t0=3600.0,
+            step=0.5,
+            codes=tuple(f"D{index:02d}" for index in range(drivers)),
+            xy=rng.normal(size=(frames, drivers, 2)).astype("float32"),
+        )
+        moments = 3600.0 + rng.uniform(0, (frames - 1) * 0.5, size=200)
+
+        positions_at(cube, float(moments[0]))  # warm-up
+        start = time.perf_counter()
+        for moment in moments:
+            markers = positions_at(cube, float(moment))
+        per_call = (time.perf_counter() - start) / len(moments)
+
+        assert len(markers) == drivers
+        assert per_call < 0.002, f"{per_call * 1000:.2f} ms per lookup"
