@@ -173,9 +173,15 @@ def _app_script():
 
 # LiveF1 (Historical) is no longer offered - see HIST-03.
 SOURCE_LABELS = {
-    "fastf1": "FastF1 (Historical)",
-    "replay": "Replay (Saved)",
+    "fastf1": "FastF1 (historical)",
+    "replay": "Saved replay",
 }
+
+
+def _press_load(app_test: AppTest) -> AppTest:
+    """The picker loads nothing until Load session is pressed (UI-02)."""
+    next(button for button in app_test.button if button.label == "Load session").click().run()
+    return app_test
 
 
 def _run_for(source: str) -> AppTest:
@@ -186,8 +192,8 @@ def _run_for(source: str) -> AppTest:
     app_test = AppTest.from_function(_app_script, default_timeout=60)
     app_test.run()
     assert not app_test.exception, app_test.exception
-    app_test.selectbox[0].set_value(SOURCE_LABELS[source]).run()
-    return app_test
+    app_test.selectbox(key="picker_source").set_value(SOURCE_LABELS[source]).run()
+    return _press_load(app_test)
 
 
 @pytest.fixture(autouse=True)
@@ -284,11 +290,12 @@ class TestReplayEndToEndWithARealManager:
 
     def test_a_saved_replay_loads_and_renders(self):
         app_test = AppTest.from_function(_real_replay_script, default_timeout=60)
-        # The first run defaults to Auto -> FastF1, which is not stubbed here;
-        # only the Replay run that follows is under test.
+        # Nothing loads on the first run; the Replay load that follows is
+        # the path under test.
         app_test.run()
 
-        app_test.selectbox[0].set_value("Replay (Saved)").run()
+        app_test.selectbox(key="picker_source").set_value("Saved replay").run()
+        _press_load(app_test)
 
         assert not app_test.exception, app_test.exception
         errors = " ".join(err.value for err in app_test.error)

@@ -172,9 +172,12 @@ def main():
     processor = st.session_state.processor
     metrics_store = st.session_state.metrics_store
 
-    # Session Selection
-    with st.expander("Session", expanded=True):
-        selection = render_session_selector(data_manager)
+    # Session selection lives in the sidebar; nothing loads until the user
+    # presses Load session (or opens a shared link).
+    selection = render_session_selector(data_manager)
+    if selection is None:
+        st.info("Choose a session in the sidebar and press Load session.")
+        return
 
     # Load Data (runtime-cached: repeat selections are instant, and
     # everything evaporates when the app closes)

@@ -18,7 +18,7 @@ class TestSelectorDoesNotOfferIt:
         assert not any("LiveF1" in label for label in SOURCE_MAP)
 
     def test_the_sources_that_work_are_still_offered(self):
-        assert set(SOURCE_MAP.values()) >= {"auto", "fastf1", "live", "replay"}
+        assert set(SOURCE_MAP.values()) >= {"fastf1", "live", "replay"}
 
 
 class TestLoaderExplainsItself:

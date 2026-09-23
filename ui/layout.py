@@ -64,13 +64,31 @@ SCOPE_LABELS = {
 # "LiveF1 (Historical)" is deliberately absent: its loader reads attributes
 # and column names livef1 does not use, and livef1 itself raises building a
 # Session for some seasons. Offering it promised data the app cannot deliver
-# (HIST-03); FastF1 covers the same sessions.
+# (HIST-03); FastF1 covers the same sessions. "Auto" is gone too: a running
+# session is offered through the explicit "Go live" button (LIVE-15), so the
+# picker never switches source behind the user's back.
 SOURCE_MAP = {
-    "Auto (Live → Historical)": "auto",
-    "FastF1 (Historical)": "fastf1",
-    "Live (SignalR)": "live",
-    "Replay (Saved)": "replay",
+    "FastF1 (historical)": "fastf1",
+    "Saved replay": "replay",
+    "Live timing (SignalR)": "live",
 }
+
+# FastF1 has timing and telemetry from 2018 on.
+FIRST_SEASON = 2018
+
+SESSION_NAMES = {
+    "FP1": "Practice 1",
+    "FP2": "Practice 2",
+    "FP3": "Practice 3",
+    "SQ": "Sprint qualifying",
+    "S": "Sprint",
+    "Q": "Qualifying",
+    "R": "Race",
+}
+
+SELECTION_KEY = "selection"
+RECENT_KEY = "recent_sessions"
+RECENT_LIMIT = 5
 
 
 def render_header():
@@ -116,74 +134,103 @@ def _session_codes_cached(_data_manager, year: int, gp: str) -> list:
     return session_codes_for_event(matches.iloc[0])
 
 
-def render_session_selector(data_manager) -> dict:
-    """Session selection with live detection."""
-    # Check for live session
-    is_race_weekend = _is_race_weekend_cached(data_manager)
+def selection_label(selection: dict) -> str:
+    """A short name for a selection: ``2023 Bahrain - Race`` (en dash)."""
+    source = selection.get("source")
+    if source == "replay":
+        return f"Replay {selection.get('replay_file')}"
+    if source == "live":
+        return "Live timing"
+    gp = str(selection.get("gp") or "").replace(" Grand Prix", "")
+    session = SESSION_NAMES.get(str(selection.get("session_type")), selection.get("session_type"))
+    return f"{selection.get('year')} {gp} \N{EN DASH} {session}"
 
-    col1, col2, col3 = st.columns([2, 2, 1])
 
-    with col1:
-        source = st.selectbox("Data Source", list(SOURCE_MAP), index=0)
-
-    # Live indicator (exact match so "LiveF1 (Historical)" is not treated as live)
-    live_session = None
-    if "Auto" in source and is_race_weekend:
-        # A session really is on air - but Auto no longer switches silently
-        # and hides the historical selectors: the user chooses (LIVE-15).
-        with col2:
-            st.success("A session is running now")
-            go_live = st.button("Go live", key="go_live")
-        if go_live or st.session_state.get("go_live_active"):
-            st.session_state["go_live_active"] = True
-            live_session = True
-    elif source == "Live (SignalR)":
-        with col2:
-            st.warning("Live mode: connecting to the F1 SignalR feed")
-        live_session = True
-
-    telemetry_scope = SCOPE_LABELS["Fastest lap (comparable)"]
-    is_replay = source == "Replay (Saved)"
-
-    # A replay carries its own session identity, so Season/GP/Session/Scope
-    # would only mislead: the file is the whole selection.
-    if is_replay:
-        years = None
-        gp = None
-        session_type = None
-        with col2:
-            replays = data_manager.get_available_replays()
-            if replays:
-                replay_file = st.selectbox("Replay File", replays)
-            else:
-                st.info("No replay files available")
-                replay_file = None
-
-    # Historical selection
-    elif not live_session:
-        with col2:
-            this_year = datetime.now(UTC).year
-            years = st.selectbox("Season", [this_year, this_year - 1, this_year - 2], index=0)
-
-        with col3:
-            # Available GPs for the selected year (FastF1 schedule for all sources)
-            gps = _event_names_cached(data_manager, years)
-            if gps:
-                gp = st.selectbox("Grand Prix", gps)
-            else:
-                st.selectbox("Grand Prix", ["No completed events"], disabled=True)
-                gp = None
-
-        session_types = (gp and _session_codes_cached(data_manager, years, gp)) or (
-            FALLBACK_SESSION_TYPES
+def _commit(selection: dict) -> None:
+    """Make ``selection`` the one the app loads, and remember it."""
+    st.session_state[SELECTION_KEY] = selection
+    recent = [s for s in st.session_state.get(RECENT_KEY, []) if s != selection]
+    st.session_state[RECENT_KEY] = [selection, *recent][:RECENT_LIMIT]
+    if selection.get("source") == "fastf1":
+        st.query_params.from_dict(
+            {
+                "year": str(selection["year"]),
+                "gp": str(selection["gp"]),
+                "session": str(selection["session_type"]),
+            }
         )
-        session_type = st.selectbox("Session", session_types, index=len(session_types) - 1)
+    else:
+        st.query_params.clear()
 
+
+def _selection_from_url() -> dict | None:
+    """``?year=2023&gp=Bahrain Grand Prix&session=R`` -> a historical selection."""
+    params = st.query_params
+    try:
+        year = int(params.get("year", ""))
+    except ValueError:
+        return None
+    gp, session = params.get("gp"), params.get("session")
+    if not gp or not session:
+        return None
+    return {
+        "source": "fastf1",
+        "year": year,
+        "gp": gp,
+        "session_type": session,
+        "replay_file": None,
+        "telemetry_scope": SCOPE_LABELS["Fastest lap (comparable)"],
+    }
+
+
+def render_session_selector(data_manager) -> dict | None:
+    """The sidebar session picker; returns the selection to load, or None.
+
+    Browsing the dropdowns never loads anything: only **Load session** (or a
+    Recent entry, or a shared URL on first open) changes the selection. The
+    picker is a fragment, so changing a dropdown reruns the sidebar alone -
+    the lists still follow each other (Grand Prix by season, sessions by
+    weekend format) without redrawing the page.
+    """
+    if SELECTION_KEY not in st.session_state:
+        from_url = _selection_from_url()
+        st.session_state[SELECTION_KEY] = from_url
+        if from_url is not None:
+            st.session_state.setdefault("picker_year", from_url["year"])
+            st.session_state.setdefault("picker_gp", from_url["gp"])
+            st.session_state.setdefault("picker_session", from_url["session_type"])
+            st.session_state[RECENT_KEY] = [from_url]
+
+    with st.sidebar:
+        _session_picker(data_manager)
+    return st.session_state.get(SELECTION_KEY)
+
+
+@st.fragment
+def _session_picker(data_manager) -> None:
+    if _is_race_weekend_cached(data_manager):
+        # A session really is on air - but nothing switches silently: the
+        # user chooses (LIVE-15).
+        st.info("A session is running now")
+        if st.button("Go live", key="go_live"):
+            _commit(
+                {
+                    "source": "live",
+                    "year": None,
+                    "gp": None,
+                    "session_type": None,
+                    "replay_file": None,
+                    "telemetry_scope": SCOPE_LABELS["Fastest lap (comparable)"],
+                }
+            )
+            st.rerun()
+
+    with st.expander("Advanced", expanded=False):
+        source_label = st.selectbox("Data source", list(SOURCE_MAP), key="picker_source")
         scope_label = st.radio(
             "Telemetry scope",
             list(SCOPE_LABELS),
-            index=0,
-            horizontal=True,
+            key="picker_scope",
             help=(
                 "Fastest lap plots each driver's quickest lap on a 0 -> lap-length "
                 "distance axis, so drivers are comparable at the same track "
@@ -191,26 +238,65 @@ def render_session_selector(data_manager) -> dict:
                 "accumulating over the whole run (far heavier to render)."
             ),
         )
-        telemetry_scope = SCOPE_LABELS[scope_label]
-
-        if gp is None:
-            st.warning("No completed events for this season - pick another season.")
-
-        replay_file = None
-    else:
-        years = None
-        gp = None
-        session_type = None
-        replay_file = None
-
-    return {
-        "source": SOURCE_MAP.get(source, "auto"),
-        "year": years,
-        "gp": gp,
-        "session_type": session_type,
-        "replay_file": replay_file,
-        "telemetry_scope": telemetry_scope,
+    source = SOURCE_MAP[source_label]
+    selection: dict = {
+        "source": source,
+        "year": None,
+        "gp": None,
+        "session_type": None,
+        "replay_file": None,
+        "telemetry_scope": SCOPE_LABELS[scope_label],
     }
+
+    ready = True
+    if source == "replay":
+        # A replay carries its own session identity, so Season/GP/Session
+        # would only mislead: the file is the whole selection.
+        replays = data_manager.get_available_replays()
+        if replays:
+            selection["replay_file"] = st.selectbox("Replay file", replays, key="picker_replay")
+        else:
+            st.caption("No saved replays yet.")
+            ready = False
+    elif source == "live":
+        st.caption("Connects to the F1 SignalR feed while a session is running.")
+    else:
+        this_year = datetime.now(UTC).year
+        seasons = list(range(this_year, FIRST_SEASON - 1, -1))
+        year = st.selectbox("Season", seasons, key="picker_year")
+        gps = _event_names_cached(data_manager, year)
+        if gps:
+            if st.session_state.get("picker_gp") not in gps:
+                st.session_state.pop("picker_gp", None)
+            gp = st.selectbox("Grand Prix", gps, key="picker_gp")
+        else:
+            st.selectbox("Grand Prix", ["No completed events"], disabled=True)
+            st.caption("No completed events for this season. Pick another season.")
+            gp, ready = None, False
+        session_types = (gp and _session_codes_cached(data_manager, year, gp)) or (
+            FALLBACK_SESSION_TYPES
+        )
+        if st.session_state.get("picker_session") not in session_types:
+            st.session_state["picker_session"] = session_types[-1]
+        session_type = st.selectbox(
+            "Session",
+            session_types,
+            key="picker_session",
+            format_func=lambda code: SESSION_NAMES.get(code, code),
+        )
+        selection.update(year=year, gp=gp, session_type=session_type)
+
+    if st.button("Load session", type="primary", width="stretch", disabled=not ready):
+        _commit(selection)
+        st.rerun()
+
+    recent = st.session_state.get(RECENT_KEY, [])
+    if recent:
+        st.caption("Recent")
+        for index, entry in enumerate(recent):
+            if st.button(selection_label(entry), key=f"recent_{index}", type="tertiary"):
+                _commit(entry)
+                st.rerun()
 
 
 def create_telemetry_chart(

@@ -1,13 +1,18 @@
-"""Offline AppTest coverage for the sidebar source selector (HIST-01).
+"""The sidebar session picker (HIST-01, HIST-05, LIVE-15, UI-02).
 
-``render_session_selector`` decides which widgets exist per data source. The
-Replay path was broken end-to-end while the unit tests stayed green, so these
-drive the real Streamlit widget tree with a stub data manager.
+``render_session_selector`` draws the picker in the sidebar and returns the
+selection to load. Browsing it must never load anything: only **Load
+session**, a Recent entry or a shared URL changes the selection. These drive
+the real Streamlit widget tree with stub managers.
 """
+
+import os
 
 import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
+
+os.environ.setdefault("F1_METRICS_STORE", ":memory:")
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +34,7 @@ class _StubFastF1:
 class _StubManager:
     """Minimal stand-in for DataSourceManager: no network, no FastF1."""
 
-    def __init__(self, replays=("Bahrain_R_20260916_120000.pkl",), race_weekend=False):
+    def __init__(self, replays=("Bahrain_R_20260916_120000",), race_weekend=False):
         self._replays = list(replays)
         self._race_weekend = race_weekend
         self.fastf1 = _StubFastF1()
@@ -47,13 +52,13 @@ def _selector_script():
     from tests.test_session_selector import _StubManager
     from ui.layout import render_session_selector
 
-    st.session_state["selection"] = render_session_selector(_StubManager())
+    st.session_state["returned"] = render_session_selector(_StubManager())
 
 
-def _run(source_label: str) -> AppTest:
-    app = AppTest.from_function(_selector_script, default_timeout=30)
+def _app(script=_selector_script) -> AppTest:
+    app = AppTest.from_function(script, default_timeout=30)
     app.run()
-    app.selectbox[0].set_value(source_label).run()
+    assert not app.exception, app.exception
     return app
 
 
@@ -61,35 +66,77 @@ def _labels(app: AppTest) -> list:
     return [box.label for box in app.selectbox]
 
 
+def _load(app: AppTest) -> AppTest:
+    next(button for button in app.button if button.label == "Load session").click().run()
+    return app
+
+
+class TestNothingLoadsUntilAsked:
+    def test_the_first_open_selects_nothing(self):
+        app = _app()
+
+        assert app.session_state["returned"] is None
+        assert any(button.label == "Load session" for button in app.button)
+
+    def test_browsing_the_dropdowns_selects_nothing(self):
+        app = _app()
+        app.selectbox(key="picker_gp").set_value("Monaco Grand Prix").run()
+
+        assert app.session_state["returned"] is None
+
+    def test_load_session_commits_what_is_shown(self):
+        app = _app()
+        app.selectbox(key="picker_gp").set_value("Monaco Grand Prix").run()
+        _load(app)
+
+        selection = app.session_state["returned"]
+        assert selection["source"] == "fastf1"
+        assert selection["gp"] == "Monaco Grand Prix"
+        assert selection["session_type"] == "R"
+
+    def test_seasons_go_back_to_2018(self):
+        seasons = [int(season) for season in _app().selectbox(key="picker_year").options]
+
+        assert seasons[-1] == 2018
+        assert seasons == sorted(seasons, reverse=True)
+
+    def test_a_loaded_session_is_offered_under_recent(self):
+        app = _load(_app())
+        year = app.session_state["returned"]["year"]
+
+        labels = [button.label for button in app.button]
+        assert any(label.startswith(f"{year} Bahrain") for label in labels)
+
+
 class TestReplaySelection:
     def test_replay_hides_the_historical_selectors(self):
-        app = _run("Replay (Saved)")
+        app = _app()
+        app.selectbox(key="picker_source").set_value("Saved replay").run()
 
-        assert not app.exception
         labels = _labels(app)
-        assert "Replay File" in labels
+        assert "Replay file" in labels
         for irrelevant in ("Season", "Grand Prix", "Session"):
             assert irrelevant not in labels, f"{irrelevant} is meaningless for a replay"
-        assert len(app.radio) == 0, "telemetry scope does not apply to a replay"
 
     def test_replay_selection_passes_the_file_through(self):
-        app = _run("Replay (Saved)")
+        app = _app()
+        app.selectbox(key="picker_source").set_value("Saved replay").run()
+        _load(app)
 
-        selection = app.session_state["selection"]
+        selection = app.session_state["returned"]
         assert selection["source"] == "replay"
-        assert selection["replay_file"] == "Bahrain_R_20260916_120000.pkl"
+        assert selection["replay_file"] == "Bahrain_R_20260916_120000"
 
-    def test_fastf1_still_offers_the_historical_selectors(self):
-        app = _run("FastF1 (Historical)")
+    def test_fastf1_offers_the_historical_selectors(self):
+        labels = _labels(_app())
 
-        assert not app.exception
-        labels = _labels(app)
-        assert "Season" in labels and "Session" in labels
+        assert "Season" in labels and "Grand Prix" in labels and "Session" in labels
 
 
-@pytest.mark.parametrize("source_label", ["Replay (Saved)", "FastF1 (Historical)"])
+@pytest.mark.parametrize("source_label", ["Saved replay", "FastF1 (historical)"])
 def test_selector_never_raises(source_label):
-    app = _run(source_label)
+    app = _app()
+    app.selectbox(key="picker_source").set_value(source_label).run()
     assert not app.exception
 
 
@@ -127,7 +174,7 @@ def _sprint_script():
     from tests.test_session_selector import _SprintManager
     from ui.layout import render_session_selector
 
-    st.session_state["selection"] = render_session_selector(_SprintManager())
+    st.session_state["returned"] = render_session_selector(_SprintManager())
 
 
 class TestSessionListFollowsTheWeekendFormat:
@@ -135,54 +182,127 @@ class TestSessionListFollowsTheWeekendFormat:
 
     @staticmethod
     def _sessions_for(gp_label: str) -> list:
-        app = AppTest.from_function(_sprint_script, default_timeout=30)
-        app.run()
-        app.selectbox[0].set_value("FastF1 (Historical)").run()
-        gp_box = next(box for box in app.selectbox if box.label == "Grand Prix")
-        gp_box.set_value(gp_label).run()
-        session_box = next(box for box in app.selectbox if box.label == "Session")
-        return list(session_box.options)
+        app = _app(_sprint_script)
+        app.selectbox(key="picker_gp").set_value(gp_label).run()
+        return list(app.selectbox(key="picker_session").options)
 
     def test_sprint_weekend_offers_sq_and_s(self):
-        assert self._sessions_for("Miami Grand Prix") == ["FP1", "SQ", "S", "Q", "R"]
+        assert self._sessions_for("Miami Grand Prix") == [
+            "Practice 1",
+            "Sprint qualifying",
+            "Sprint",
+            "Qualifying",
+            "Race",
+        ]
 
     def test_conventional_weekend_offers_all_three_practices(self):
-        assert self._sessions_for("Monaco Grand Prix") == ["FP1", "FP2", "FP3", "Q", "R"]
+        assert self._sessions_for("Monaco Grand Prix") == [
+            "Practice 1",
+            "Practice 2",
+            "Practice 3",
+            "Qualifying",
+            "Race",
+        ]
 
 
-class TestAutoDoesNotHideHistory:
+class TestARunningSessionIsOfferedNotForced:
     """LIVE-15: a running session must not take the historical view away."""
 
     @staticmethod
-    def _auto_app():
+    def _live_app():
         def script():
             import streamlit as st
 
             from tests.test_session_selector import _StubManager
             from ui.layout import render_session_selector
 
-            st.session_state["selection"] = render_session_selector(_StubManager(race_weekend=True))
+            st.session_state["returned"] = render_session_selector(_StubManager(race_weekend=True))
 
-        app = AppTest.from_function(script, default_timeout=30)
-        app.run()
-        return app
+        return _app(script)
 
     def test_the_historical_selectors_stay_available(self):
-        app = self._auto_app()
+        labels = _labels(self._live_app())
 
-        assert not app.exception
-        labels = [box.label for box in app.selectbox]
         assert "Season" in labels and "Session" in labels
 
     def test_going_live_is_an_explicit_choice(self):
-        app = self._auto_app()
+        app = self._live_app()
 
         assert any(button.label == "Go live" for button in app.button)
-        assert app.session_state["selection"]["source"] == "auto"
+        assert app.session_state["returned"] is None
 
-    def test_pressing_go_live_switches_the_view(self):
-        app = self._auto_app()
+    def test_pressing_go_live_selects_the_live_source(self):
+        app = self._live_app()
         next(button for button in app.button if button.label == "Go live").click().run()
 
-        labels = [box.label for box in app.selectbox]
-        assert "Season" not in labels
+        assert app.session_state["returned"]["source"] == "live"
+
+
+# --- the whole app: loads are counted -------------------------------------
+
+LOADS: list = []
+
+
+class CountingManager(_StubManager):
+    """The app's data manager, counting every load it is asked for."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.live = None
+
+    def get_session_data(self, **selection):
+        from tests.test_app_sources import session_dict
+
+        LOADS.append(selection)
+        return session_dict(selection.get("source", "fastf1"))
+
+    def save_replay(self, data, name):
+        return name
+
+
+def _counting_app_script():
+    import app
+    from data.runtime_cache import runtime_cache
+    from tests.test_session_selector import CountingManager
+
+    app.DataSourceManager = CountingManager
+    runtime_cache.begin_session()
+    app.main()
+
+
+class TestTheAppLoadsOnlyOnLoad:
+    """UI-02 acceptance, driven through the real app."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        LOADS.clear()
+        yield
+        LOADS.clear()
+
+    def test_changing_the_grand_prix_does_not_load(self):
+        app = _app(_counting_app_script)
+        app.selectbox(key="picker_gp").set_value("Monaco Grand Prix").run()
+
+        assert LOADS == []
+        assert any("press Load session" in info.value for info in app.info)
+
+    def test_pressing_load_loads_once(self):
+        app = _app(_counting_app_script)
+        app.selectbox(key="picker_gp").set_value("Monaco Grand Prix").run()
+        _load(app)
+
+        assert len(LOADS) == 1
+        assert LOADS[0]["gp"] == "Monaco Grand Prix"
+
+    def test_a_shared_link_preselects_and_loads(self):
+        app = AppTest.from_function(_counting_app_script, default_timeout=30)
+        app.query_params["year"] = "2023"
+        app.query_params["gp"] = "Bahrain Grand Prix"
+        app.query_params["session"] = "R"
+        app.run()
+
+        assert not app.exception, app.exception
+        assert len(LOADS) == 1
+        loaded = (LOADS[0]["year"], LOADS[0]["gp"], LOADS[0]["session_type"])
+        assert loaded == (2023, "Bahrain Grand Prix", "R")
+        assert app.selectbox(key="picker_gp").value == "Bahrain Grand Prix"
