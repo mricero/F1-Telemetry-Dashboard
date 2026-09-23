@@ -19,7 +19,8 @@ from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from ui.dashboard import render_dashboard, wind_kmh
-from ui.theme import status_chip
+from ui.fonts import font_face_css
+from ui.theme import APP_CSS, CSS_TOKENS, status_chip
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
 # (see FastF1Adapter.compound_colors); these hexes match the 2024+ branding.
@@ -73,10 +74,14 @@ SOURCE_MAP = {
 
 
 def render_header():
-    """Render page header."""
-    st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide")
-    st.title("Formula 1 Telemetry Dashboard")
-    st.caption("Historical (FastF1) • Live (SignalR - FREE) • Replay (Local)")
+    """Configure the page and inject the shared styles, before any content.
+
+    No title or caption: the session header bar is the title (guideline
+    5.2). The fonts are embedded here, in the main document, because a
+    browser ignores ``@font-face`` inside a component's shadow root.
+    """
+    st.set_page_config(page_title="F1 Replay", layout="wide", initial_sidebar_state="expanded")
+    st.html(f"<style>{font_face_css()}{CSS_TOKENS}{APP_CSS}</style>")
 
 
 # Both helpers below hit the network. Streamlit re-runs this module top to

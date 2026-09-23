@@ -736,12 +736,12 @@ class TestSpecGapMarkup:
             [TestTowerPartitions._row(1, last_lap="1:30.500", last_is_session_best=True)]
         )
 
-        assert 'class="f1-time best f1-mono">1:30.500' in markup
+        assert 'class="f1-time best f1-num">1:30.500' in markup
 
     def test_an_ordinary_last_lap_is_not_highlighted(self):
         markup = tower_html([TestTowerPartitions._row(1, last_lap="1:32.000")])
 
-        assert 'class="f1-time f1-mono">1:32.000' in markup
+        assert 'class="f1-time f1-num">1:32.000' in markup
 
     def test_a_car_in_the_pits_reads_zero_kmh(self):
         markup = tower_html([TestTowerPartitions._row(1, status="IN PIT", speed_kmh=0.0)])

@@ -241,7 +241,7 @@ def build_track_svg(
             layers.append(
                 f'<text x="{lx:.1f}" y="{ly + 3.5:.1f}" text-anchor="middle" '
                 'fill="#cfcfcf" font-size="11" font-weight="700" '
-                f'font-family="Inter, sans-serif">{html.escape(label)}</text>'
+                f'style="font-family:var(--font-label)">{html.escape(label)}</text>'
             )
 
     # Driver position nodes.
@@ -257,13 +257,13 @@ def build_track_svg(
         layers.append(
             f'<text x="{point[0]:.1f}" y="{point[1] - 14:.1f}" text-anchor="middle" '
             'fill="#ffffff" font-size="11" font-weight="700" '
-            f'font-family="Inter, sans-serif">{code}</text>'
+            f'style="font-family:var(--font-label)">{code}</text>'
         )
 
     body = "\n".join(layers)
     return (
         f'<svg viewBox="0 0 {VIEW_W} {VIEW_H}" width="100%" height="100%" '
-        'xmlns="http://www.w3.org/2000/svg" style="display:block;max-height:560px;">\n'
+        'style="display:block;max-height:560px;">\n'
         f"{body}\n</svg>"
     )
 

@@ -1,0 +1,14 @@
+# Dark theme matching ui/theme.py (IMPROVEMENTS.md UI-01, guideline 5.4).
+[theme]
+base = "dark"
+primaryColor = "#e10600"
+backgroundColor = "#0b0c0f"
+secondaryBackgroundColor = "#13151a"
+textColor = "#eceef1"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+runOnSave = false

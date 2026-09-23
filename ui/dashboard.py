@@ -33,6 +33,7 @@ from ui.theme import (
     FLAG_STATES,
     segment_color,
     team_color,
+    text_on,
 )
 from ui.track_map import (
     build_track_svg,
@@ -179,7 +180,7 @@ def header_html(session_data: dict) -> str:
     lap_now, lap_total = info.get("current_lap"), info.get("total_laps")
     lap_text = (
         f'<span class="f1-env-label">Lap</span>'
-        f'<span class="f1-clock f1-mono">{lap_now}/{lap_total}</span>'
+        f'<span class="f1-clock f1-num">{lap_now}/{lap_total}</span>'
         if _is_snapshot(session_data) and lap_now and lap_total
         else ""
     )
@@ -192,7 +193,7 @@ def header_html(session_data: dict) -> str:
     def reading(label_text: str, value: str, extra: str = "") -> str:
         return (
             f'<div class="f1-env-item"><span class="f1-env-label">{label_text}</span>'
-            f'<span class="f1-env-value {extra} f1-mono">{value}</span></div>'
+            f'<span class="f1-env-value {extra} f1-num">{value}</span></div>'
         )
 
     def number(key: str, unit: str, digits: int = 1) -> str:
@@ -221,7 +222,7 @@ def header_html(session_data: dict) -> str:
   <div style="display:flex;align-items:center;gap:12px;">
     {lap_text}
     <span class="f1-env-label">{clock_label}</span>
-    <span class="f1-clock f1-mono" title="{clock_label}">{clock_value}</span>
+    <span class="f1-clock f1-num" title="{clock_label}">{clock_value}</span>
     <span class="f1-flag" style="background:{bg};color:{fg};">{label}</span>
   </div>
   <div class="f1-env">
@@ -323,26 +324,26 @@ def tower_html(rows: Sequence[dict]) -> str:
         )
 
         sector_cells = "".join(
-            f'<td><span class="f1-time f1-mono">{_esc(s["display"])}</span>'
+            f'<td><span class="f1-time f1-num">{_esc(s["display"])}</span>'
             f'{_segments_html(s["segments"])}</td>'
             for s in row["sectors"]
         )
 
         body.append(
             f'<tr class="{"ko" if row.get("knocked_out") else ""}">'
-            f'<td class="f1-pos" style="--accent:{accent}">{row["position"]}</td>'
+            f'<td class="f1-pos" style="--team:{accent}">{row["position"]}</td>'
             f'<td><div class="f1-code">{_esc(row["code"])}</div>'
             f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
             f"<td>{_status_html(status)}</td>"
-            f'<td><span class="{last_class} f1-mono">{_esc(row["last_lap"])}</span></td>'
-            f'<td><span class="{best_class} f1-mono">{_esc(row["best_lap"])}</span></td>'
-            f'<td><span class="f1-time f1-mono f1-dim">{_esc(row["interval"])}</span></td>'
-            f'<td><span class="f1-time f1-mono f1-dim">{_esc(row["gap"])}</span></td>'
+            f'<td><span class="{last_class} f1-num">{_esc(row["last_lap"])}</span></td>'
+            f'<td><span class="{best_class} f1-num">{_esc(row["best_lap"])}</span></td>'
+            f'<td><span class="f1-time f1-num f1-dim">{_esc(row["interval"])}</span></td>'
+            f'<td><span class="f1-time f1-num f1-dim">{_esc(row["gap"])}</span></td>'
             f"{sector_cells}"
             f"<td>{_tyres_html(row['tyre_history'])}</td>"
-            f'<td><span class="f1-time f1-mono f1-dim" title="{_esc(ideal_hint)}">'
+            f'<td><span class="f1-time f1-num f1-dim" title="{_esc(ideal_hint)}">'
             f'{_esc(row["diff"])}</span></td>'
-            f'<td><span class="f1-time f1-mono">{_esc(speed_text)}</span></td>'
+            f'<td><span class="f1-time f1-num">{_esc(speed_text)}</span></td>'
             "</tr>"
         )
 
@@ -355,14 +356,21 @@ def tower_html(rows: Sequence[dict]) -> str:
 
 def sector_cards_html(leaders: Sequence[Sequence[dict]]) -> str:
     """Sector top-3 widgets (spec section 5)."""
+
+    def pill(entry: dict) -> str:
+        colour = team_color(entry.get("team_name"), entry.get("team_colour"))
+        return (
+            f'<span class="f1-pill" style="background:{colour};color:{text_on(colour)}">'
+            f'{_esc(entry["code"])}</span>'
+        )
+
     cards = []
     for index, entries in enumerate(leaders, start=1):
         if entries:
             body = "".join(
                 f'<div class="f1-sector-row"><span class="f1-rank">{e["rank"]}</span>'
-                f'<span class="f1-pill" style="background:'
-                f'{team_color(e.get("team_name"), e.get("team_colour"))}">{_esc(e["code"])}</span>'
-                f'<span class="f1-sector-time f1-mono">{_esc(e["time"])}</span></div>'
+                f"{pill(e)}"
+                f'<span class="f1-sector-time f1-num">{_esc(e["time"])}</span></div>'
                 for e in entries
             )
         else:
@@ -487,7 +495,7 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     )
     bench = (
         '<div class="f1-bench"><div class="f1-bench-label">Session best</div>'
-        f'<div class="f1-bench-time f1-mono">{_esc(leader)}</div>{ideal}</div>'
+        f'<div class="f1-bench-time f1-num">{_esc(leader)}</div>{ideal}</div>'
     )
     return f'<div class="f1-map-wrap">{bench}{svg}</div>{dominance_legend(dominance, meta)}'
 

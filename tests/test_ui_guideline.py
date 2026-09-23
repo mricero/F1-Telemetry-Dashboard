@@ -137,13 +137,11 @@ class TestNoEmoji:
 class TestNoDecoration:
     """Check 2 and 3: gradients, glass, glow, heavy shadows and large radii."""
 
-    @pytest.mark.xfail(strict=True, reason="UI-01 replaces the stylesheet (backdrop-filter)")
     def test_no_gradients_glass_or_glow(self):
         offenders = _offences(DECORATION)
 
         assert not offenders, offenders
 
-    @pytest.mark.xfail(strict=True, reason="UI-01 replaces the stylesheet (6 px radii)")
     def test_radii_stay_small(self):
         offenders = [
             offence
@@ -157,7 +155,6 @@ class TestNoDecoration:
 class TestSelfContained:
     """Check 4: no remote fonts, scripts or images - replays work offline."""
 
-    @pytest.mark.xfail(strict=True, reason="UI-01 removes the Google Fonts import")
     def test_no_remote_urls_in_markup_or_styles(self):
         offenders = _offences(REMOTE)
 
@@ -197,7 +194,6 @@ class TestCopy:
 class TestNoHeroTitle:
     """Check 7: the session header bar is the title."""
 
-    @pytest.mark.xfail(strict=True, reason="UI-01 deletes st.title and the caption")
     def test_no_page_title_widget(self):
         offenders = [
             f"{path.relative_to(ROOT)}:{node.lineno}"
@@ -267,3 +263,37 @@ class TestStatusChips:
         for state, label in TRACK_STATUS.values():
             assert state in FLAG_STATES
             assert label and not EMOJI.search(label)
+
+
+class TestSelfContainedTypography:
+    """UI-01: the fonts ship with the app and are embedded, never fetched."""
+
+    def test_the_committed_fonts_become_font_face_rules(self):
+        from ui.fonts import FONT_DIR, font_face_css
+
+        css = font_face_css(FONT_DIR)
+
+        assert "@font-face" in css
+        assert "font/woff2" in css
+        assert "Titillium Web" in css
+        assert (FONT_DIR / "OFL.txt").is_file(), "the licence travels with the fonts"
+
+    def test_missing_fonts_fall_back_to_nothing(self, tmp_path):
+        from ui.fonts import font_face_css
+
+        assert font_face_css(tmp_path) == ""
+
+    def test_the_theme_is_dark(self):
+        import tomllib
+
+        config = tomllib.loads((ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
+
+        assert config["theme"]["base"] == "dark"
+        assert config["theme"]["backgroundColor"].lower() == "#0b0c0f"
+
+    def test_text_on_team_colours_is_black_or_white_by_contrast(self):
+        from ui.theme import BLACK, WHITE, text_on
+
+        assert text_on("#ffffff") == BLACK
+        assert text_on("#3671c6") == WHITE
+        assert text_on("#ffd12e") == BLACK
