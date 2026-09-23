@@ -1,6 +1,7 @@
 """FastF1 Historical Data Adapter"""
 
 import logging
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -10,11 +11,47 @@ import numpy as np
 import pandas as pd
 
 from processing.replay import build_position_timeline
+from processing.time_utils import parse_gap, seconds_series, to_seconds
 
 logger = logging.getLogger(__name__)
 
 # FastF1 position channels (X/Y/Z) are expressed in 1/10 meter.
 POSITION_UNITS_PER_METRE = 10.0
+
+# FastF1's timing stream (fastf1._api EMPTY_STREAM) and what get_timing_stream
+# returns from it: acronyms instead of racing numbers, seconds instead of
+# Timedeltas, and the gap strings parsed alongside the raw text.
+RAW_STREAM_COLUMNS = ("Time", "Driver", "Position", "GapToLeader", "IntervalToPositionAhead")
+TIMING_STREAM_COLUMNS = [
+    "Time",
+    "Driver",
+    "Position",
+    "GapToLeader",
+    "IntervalToPositionAhead",
+    "GapSeconds",
+    "GapLapsDown",
+    "IntervalSeconds",
+    "IntervalLapsDown",
+]
+TRACK_STATUS_COLUMNS = ["Time", "Status", "Message"]
+
+# Sessions run as knock-out segments, whose split times are worth keeping.
+QUALIFYING_CODES = {"Q", "SQ", "SS"}
+SECONDS_PER_DAY = 86_400.0
+
+
+def _gap_text(value) -> str | None:
+    """The stream's gap cell as text: None where the feed sent nothing.
+
+    Qualifying streams carry float NaN here rather than strings.
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
 
 # Telemetry scopes accepted by get_telemetry()/get_location().
 SCOPE_FASTEST = "fastest"
@@ -490,7 +527,13 @@ class FastF1Adapter:
 
     @staticmethod
     def get_race_control(session: fastf1.core.Session) -> pd.DataFrame:
-        """Race control messages: flags, safety cars, incidents, penalties."""
+        """Race control messages: flags, safety cars, incidents, penalties.
+
+        FastF1 stamps these with a wall-clock ``Time``; ``SessionTime`` puts
+        them on the clock laps, positions and weather share (``Time`` minus
+        ``session.t0_date``), which is what the replay needs to know whether
+        a message had been issued by a given moment.
+        """
         try:
             messages = session.race_control_messages
         except Exception as exc:
@@ -500,7 +543,146 @@ class FastF1Adapter:
             return pd.DataFrame()
         cols = ["Time", "Lap", "Category", "Flag", "Scope", "Sector", "Message"]
         available = [c for c in cols if c in messages.columns]
-        return pd.DataFrame(messages[available]).reset_index(drop=True)
+        result = pd.DataFrame(messages[available]).reset_index(drop=True)
+        if "Time" in result.columns and pd.api.types.is_datetime64_any_dtype(result["Time"]):
+            try:
+                result["SessionTime"] = result["Time"] - session.t0_date
+            except Exception as exc:
+                logger.warning(
+                    "Race control messages cannot be placed on the session clock: %s", exc
+                )
+        return result
+
+    @staticmethod
+    def get_timing_stream(session: fastf1.core.Session) -> pd.DataFrame:
+        """The timing screen over time: position, gap and interval per update.
+
+        FastF1 parses this stream while loading laps and then discards it
+        (``Session._load_laps_data`` keeps only the lap table). It is read
+        back through the private ``fastf1._api._extended_timing_data``, which
+        hits FastF1's own cache (``_extended_timing_data.ff1pkl``), so a
+        session that is already loaded costs no download. Being private, any
+        failure degrades to an empty frame - the replay then estimates gaps
+        at the timing lines instead.
+        """
+        try:
+            from fastf1 import _api as ff1_api  # private; columns pinned by tests
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                _, stream, _ = ff1_api._extended_timing_data(session.api_path)
+        except Exception as exc:
+            logger.warning("Timing stream unavailable: %s", exc)
+            return pd.DataFrame(columns=TIMING_STREAM_COLUMNS)
+        if stream is None or len(stream) == 0:
+            return pd.DataFrame(columns=TIMING_STREAM_COLUMNS)
+
+        missing = set(RAW_STREAM_COLUMNS) - set(stream.columns)
+        if missing:
+            logger.warning("Timing stream lacks %s; FastF1 may have changed", sorted(missing))
+            return pd.DataFrame(columns=TIMING_STREAM_COLUMNS)
+
+        try:
+            results = session.results
+            acronyms = dict(
+                zip(
+                    results["DriverNumber"].astype(str),
+                    results["Abbreviation"].astype(str),
+                    strict=False,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Timing stream cannot be matched to drivers: %s", exc)
+            return pd.DataFrame(columns=TIMING_STREAM_COLUMNS)
+
+        frame = pd.DataFrame(
+            {
+                "Time": seconds_series(stream["Time"].reset_index(drop=True)),
+                "Driver": stream["Driver"].astype(str).map(acronyms).reset_index(drop=True),
+                "Position": pd.to_numeric(stream["Position"], errors="coerce")
+                .astype("Int64")
+                .reset_index(drop=True),
+                "GapToLeader": [_gap_text(v) for v in stream["GapToLeader"]],
+                "IntervalToPositionAhead": [
+                    _gap_text(v) for v in stream["IntervalToPositionAhead"]
+                ],
+            }
+        )
+        frame = frame.dropna(subset=["Time", "Driver"])
+        gap = [parse_gap(value) for value in frame["GapToLeader"]]
+        interval = [parse_gap(value) for value in frame["IntervalToPositionAhead"]]
+        frame["GapSeconds"] = pd.array([g[0] for g in gap], dtype="Float64")
+        frame["GapLapsDown"] = pd.array([g[1] for g in gap], dtype="Int64")
+        frame["IntervalSeconds"] = pd.array([i[0] for i in interval], dtype="Float64")
+        frame["IntervalLapsDown"] = pd.array([i[1] for i in interval], dtype="Int64")
+        return frame.sort_values("Time", kind="stable").reset_index(drop=True)[
+            TIMING_STREAM_COLUMNS
+        ]
+
+    @staticmethod
+    def get_track_status(session: fastf1.core.Session) -> pd.DataFrame:
+        """Track state changes (green, yellow, SC, red, VSC) on the session clock."""
+        try:
+            status = session.track_status
+        except Exception as exc:
+            logger.warning("Track status unavailable: %s", exc)
+            return pd.DataFrame(columns=TRACK_STATUS_COLUMNS)
+        if status is None or len(status) == 0 or "Time" not in status.columns:
+            return pd.DataFrame(columns=TRACK_STATUS_COLUMNS)
+        return pd.DataFrame(
+            {
+                "Time": seconds_series(status["Time"].reset_index(drop=True)),
+                "Status": status["Status"].astype(str).reset_index(drop=True),
+                "Message": status.get("Message", pd.Series([""] * len(status)))
+                .astype(str)
+                .reset_index(drop=True),
+            }
+        )
+
+    @staticmethod
+    def get_segment_starts(session: fastf1.core.Session, session_type: str) -> list[float]:
+        """Start of Q1/Q2/Q3 (or SQ1..SQ3) in session seconds; ``[]`` otherwise.
+
+        FastF1 keeps the split points in the private ``_session_split_times``:
+        element 0 is always 0 (not the Q1 start) and a race carries
+        ``[0, 1 day, 1 day]``. So element 0 is replaced with the session
+        start and anything a day or more out is dropped.
+        """
+        if str(session_type).upper() not in QUALIFYING_CODES:
+            return []
+        splits = getattr(session, "_session_split_times", None)
+        if not splits:
+            return []
+        starts = []
+        for index, split in enumerate(splits):
+            if index == 0:
+                split = getattr(session, "session_start_time", None)
+            seconds = to_seconds(split)
+            if seconds is None or pd.isna(seconds) or seconds >= SECONDS_PER_DAY:
+                continue
+            starts.append(float(seconds))
+        return starts
+
+    @staticmethod
+    def session_start(session: fastf1.core.Session) -> float | None:
+        """When the session went green ("Started"), in session seconds."""
+        try:
+            return to_seconds(session.session_start_time)
+        except Exception as exc:
+            logger.warning("No session start time: %s", exc)
+            return None
+
+    @staticmethod
+    def total_laps(session: fastf1.core.Session) -> int | None:
+        """Scheduled race distance in laps, or None outside races."""
+        try:
+            laps = session.total_laps
+        except Exception as exc:
+            logger.debug("No scheduled lap count: %s", exc)
+            return None
+        if laps is None or pd.isna(laps):
+            return None
+        return int(laps)
 
     @staticmethod
     def get_circuit_info(session: fastf1.core.Session) -> dict:

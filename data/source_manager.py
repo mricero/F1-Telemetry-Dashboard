@@ -21,6 +21,7 @@ from data.fastf1_adapter import (
 from data.jolpica_adapter import JolpicaAdapter
 from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
 from data.live_service import get_live_adapter
+from processing.replay import ReplayClock, replay_clock
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,12 @@ class DataSourceManager:
                 if not trail.empty:
                     dashboard_location[driver] = trail
 
+        laps = self.fastf1.get_laps(session)
+        # Positions over the whole session, for the replay scrubber.
+        positions = self.fastf1.get_position_timeline(session, drivers)
+        session_start = self.fastf1.session_start(session)
+        clock = replay_clock(laps, positions, session_type, session_start)
+
         return {
             "session_info": {
                 "year": year,
@@ -176,15 +183,22 @@ class DataSourceManager:
                 "country": self._event_country(session),
                 "date": session.date,
                 "telemetry_scope": telemetry_scope,
+                # Replay metadata (REPLAY-02), all JSON-safe for saved replays.
+                "session_start": session_start,
+                "segment_starts": self.fastf1.get_segment_starts(session, session_type),
+                "total_laps": self.fastf1.total_laps(session),
+                "replay_clock": clock.to_dict(),
             },
             "telemetry": telemetry,
             "dashboard_telemetry": dashboard_telemetry,
             "dashboard_location": dashboard_location,
-            "laps": self.fastf1.get_laps(session),
+            "laps": laps,
             "stints": self.fastf1.get_stints(session),
             "results": self.fastf1.get_results(session),
-            # Positions over the whole session, for the replay scrubber.
-            "positions": self.fastf1.get_position_timeline(session, drivers),
+            "positions": positions,
+            # The timing screen and track state over time, for the replay.
+            "timing_stream": self.fastf1.get_timing_stream(session),
+            "track_status": self.fastf1.get_track_status(session),
             "location": location,
             "weather": self._get_weather_from_session(session),
             "race_control": self.fastf1.get_race_control(session),
@@ -318,6 +332,8 @@ class DataSourceManager:
             "stints": pd.DataFrame(),  # Could be extracted from LiveF1
             "results": pd.DataFrame(),
             "positions": pd.DataFrame(),
+            "timing_stream": pd.DataFrame(),
+            "track_status": pd.DataFrame(),
             "location": {},
             "weather": pd.DataFrame(),
             "race_control": pd.DataFrame(),
@@ -337,6 +353,8 @@ class DataSourceManager:
             "stints": pd.DataFrame(),
             "results": pd.DataFrame(),
             "positions": pd.DataFrame(),
+            "timing_stream": pd.DataFrame(),
+            "track_status": pd.DataFrame(),
             "location": {},
             "weather": pd.DataFrame(),
             "race_control": pd.DataFrame(),
@@ -542,6 +560,8 @@ class DataSourceManager:
             "stints": stints_df,
             "results": pd.DataFrame(),  # live order comes from TimingData
             "positions": pd.DataFrame(),
+            "timing_stream": pd.DataFrame(),
+            "track_status": pd.DataFrame(),
             "location": location,
             "weather": weather_df,
             "race_control": race_control_df,
@@ -776,9 +796,11 @@ class DataSourceManager:
     # timeline); v4 added 'results' (official
     # classification, needed to order a race by finishing position); v5 added
     # 'dashboard_telemetry'/'dashboard_location' (fastest-lap frames, stored
-    # only when the charts use a different scope). Older replays simply lack
+    # only when the charts use a different scope); v7 added 'timing_stream'
+    # and 'track_status' plus session_info 'replay_clock', 'segment_starts',
+    # 'session_start' and 'total_laps' (REPLAY-02). Older replays simply lack
     # those keys and load with empty defaults.
-    REPLAY_SCHEMA_VERSION = 6
+    REPLAY_SCHEMA_VERSION = 7
 
     # Tables stored as their own Parquet file inside a replay directory.
     FRAME_KEYS = ("laps", "stints", "results", "weather", "race_control", "drivers")
@@ -938,8 +960,28 @@ class DataSourceManager:
         data.setdefault("circuit_info", {})
         data.setdefault("results", pd.DataFrame())
         data.setdefault("positions", pd.DataFrame())
+        data.setdefault("timing_stream", pd.DataFrame())
+        data.setdefault("track_status", pd.DataFrame())
         data.setdefault("telemetry", {})
         data.setdefault("location", {})
+
+        info = data.setdefault("session_info", {})
+        info.setdefault("segment_starts", [])
+        info.setdefault("session_start", None)
+        info.setdefault("total_laps", None)
+        if ReplayClock.from_dict(info.get("replay_clock")) is None:
+            # Schema <= 6: derive the clock the loader would have stored.
+            laps = data.get("laps")
+            info["replay_clock"] = (
+                replay_clock(
+                    laps if isinstance(laps, pd.DataFrame) else None,
+                    data["positions"],
+                    info.get("session_type"),
+                    info.get("session_start"),
+                ).to_dict()
+                if not data["positions"].empty
+                else None
+            )
         data["source"] = "replay"
         return data
 

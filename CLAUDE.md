@@ -60,12 +60,18 @@ them. This is the single most important thing to preserve:
 ```python
 {
   'session_info': {...},                    # gp, year, session_type, telemetry_scope, ...
+                                            # + session_start (s), segment_starts [s], total_laps,
+                                            #   replay_clock {start, lights_out, end, step} (JSON-safe)
   'telemetry':    {driver: DataFrame},      # Distance, Time, Speed, Throttle, Brake, RPM, nGear, DRS
   'laps':         DataFrame,                # Driver, LapNumber, LapTime, Sector{1,2,3}Time, IsPitOutLap
   'stints':       DataFrame,                # Driver, Stint, Compound, LapStart, LapEnd, LapCount
   'location':     {driver: DataFrame},      # Distance, X, Y, Z
+  'positions':    DataFrame,                # Time (s), Driver, X, Y - whole session on a 0.5 s grid
+  'timing_stream': DataFrame,               # Time (s), Driver, Position, GapToLeader, IntervalToPositionAhead,
+                                            #   GapSeconds, GapLapsDown, IntervalSeconds, IntervalLapsDown
+  'track_status': DataFrame,                # Time (s), Status ('1' green .. '7' VSC ending), Message
   'weather':      DataFrame,                # Time, AirTemp, TrackTemp, Humidity, Pressure, Rainfall, Wind*
-  'race_control': DataFrame,                # Time, Lap, Category, Flag, Scope, Message
+  'race_control': DataFrame,                # Time (wall clock), SessionTime, Lap, Category, Flag, Scope, Message
   'compound_colors': {compound: hex},       # FastF1's official per-season tyre colours
   'drivers':      DataFrame,                # driver_number, name_acronym, team_colour, team_name, full_name
   'source':       'fastf1'|'livef1'|'live'|'replay',
@@ -74,7 +80,7 @@ them. This is the single most important thing to preserve:
 }
 ```
 
-Replay files carry a `schema` version (currently **2**); `_load_replay` accepts older files
+Replay files carry a `schema` version (currently **7**); `_load_replay` accepts older files
 by defaulting the keys they lack, and rejects newer ones with a clear message. Bump
 `REPLAY_SCHEMA_VERSION` whenever this dict gains or changes a persisted key.
 

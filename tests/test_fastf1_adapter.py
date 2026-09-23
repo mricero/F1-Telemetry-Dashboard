@@ -585,3 +585,129 @@ class TestPositionTimelineOutLap:
         )
 
         assert timeline["Time"].min() == pytest.approx(0.0)
+
+
+def _recorded_stream() -> pd.DataFrame:
+    """The shape ``fastf1._api._extended_timing_data`` returns as ``stream_data``."""
+    return pd.DataFrame(
+        {
+            "Time": pd.to_timedelta([3600.0, 3601.0, 3700.0, 3700.5], unit="s"),
+            "Driver": ["1", "44", "1", "44"],
+            "Position": np.array([1, 2, 1, 2], dtype="int64"),
+            "GapToLeader": ["LAP 1", "+0.412", "LAP 2", "1 L"],
+            "IntervalToPositionAhead": ["LAP 1", "+0.412", "LAP 2", "1 L"],
+        }
+    )
+
+
+def _stream_session():
+    session = Mock()
+    session.api_path = "/static/2023/fake/"
+    session.results = pd.DataFrame({"DriverNumber": ["1", "44"], "Abbreviation": ["VER", "HAM"]})
+    return session
+
+
+class TestTimingStream:
+    """REPLAY-02: the stream FastF1 parses and then throws away."""
+
+    def test_fastf1_still_emits_the_columns_this_reads(self):
+        from fastf1 import _api
+
+        from data.fastf1_adapter import RAW_STREAM_COLUMNS
+
+        assert set(RAW_STREAM_COLUMNS) <= set(_api.EMPTY_STREAM)
+
+    def test_it_maps_numbers_to_acronyms_and_parses_gaps(self, monkeypatch):
+        import fastf1._api
+
+        from data.fastf1_adapter import TIMING_STREAM_COLUMNS
+
+        monkeypatch.setattr(
+            fastf1._api, "_extended_timing_data", lambda path: (None, _recorded_stream(), [])
+        )
+
+        stream = FastF1Adapter.get_timing_stream(_stream_session())
+
+        assert list(stream.columns) == TIMING_STREAM_COLUMNS
+        assert stream["Driver"].tolist() == ["VER", "HAM", "VER", "HAM"]
+        assert stream["Time"].tolist() == [3600.0, 3601.0, 3700.0, 3700.5]
+        assert str(stream["Position"].dtype) == "Int64"
+        assert stream["GapSeconds"].iloc[1] == pytest.approx(0.412)
+        assert stream["GapLapsDown"].iloc[3] == 1
+        assert pd.isna(stream["GapSeconds"].iloc[3])
+        assert stream["GapToLeader"].iloc[3] == "1 L"  # raw text kept
+
+    def test_a_failure_degrades_to_an_empty_frame_and_says_so(self, monkeypatch, caplog):
+        import fastf1._api
+
+        from data.fastf1_adapter import TIMING_STREAM_COLUMNS
+
+        def broken(path):
+            raise KeyError("TimingData")
+
+        monkeypatch.setattr(fastf1._api, "_extended_timing_data", broken)
+
+        with caplog.at_level("WARNING", logger="data.fastf1_adapter"):
+            stream = FastF1Adapter.get_timing_stream(_stream_session())
+
+        assert stream.empty
+        assert list(stream.columns) == TIMING_STREAM_COLUMNS
+        assert "Timing stream unavailable" in caplog.text
+
+
+class TestSegmentStarts:
+    @staticmethod
+    def _session(splits, start=1000.0):
+        session = Mock()
+        session._session_split_times = [pd.Timedelta(seconds=s) for s in splits]
+        session.session_start_time = pd.Timedelta(seconds=start)
+        return session
+
+    def test_a_race_has_no_segments(self):
+        session = self._session([0, 86_400, 86_400])
+
+        assert FastF1Adapter.get_segment_starts(session, "R") == []
+
+    def test_qualifying_uses_the_session_start_for_q1(self):
+        session = self._session([0, 2758.7, 4138.7])
+
+        assert FastF1Adapter.get_segment_starts(session, "Q") == [1000.0, 2758.7, 4138.7]
+
+    def test_splits_a_day_out_are_dropped(self):
+        session = self._session([0, 2758.7, 86_400])
+
+        assert FastF1Adapter.get_segment_starts(session, "SQ") == [1000.0, 2758.7]
+
+
+class TestTrackStatus:
+    def test_it_is_on_the_session_clock(self):
+        session = Mock()
+        session.track_status = pd.DataFrame(
+            {
+                "Time": pd.to_timedelta([328.6, 1319.0], unit="s"),
+                "Status": ["1", "4"],
+                "Message": ["AllClear", "SCDeployed"],
+            }
+        )
+
+        status = FastF1Adapter.get_track_status(session)
+
+        assert status["Time"].tolist() == [328.6, 1319.0]
+        assert status["Status"].tolist() == ["1", "4"]
+
+
+class TestRaceControlClock:
+    def test_messages_get_a_session_time(self):
+        session = Mock()
+        session.t0_date = pd.Timestamp("2023-03-05 14:01:01.849")
+        session.race_control_messages = pd.DataFrame(
+            {
+                "Time": pd.to_datetime(["2023-03-05 16:37:31"]),
+                "Flag": ["CHEQUERED"],
+                "Message": ["CHEQUERED FLAG"],
+            }
+        )
+
+        messages = FastF1Adapter.get_race_control(session)
+
+        assert messages["SessionTime"].iloc[0] == pd.Timedelta("2:36:29.151")

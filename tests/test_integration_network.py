@@ -420,3 +420,39 @@ class TestReplayTimelineOnRealSession:
         assert len(order) >= 15
         assert order[0]["position"] == 1
         assert lap_at(session["laps"], middle) > 1
+
+
+_SESSIONS: dict = {}
+
+
+def _bahrain(session_type: str) -> dict:
+    """2023 Bahrain, loaded once per test run (FastF1 caches it on disk)."""
+    if session_type not in _SESSIONS:
+        from data.source_manager import DataSourceManager
+
+        _SESSIONS[session_type] = DataSourceManager().get_session_data(
+            source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type=session_type
+        )
+    return _SESSIONS[session_type]
+
+
+class TestReplayStreamsOnRealSessions:
+    """REPLAY-02: the timing stream, track status and segment starts."""
+
+    def test_the_race_stream_covers_the_grid(self):
+        race = _bahrain("R")
+        stream = race["timing_stream"]
+
+        assert stream["Driver"].nunique() >= 20
+        assert len(stream) >= 20_000
+        assert stream[stream["Driver"] == "VER"]["Position"].iloc[-1] == 1
+        assert race["session_info"]["segment_starts"] == []
+        assert not race["track_status"].empty
+
+    def test_qualifying_has_three_segments(self):
+        info = _bahrain("Q")["session_info"]
+        starts = info["segment_starts"]
+
+        assert len(starts) == 3
+        assert starts == sorted(starts) and len(set(starts)) == 3
+        assert starts[0] == info["session_start"]

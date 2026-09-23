@@ -189,3 +189,55 @@ class TestSchemaGuard:
 
         with pytest.raises(ValueError, match="update the app"):
             manager.get_session_data(source="replay", replay_file=str(path))
+
+
+class TestReplayStreams:
+    """REPLAY-02: the streams the replay model reads survive a save."""
+
+    @staticmethod
+    def _with_streams() -> dict:
+        session = _session()
+        session["session_info"] = {
+            **session["session_info"],
+            "replay_clock": {"start": 1.0, "lights_out": 2.0, "end": 3.0, "step": 0.5},
+            "segment_starts": [],
+            "session_start": 2.0,
+        }
+        session["timing_stream"] = pd.DataFrame(
+            {
+                "Time": [2.0, 3.0],
+                "Driver": ["VER", "VER"],
+                "Position": pd.array([1, 1], dtype="Int64"),
+                "GapToLeader": ["LAP 1", "LAP 2"],
+                "GapSeconds": pd.array([0.0, None], dtype="Float64"),
+            }
+        )
+        session["track_status"] = pd.DataFrame(
+            {"Time": [0.5], "Status": ["1"], "Message": ["AllClear"]}
+        )
+        return session
+
+    def test_streams_and_the_clock_round_trip(self, manager):
+        loaded = manager.get_session_data(
+            source="replay", replay_file=manager.save_replay(self._with_streams(), "Monza_R")
+        )
+
+        assert loaded["timing_stream"]["GapToLeader"].tolist() == ["LAP 1", "LAP 2"]
+        assert str(loaded["timing_stream"]["Position"].dtype) == "Int64"
+        assert loaded["track_status"]["Status"].tolist() == ["1"]
+        assert loaded["session_info"]["replay_clock"]["lights_out"] == 2.0
+
+    def test_a_schema_6_replay_loads_with_empty_defaults(self, manager):
+        from pathlib import Path
+
+        path = Path(manager.save_replay(_session(), "Monza_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        meta["schema"] = 6
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        loaded = manager.get_session_data(source="replay", replay_file=str(path))
+
+        assert loaded["timing_stream"].empty
+        assert loaded["track_status"].empty
+        assert loaded["session_info"]["segment_starts"] == []
+        assert loaded["session_info"]["replay_clock"] is None  # no positions to replay

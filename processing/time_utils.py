@@ -92,3 +92,37 @@ def seconds_series(values: pd.Series) -> pd.Series:
         fallback = [to_seconds(value) for value in values[unmatched]]
         result.loc[unmatched] = pd.Series(fallback, index=values[unmatched].index, dtype="float64")
     return pd.Series(result, index=values.index, dtype="float64")
+
+
+# Timing-screen gap cells (REPLAY-02). The leader's own cell reads "LAP 23"
+# (both gap and interval); a lapped car reads "1 L" in FastF1's stream and
+# "+1 LAP" / "2 LAPS" in other feeds; everything else is seconds.
+_LEADER_RE = re.compile(r"^LAP\s*\d+$", re.IGNORECASE)
+_LAPS_DOWN_RE = re.compile(r"^\+?(\d+)\s*(?:L|LAP|LAPS)$", re.IGNORECASE)
+_GAP_SECONDS_RE = re.compile(r"^\+?(\d+(?:\.\d+)?)$")
+
+
+def parse_gap(value) -> tuple[float | None, int | None]:
+    """A gap or interval cell -> ``(seconds, laps_down)``.
+
+    ``"+1.234"`` -> ``(1.234, 0)``; ``"LAP 23"`` (the leader) -> ``(0.0, 0)``;
+    ``"1 L"``, ``"+2 LAPS"`` -> ``(None, n)``; ``""``, None, NaN ->
+    ``(None, None)``. Strings like ``"1:02.345"`` read as minutes.
+    """
+    if value is None:
+        return (None, None)
+    if isinstance(value, (int, float)):
+        return (None, None) if pd.isna(value) else (float(value), 0)
+    text = str(value).strip()
+    if not text:
+        return (None, None)
+    if _LEADER_RE.match(text):
+        return (0.0, 0)
+    laps = _LAPS_DOWN_RE.match(text)
+    if laps:
+        return (None, int(laps.group(1)))
+    plain = _GAP_SECONDS_RE.match(text)
+    if plain:
+        return (float(plain.group(1)), 0)
+    seconds = to_seconds(text.lstrip("+"))
+    return (seconds, 0) if seconds is not None else (None, None)
