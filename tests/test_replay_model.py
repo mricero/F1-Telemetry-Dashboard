@@ -519,10 +519,10 @@ class TestTheDashboardDrawsAMoment:
         assert "SAFETY CAR" in header_html(snapshot_at(race, fx.SC_START + 5, race_series))
 
     def test_the_map_shows_every_car_and_no_dominance(self, race, race_series):
-        from ui.dashboard import map_panel_html
-
         import base64
         import re
+
+        from ui.dashboard import map_panel_html
 
         snapshot = snapshot_at(race, 1200.0, race_series)
         markup = map_panel_html(snapshot, build_timing_rows(snapshot))
