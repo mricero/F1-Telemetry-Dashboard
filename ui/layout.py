@@ -19,6 +19,7 @@ from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from ui.dashboard import render_dashboard, wind_kmh
+from ui.theme import status_chip
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
 # (see FastF1Adapter.compound_colors); these hexes match the 2024+ branding.
@@ -32,25 +33,16 @@ COMPOUND_COLORS = {
     "TEST-UNKNOWN": "#434649",
 }
 
-# Official F1 TrackStatus codes (SignalR feed).
+# Official F1 TrackStatus codes (SignalR feed) -> (flag state, label). The
+# state picks the chip colour from ui.theme.FLAG_STATES; the label is what the
+# chip says, so the state never depends on telling colours apart.
 TRACK_STATUS = {
-    "1": ("🟢", "Track clear"),
-    "2": ("🟡", "Yellow flag"),
-    "4": ("🚗", "Safety car"),
-    "5": ("🔴", "Red flag"),
-    "6": ("🟠", "Virtual safety car"),
-    "7": ("🟠", "VSC ending"),
-}
-
-# Race-control flag icons for the message feed.
-FLAG_ICONS = {
-    "GREEN": "🟢",
-    "YELLOW": "🟡",
-    "DOUBLE YELLOW": "🟡",
-    "RED": "🔴",
-    "CHEQUERED": "🏁",
-    "BLUE": "🔵",
-    "CLEAR": "✅",
+    "1": ("GREEN", "Track clear"),
+    "2": ("YELLOW", "Yellow flag"),
+    "4": ("SAFETY CAR", "Safety car"),
+    "5": ("RED", "Red flag"),
+    "6": ("VSC", "Virtual safety car"),
+    "7": ("VSC", "VSC ending"),
 }
 
 
@@ -83,7 +75,7 @@ SOURCE_MAP = {
 def render_header():
     """Render page header."""
     st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide")
-    st.title("🏎️ Formula 1 Telemetry Dashboard")
+    st.title("Formula 1 Telemetry Dashboard")
     st.caption("Historical (FastF1) • Live (SignalR - FREE) • Replay (Local)")
 
 
@@ -135,14 +127,14 @@ def render_session_selector(data_manager) -> dict:
         # A session really is on air - but Auto no longer switches silently
         # and hides the historical selectors: the user chooses (LIVE-15).
         with col2:
-            st.success("🔴 A session is running now")
+            st.success("A session is running now")
             go_live = st.button("Go live", key="go_live")
         if go_live or st.session_state.get("go_live_active"):
             st.session_state["go_live_active"] = True
             live_session = True
     elif source == "Live (SignalR)":
         with col2:
-            st.warning("🔴 LIVE MODE - Attempting SignalR connection...")
+            st.warning("Live mode: connecting to the F1 SignalR feed")
         live_session = True
 
     telemetry_scope = SCOPE_LABELS["Fastest lap (comparable)"]
@@ -286,7 +278,7 @@ def render_telemetry_charts(telemetry_data: dict[str, pd.DataFrame], color_map: 
         st.info("No telemetry data available")
         return
 
-    tabs = st.tabs(["📈 Speed", "⚡ Throttle", "🛑 Brake", "🔧 RPM", "⚙️ Gear", "🚀 DRS"])
+    tabs = st.tabs(["Speed", "Throttle", "Brake", "RPM", "Gear", "DRS"])
 
     channel_config = {
         "Speed": {"col": "Speed", "unit": "km/h"},
@@ -354,7 +346,7 @@ def render_lap_times(laps_df: pd.DataFrame, color_map: dict[str, str]):
                     f"Pit: %{{text}}<extra></extra>"
                 ),
                 customdata=driver_laps["LapTime"].astype(str),
-                text=["🔧 PIT OUT" if p else "" for p in pit_out],
+                text=["PIT OUT" if p else "" for p in pit_out],
             )
         )
 
@@ -577,18 +569,18 @@ def render_live_dashboard(data_manager, processor):
 
     status = (snapshot.get("session_info") or {}).get("track_status")
     if status:
-        icon, label = TRACK_STATUS.get(status.get("status", ""), ("⚪", "Unknown"))
-        st.markdown(f"### {icon} {label}")
+        state, label = TRACK_STATUS.get(status.get("status", ""), ("FINISHED", "Unknown"))
+        st.html(status_chip(label, state))
 
     st.caption(
-        f"🟢 Streaming · {len(telemetry)} driver(s) with telemetry · "
+        f"Streaming · {len(telemetry)} driver(s) with telemetry · "
         f"{len(location)} on track · auto-refreshes every 3s"
     )
 
     color_map = processor.build_driver_color_map(snapshot["drivers"])
 
     # No "Timing" tab: the dashboard above is the timing view.
-    tabs = st.tabs(["📊 Telemetry", "🗺️ Track Map", "🛞 Tyres", "🚩 Race Control", "🌤️ Weather"])
+    tabs = st.tabs(["Telemetry", "Track map", "Tyres", "Race control", "Weather"])
     with tabs[0]:
         render_telemetry_charts(
             {d: processor.normalize_units(df.copy()) for d, df in telemetry.items()}, color_map
@@ -661,11 +653,11 @@ def render_weather(weather_df: pd.DataFrame):
     cols = st.columns(5)
     # Wind arrives in m/s and is shown in km/h, matching the dashboard header.
     readings = [
-        ("🌡️ Air", "AirTemp", "°C", None),
-        ("🛣️ Track", "TrackTemp", "°C", None),
-        ("💧 Humidity", "Humidity", "%", None),
-        ("🌬️ Wind", "WindSpeed", "km/h", wind_kmh),
-        ("🔽 Pressure", "Pressure", "mbar", None),
+        ("Air", "AirTemp", "°C", None),
+        ("Track", "TrackTemp", "°C", None),
+        ("Humidity", "Humidity", "%", None),
+        ("Wind", "WindSpeed", "km/h", wind_kmh),
+        ("Pressure", "Pressure", "mbar", None),
     ]
     for col, (label, key, unit, convert) in zip(cols, readings, strict=False):
         # The live feed sends these as strings ("21.0"); FastF1 sends floats.
@@ -675,7 +667,7 @@ def render_weather(weather_df: pd.DataFrame):
         col.metric(label, f"{value:g} {unit}" if pd.notna(value) else "--")
 
     if "Rainfall" in weather_df.columns and bool(weather_df["Rainfall"].any()):
-        st.warning("🌧️ Rainfall recorded during this session")
+        st.warning("Rainfall recorded during this session")
 
     x = _elapsed_minutes(weather_df)
     fig = go.Figure()
@@ -758,10 +750,11 @@ def render_race_control(race_control_df: pd.DataFrame, limit: int = 60):
     lines = []
     for _, row in df.iterrows():
         flag = str(row.get("Flag") or "").upper()
-        icon = FLAG_ICONS.get(flag, "•")
+        # The flag is a word, not a coloured icon (UI guideline 5.2).
+        flag_text = f"{flag} · " if flag and flag not in ("NONE", "NAN") else ""
         lap = row.get("Lap")
         lap_text = f"L{int(lap)}" if pd.notna(lap) else "--"
-        lines.append(f"{icon} **{lap_text}** · {row.get('Message', '')}")
+        lines.append(f"**{lap_text}** · {flag_text}{row.get('Message', '')}")
     st.markdown("\n\n".join(lines))
     if len(race_control_df) > limit:
         st.caption(f"Showing the {limit} most recent of {len(race_control_df)} messages.")
@@ -904,22 +897,22 @@ def render_live_controls(live_client):
         return
 
     st.markdown("---")
-    st.subheader("🔴 Live Session Controls")
+    st.subheader("Live session controls")
 
     if live_client.is_recording():
-        st.caption(f"🔴 Recording · {live_client.recorder.message_count} messages captured")
+        st.caption(f"Recording · {live_client.recorder.message_count} messages captured")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("📊 View Buffered Data"):
+        if st.button("View buffered data"):
             st.json(
                 {
                     topic: len(live_client.get_buffered_data(topic))
                     for topic in ("CarData.z", "Position.z", "TimingData", "WeatherData")
                 }
             )
-        if st.button("🧹 Clear Buffers"):
+        if st.button("Clear buffers"):
             live_client.clear_buffer()
             st.info("Buffered telemetry and merged state cleared")
 
@@ -928,16 +921,16 @@ def render_live_controls(live_client):
         # live client does (LIVE-12). Saving the processed session dict for a
         # live session would have saved the empty dict it starts from.
         if live_client.is_recording():
-            if st.button("⏹️ Stop Recording"):
+            if st.button("Stop recording"):
                 where = live_client.stop_recording()
                 st.success(f"Raw stream saved to {where}")
-        elif st.button("💾 Record Raw Stream"):
+        elif st.button("Record raw stream"):
             directory = Path(config.replay_dir) / f"raw_{datetime.now(UTC):%Y%m%d_%H%M%S}"
             live_client.start_recording(directory)
             st.info(f"Recording to {directory}")
 
     with col3:
-        if st.button("⏹️ Stop Live"):
+        if st.button("Stop live"):
             live_client.stop_recording()
             live_client.stop()
             st.warning("Live session stopped")

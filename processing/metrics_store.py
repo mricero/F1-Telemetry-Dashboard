@@ -178,14 +178,14 @@ class MetricsStore:
         lines = []
         fl = records.get("fastest_lap")
         if fl:
-            lines.append(f"🟣 Fastest Lap: **{fl['display']}** ({fl['driver']})")
+            lines.append(f"Fastest lap: **{fl['display']}** ({fl['driver']})")
         for sec in SECTORS:
             rec = records.get(f"fastest_{sec.lower()}")
             if rec:
-                lines.append(f"⚡ Fastest {sec}: **{rec['display']}** ({rec['driver']})")
+                lines.append(f"Fastest {sec}: **{rec['display']}** ({rec['driver']})")
         ts = records.get("top_speed")
         if ts:
-            lines.append(f"🚀 Top Speed: **{ts['kmh']} km/h** ({ts['driver']})")
+            lines.append(f"Top speed: **{ts['kmh']} km/h** ({ts['driver']})")
         return lines
 
     # ----------------------------------------------------------- private

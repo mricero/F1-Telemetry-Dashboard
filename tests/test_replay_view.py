@@ -94,7 +94,7 @@ class TestControls:
     def test_it_offers_play_and_a_scrubber(self, app):
         labels = [button.label for button in app.button]
 
-        assert "▶️ Play" in labels
+        assert "Play" in labels
         assert "Lights out" in labels
         assert len(app.slider) == 1, "the session needs a time scrubber"
 
@@ -168,12 +168,12 @@ class TestScrubbing:
 
 class TestPlayback:
     def test_play_toggles_the_state(self, app):
-        next(button for button in app.button if button.label == "▶️ Play").click().run()
+        next(button for button in app.button if button.label == "Play").click().run()
 
         assert app.session_state[PLAYING] is True
 
     def test_the_scrubber_is_disabled_while_playing(self, app):
-        next(button for button in app.button if button.label == "▶️ Play").click().run()
+        next(button for button in app.button if button.label == "Play").click().run()
 
         assert app.slider[0].disabled
 

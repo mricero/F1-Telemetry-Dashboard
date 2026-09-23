@@ -173,7 +173,7 @@ def main():
     metrics_store = st.session_state.metrics_store
 
     # Session Selection
-    with st.expander("📋 Session Selection", expanded=True):
+    with st.expander("Session", expanded=True):
         selection = render_session_selector(data_manager)
 
     # Load Data (runtime-cached: repeat selections are instant, and
@@ -222,7 +222,7 @@ def main():
     if telemetry_processed:
         metrics_store.update_telemetry(metrics_label, telemetry_processed)
 
-    with st.expander("🏆 Session & All-Time Records", expanded=True):
+    with st.expander("Records", expanded=True):
         rec_lines = metrics_store.summary_lines(metrics_store.session_records(metrics_label))
         if rec_lines:
             st.markdown(f"**This session — {metrics_label}**")
@@ -232,7 +232,7 @@ def main():
             st.info("No records yet for this session.")
         at_lines = metrics_store.summary_lines(metrics_store.all_time())
         if at_lines:
-            st.markdown("**🏅 All-time (across sessions viewed)**")
+            st.markdown("**All-time (across sessions viewed here)**")
             for line in at_lines:
                 st.markdown(f"- {line}")
         cache_stats = runtime_cache.stats()
@@ -251,7 +251,7 @@ def main():
     if session_data.get("is_live"):
         live_client = session_data.get("live_client")
         if live_client and not live_client.is_running():
-            if st.button("🔴 Start Live Stream"):
+            if st.button("Start live stream"):
                 live_client.start_async()
                 st.rerun()
         elif live_client and live_client.is_running():
@@ -269,15 +269,15 @@ def main():
     st.markdown("---")
     analysis = st.tabs(
         [
-            "📊 Telemetry",
-            "⚔️ Head-to-Head",
-            "⏱️ Lap Times",
-            "📈 Positions",
-            "🛞 Tyres",
-            "🗺️ Track",
-            "🎬 Replay",
-            "🌤️ Weather",
-            "🚩 Race Control",
+            "Telemetry",
+            "Head-to-head",
+            "Lap times",
+            "Positions",
+            "Tyres",
+            "Track",
+            "Replay",
+            "Weather",
+            "Race control",
         ]
     )
     with analysis[0]:
@@ -312,7 +312,7 @@ def main():
         render_race_control(session_data.get("race_control"))
 
     # Replay Save Option
-    if st.button("💾 Save Session for Replay"):
+    if st.button("Save session for replay"):
         name = f"{info.get('gp', 'race')}_{info.get('session_type', 'R')}"
         path = data_manager.save_replay(session_data, name)
         st.success(f"Saved to {path}")

@@ -118,14 +118,14 @@ class TestAppSmoke:
         # tests/test_track_map.py. Here we assert the analysis tabs below it.
         labels = [t.label for t in app.tabs]
         for expected in (
-            "📊 Telemetry",
-            "⚔️ Head-to-Head",
-            "⏱️ Lap Times",
-            "📈 Positions",
-            "🛞 Tyres",
-            "🗺️ Track",
-            "🌤️ Weather",
-            "🚩 Race Control",
+            "Telemetry",
+            "Head-to-head",
+            "Lap times",
+            "Positions",
+            "Tyres",
+            "Track",
+            "Weather",
+            "Race control",
         ):
             assert expected in labels, f"missing analysis tab {expected!r}"
         assert any(r.label == "Telemetry scope" for r in app.radio)
@@ -149,7 +149,7 @@ class TestAppSmoke:
 
         # Weather readings render as st.metric tiles.
         metric_labels = [m.label for m in app.metric]
-        assert "🌡️ Air" in metric_labels and "🛣️ Track" in metric_labels
+        assert "Air" in metric_labels and "Track" in metric_labels
 
 
 class TestDashboardOnRealSession:

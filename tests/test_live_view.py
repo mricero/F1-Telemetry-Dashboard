@@ -103,7 +103,7 @@ class TestDegradedMode:
     def test_the_unauthenticated_panels_are_present(self, live_app):
         labels = [tab.label for tab in live_app.tabs]
 
-        for expected in ("🚩 Race Control", "🌤️ Weather", "🛞 Tyres"):
+        for expected in ("Race control", "Weather", "Tyres"):
             assert expected in labels
 
     def test_auth_topics_are_named_explicitly(self):
@@ -211,8 +211,8 @@ class TestLiveDashboardRendersInTheFragment:
     def test_the_duplicate_timing_dataframe_tab_is_gone(self, live_app):
         labels = [tab.label for tab in live_app.tabs]
 
-        assert "⏱️ Timing" not in labels
-        assert "🚩 Race Control" in labels
+        assert "Timing" not in labels
+        assert "Race control" in labels
 
     def test_the_app_skips_the_static_dashboard_for_live_sessions(self):
         import inspect

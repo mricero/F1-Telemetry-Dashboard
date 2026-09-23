@@ -169,7 +169,7 @@ def render_session_replay(session_data: dict, key: str | None = None) -> None:
 
     controls = st.columns([1, 1, 2, 6])
     with controls[0]:
-        if st.button("⏸️ Pause" if st.session_state[playing] else "▶️ Play"):
+        if st.button("Pause" if st.session_state[playing] else "Play"):
             st.session_state[playing] = not st.session_state[playing]
             st.rerun()
     with controls[1]:

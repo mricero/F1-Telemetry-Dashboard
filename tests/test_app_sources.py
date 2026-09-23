@@ -217,7 +217,7 @@ class TestSourcesRenderEndToEnd:
         app_test = _run_for("fastf1")
 
         tab_labels = [tab.label for tab in app_test.tabs]
-        for expected in ("📊 Telemetry", "⏱️ Lap Times", "🌤️ Weather", "🚩 Race Control"):
+        for expected in ("Telemetry", "Lap times", "Weather", "Race control"):
             assert expected in tab_labels
 
         # Panels that fell back to their "no data" notice would show up here.

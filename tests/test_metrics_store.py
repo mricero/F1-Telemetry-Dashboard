@@ -135,8 +135,8 @@ class TestMetricsStore:
         store.update_laps("S", laps_frame([timedelta(seconds=90), None, None]))
         store.update_telemetry("S", {"VER": pd.DataFrame({"Speed": [320.0]})})
         lines = store.summary_lines(store.session_records("S"))
-        assert any("Fastest Lap" in line and "VER" in line for line in lines)
-        assert any("Top Speed" in line and "320.0" in line for line in lines)
+        assert any("Fastest lap" in line and "VER" in line for line in lines)
+        assert any("Top speed" in line and "320.0" in line for line in lines)
 
     def test_json_roundtrip_contents(self, tmp_path):
         path = tmp_path / "metrics.json"

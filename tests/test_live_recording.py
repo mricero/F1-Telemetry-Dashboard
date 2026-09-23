@@ -164,5 +164,5 @@ class TestControlsAreReachable:
 
         assert not app_test.exception
         labels = [button.label for button in app_test.button]
-        assert "💾 Record Raw Stream" in labels
-        assert "⏹️ Stop Live" in labels
+        assert "Record raw stream" in labels
+        assert "Stop live" in labels

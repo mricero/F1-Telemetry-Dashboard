@@ -116,6 +116,23 @@ def team_color(team_name: str | None, fallback: str | None = None) -> str:
     return TEAM_COLORS.get(key, NEUTRAL_GREY)
 
 
+def status_chip(label: str, state: str) -> str:
+    """A text chip in a flag state's colours (``FLAG_STATES`` key).
+
+    The label carries the meaning; the colour only reinforces it, so nothing
+    is lost for anyone who cannot tell the colours apart (guideline 5.4).
+    """
+    import html
+
+    background, foreground, _ = FLAG_STATES.get(state, FLAG_STATES["FINISHED"])
+    return (
+        f'<span class="f1-chip" style="background:{background};color:{foreground};'
+        "display:inline-block;padding:2px 8px;border-radius:2px;font-size:11px;"
+        'font-weight:600;letter-spacing:.06em;text-transform:uppercase">'
+        f"{html.escape(label)}</span>"
+    )
+
+
 def segment_color(state: str) -> str:
     """Micro-sector segment state -> fill colour."""
     return {
