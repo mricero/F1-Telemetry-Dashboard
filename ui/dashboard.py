@@ -213,6 +213,13 @@ def header_html(session_data: dict) -> str:
         else "--"
     )
 
+    # REPLAY-08: without the timing stream (an old replay, or FastF1 could
+    # not provide it) race gaps are measured at the timing lines. Say so.
+    estimated_note = (
+        '<div class="f1-note">Gaps estimated at the timing lines</div>'
+        if _is_snapshot(session_data) and info.get("gaps_estimated")
+        else ""
+    )
     return f"""
 <div class="f1-header">
   <div class="f1-event">
@@ -235,7 +242,7 @@ def header_html(session_data: dict) -> str:
     {reading("Rain", "YES" if rain_yes else "NO", "rain-yes" if rain_yes else "")}
   </div>
 </div>
-"""
+{estimated_note}"""
 
 
 def _segments_html(states: Sequence[str]) -> str:

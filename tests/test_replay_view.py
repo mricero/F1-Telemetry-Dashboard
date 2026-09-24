@@ -333,3 +333,53 @@ class TestTheBrowserPlayerIsTheDefault:
     def test_the_server_controls_are_not_duplicated(self, player_app):
         assert not any(button.label == "Lights out" for button in player_app.button)
         assert any(button.label == "Final result" for button in player_app.button) is False
+
+
+# --- old replays and missing streams (REPLAY-08) ------------------------------
+
+
+def _schema_six_session() -> dict:
+    """A replay saved before REPLAY-02: no stream, no track status, no
+    positions - loaded through the same defaults the replay loader applies."""
+    import pandas as pd
+
+    from data.source_manager import DataSourceManager
+
+    session = fx.race_session(with_stream=False)
+    for key in ("timing_stream", "track_status", "positions"):
+        session.pop(key)
+    session["session_info"].pop("replay_clock")
+    session["source"] = "replay"
+    loaded = DataSourceManager._finalise_replay(session)
+    assert loaded["timing_stream"].empty and isinstance(loaded["positions"], pd.DataFrame)
+    return loaded
+
+
+def _schema_six_script():
+    from tests.test_replay_view import _schema_six_session
+    from ui.replay_view import render_session_replay
+
+    render_session_replay(_schema_six_session(), "replay:old")
+
+
+class TestOldReplaysDegradeHonestly:
+    def test_the_server_view_opens_and_says_gaps_are_estimated(self):
+        app = AppTest.from_function(_schema_six_script, default_timeout=60)
+        app.run()
+
+        assert not app.exception, app.exception
+        assert "Gaps estimated at the timing lines" in _header(app) or any(
+            "Gaps estimated" in body for body in _markup(app)
+        )
+        assert _tower_order(app) == ["A", "B", "C"]
+
+    def test_the_player_opens_without_positions_and_says_so(self, monkeypatch):
+        monkeypatch.delenv("F1_REPLAY_PLAYER", raising=False)
+        app = AppTest.from_function(_schema_six_script, default_timeout=60)
+        app.run()
+
+        assert not app.exception, app.exception
+        data = _player_data(app)
+        assert data["estimated"] is True
+        assert data["pos"] is None
+        assert data["tower"], "the tower must still be there"
