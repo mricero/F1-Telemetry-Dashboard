@@ -205,6 +205,9 @@ def record_metrics(metrics_store, label: str, views: dict, key: str) -> None:
 
 def main():
     """Main Streamlit application: select, load once, then navigate."""
+    # One line per script run: the replay player must not cause any while
+    # it plays (REPLAY-05 checks this with LOG_LEVEL=DEBUG).
+    logging.getLogger("app").debug("script run")
     render_header()
 
     init_browser_session()

@@ -299,7 +299,9 @@ def positions_at(source: "PositionCube | pd.DataFrame | None", moment: float) ->
         return []
 
     index = (float(moment) - cube.t0) / cube.step
-    if index < -1e-9 or index > cube.frames - 1 + 1e-9:
+    # Within one frame of either end, hold the nearest frame: lights out can
+    # fall a fraction of a second before the first position sample.
+    if index < -1 or index > cube.frames:
         return []  # asking outside the session
     index = min(max(index, 0.0), cube.frames - 1)
     low = math.floor(index)

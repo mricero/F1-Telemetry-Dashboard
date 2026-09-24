@@ -284,7 +284,7 @@ class TestPages:
     def test_a_historical_session_opens_on_the_replay(self):
         app_test = _run_for("fastf1")
 
-        assert any(button.label == "Lights out" for button in app_test.button)
+        assert app_test.get("bidi_component"), "the replay player should be on the page"
         assert not any(exp.label == "Diagnostics" for exp in app_test.expander)
 
     def test_analysis_draws_only_the_chosen_panel(self):

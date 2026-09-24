@@ -1,0 +1,175 @@
+/* Replay player (IMPROVEMENTS.md REPLAY-05; layout.md section 9).
+   Colours are the guideline 5.4 tokens, defined once here and mirrored from
+   ui/theme.py; team, tyre and flag colours arrive with the data. */
+:root, :host {
+  --bg: #0b0c0f;
+  --surface: #13151a;
+  --surface-2: #1a1d23;
+  --line: #262a31;
+  --text: #eceef1;
+  --text-dim: #9aa1ab;
+  --accent: #e10600;
+  --best: #b138dd;
+  --pb: #2fbf5b;
+  --slower: #e6c229;
+  --edge: #07080a;
+  --white: #ffffff;
+  --font-label: "Titillium Web", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --row: 30px;
+}
+
+.rp {
+  container-type: inline-size;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  outline: none;
+  user-select: none;
+}
+.rp:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rp * { box-sizing: border-box; }
+.rp-num { font-variant-numeric: tabular-nums; }
+.rp-dim { color: var(--text-dim); }
+.rp-label {
+  font-family: var(--font-label); font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim);
+}
+
+/* ---------- header ---------- */
+.rp-header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  min-height: 48px; padding: 8px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.rp-event {
+  font-family: var(--font-label); font-size: 22px; font-weight: 700;
+  letter-spacing: .02em; text-transform: uppercase;
+}
+.rp-session {
+  font-family: var(--font-label); font-size: 13px; font-weight: 600;
+  color: var(--text-dim); text-transform: uppercase;
+}
+.rp-lap, .rp-clock { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rp-chip {
+  display: inline-block; padding: 3px 8px; border-radius: 2px; white-space: nowrap;
+  font-family: var(--font-label); font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.rp-weather { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.rp-note { padding: 4px 16px; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--line); }
+
+/* ---------- main split ---------- */
+.rp-main { display: grid; grid-template-columns: 40% 60%; min-height: 360px; }
+.rp-tower { position: relative; border-right: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.rp-side { display: flex; flex-direction: column; min-width: 0; }
+.rp-map { position: relative; flex: 1 1 auto; background: var(--surface); min-height: 240px; }
+.rp-map svg { display: block; width: 100%; height: auto; }
+.rp-map-note { padding: 24px; color: var(--text-dim); }
+.rp-track-chip { position: absolute; top: 8px; left: 8px; }
+
+/* ---------- tower ---------- */
+.rp-thead {
+  display: grid; align-items: center; column-gap: 8px; height: 26px; padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.rp-rows { position: relative; }
+.rp-row {
+  position: absolute; left: 0; right: 0; top: 0; height: var(--row);
+  display: grid; align-items: center; column-gap: 8px; padding: 0 8px; cursor: pointer;
+  transition: transform 350ms ease-out; border-left: 2px solid transparent;
+}
+.rp-row.odd { background: var(--surface-2); }
+.rp-row.focused { background: var(--surface-2); border-left-color: var(--accent); }
+.rp-row.out { color: var(--text-dim); }
+.rp-cols-race { grid-template-columns: 28px 8px minmax(64px, 1fr) 76px 76px 52px 28px 44px; }
+.rp-cols-timed {
+  grid-template-columns: 28px 8px minmax(64px, 1fr) 72px 68px 72px 46px 46px 46px 44px;
+}
+.rp-heading {
+  position: absolute; left: 0; right: 0; top: 0; height: 18px; padding: 2px 8px;
+  transition: transform 350ms ease-out;
+}
+.rp-pos { text-align: right; padding-right: 6px; font-variant-numeric: tabular-nums; }
+.rp-pos.top { font-weight: 700; }
+.rp-bar { width: 4px; height: 18px; }
+.rp-code { font-family: var(--font-label); font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
+.rp-code small { margin-left: 4px; color: var(--text-dim); font-weight: 400; font-size: 11px; }
+.rp-right { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-gap { color: var(--text-dim); }
+.rp-gap.close { color: var(--text); }
+.rp-last.sb { color: var(--best); }
+.rp-last.pb { color: var(--pb); }
+.rp-flash-sb { animation: rp-flash-sb 600ms ease-out; }
+.rp-flash-pb { animation: rp-flash-pb 600ms ease-out; }
+@keyframes rp-flash-sb {
+  from { background: color-mix(in srgb, var(--best) 25%, transparent); }
+  to { background: transparent; }
+}
+@keyframes rp-flash-pb {
+  from { background: color-mix(in srgb, var(--pb) 25%, transparent); }
+  to { background: transparent; }
+}
+.rp-tyre { display: inline-flex; align-items: center; gap: 4px; }
+.rp-tyre i {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--text-dim);
+  font-style: normal; font-family: var(--font-label); font-size: 10px; font-weight: 700;
+}
+.rp-tyre i.used { border-style: dashed; }
+.rp-status .rp-chip { border: 1px solid var(--line); color: var(--text-dim); padding: 1px 5px; }
+.rp-status .rp-chip.pit { border-color: var(--text); color: var(--text); }
+.rp-toggle { display: flex; gap: 4px; padding: 8px; border-top: 1px solid var(--line); }
+
+/* ---------- race control ---------- */
+.rp-rc { border-top: 1px solid var(--line); padding: 6px 12px; min-height: 64px; }
+.rp-rc-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.rp-rc-toggle { display: none; }
+
+/* ---------- controls ---------- */
+.rp-controls {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  min-height: 36px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--surface);
+}
+.rp button, .rp select {
+  height: 28px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text); font: inherit; cursor: pointer;
+}
+.rp button:hover, .rp select:hover { background: var(--surface-2); }
+.rp button:focus-visible, .rp select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rp button.on { border-color: var(--text); }
+.rp button.rp-play { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.rp button.rp-play svg { width: 16px; height: 16px; }
+.rp-readout { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+
+/* ---------- timeline ---------- */
+.rp-timeline { height: 28px; border-top: 1px solid var(--line); cursor: pointer; background: var(--surface); }
+.rp-timeline svg { display: block; width: 100%; height: 28px; }
+
+/* ---------- responsive (layout.md section 9.6) ---------- */
+@container (max-width: 1199px) {
+  .rp-main { grid-template-columns: 45% 55%; }
+  .rp-cols-race { grid-template-columns: 28px 8px minmax(64px, 1fr) 76px 52px 44px; }
+  .rp-col-last, .rp-col-pit { display: none; }
+}
+@container (max-width: 899px) {
+  .rp-main { grid-template-columns: 100%; }
+  .rp-side { order: -1; }
+  .rp-map svg { max-height: 50vh; }
+  .rp-tower { border-right: 0; border-top: 1px solid var(--line); }
+  .rp-rc { display: none; }
+  .rp-rc.open { display: block; }
+  .rp-rc-toggle { display: inline-flex; align-items: center; }
+  .rp-weather { margin-left: 0; }
+  .rp-cols-timed { grid-template-columns: 28px 8px minmax(64px, 1fr) 72px 68px 44px; }
+  .rp-col-sector, .rp-col-last-timed { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-row, .rp-heading { transition: none; }
+  .rp-flash-sb, .rp-flash-pb { animation: none; }
+}

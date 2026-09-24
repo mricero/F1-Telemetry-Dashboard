@@ -71,3 +71,6 @@ dmypy.json
 
 # Scratch folder for files moved aside before deletion
 _to_delete/
+
+# Output of scripts/preview_replay_player.py
+replay_preview.html

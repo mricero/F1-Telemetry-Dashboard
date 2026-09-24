@@ -12,6 +12,8 @@ out. Step controls and the scrubber move it; playback here is the server
 fallback (one frame a second) until the browser player takes over.
 """
 
+import os
+
 import streamlit as st
 
 from processing.replay import ReplayClock, format_clock
@@ -23,7 +25,11 @@ from processing.replay_model import (
     snapshot_at,
     tower_series,
 )
-from ui.dashboard import render_dashboard
+from processing.replay_payload import build_replay_payload
+from processing.timing import build_timing_rows, sector_leaders
+from ui.components.replay_player import player_style, render_replay_player
+from ui.dashboard import render_dashboard, sector_cards_html
+from ui.theme import DASHBOARD_CSS
 
 # How much session time one second of playback covers, per speed setting.
 SPEED_OPTIONS = {"1x": 1.0, "5x": 5.0, "20x": 20.0, "60x": 60.0}
@@ -40,6 +46,19 @@ SPEED_PREFIX = "replay_speed"
 SLIDER_PREFIX = "replay_slider"
 JUMP_PREFIX = "replay_jump"
 MODEL_PREFIX = "replay_model"
+PAYLOAD_PREFIX = "replay_payload"
+SEEK_PREFIX = "replay_seek"
+FOCUS_PREFIX = "replay_focus"
+PLAYER_PREFIX = "replay_player"
+
+# F1_REPLAY_PLAYER=server keeps the server-rendered view (REPLAY-04) instead
+# of the browser player, e.g. where custom components are not wanted.
+PLAYER_ENV = "F1_REPLAY_PLAYER"
+
+
+def player_mode() -> str:
+    """``browser`` (the default) or ``server``."""
+    return "server" if os.environ.get(PLAYER_ENV, "").strip().lower() == "server" else "browser"
 
 
 def session_key(session_data: dict, selection: dict | None = None) -> str:
@@ -112,7 +131,40 @@ def replay_model(session_data: dict, key: str) -> tuple[TowerSeries, list]:
 
 
 def _move(key: str, moment: float, clock: ReplayClock) -> None:
+    """Move the cursor from Python; the browser player follows the seek token."""
     st.session_state[cursor_key(key)] = clock.clamp(moment)
+    seek = f"{SEEK_PREFIX}:{key}"
+    st.session_state[seek] = st.session_state.get(seek, 0) + 1
+
+
+def replay_payload(session_data: dict, key: str, series: TowerSeries, clock: ReplayClock) -> dict:
+    """The player's payload, built once per session and styled from the theme."""
+    state_key = f"{PAYLOAD_PREFIX}:{key}"
+    cached = st.session_state.get(state_key)
+    if cached is not None and cached[0] is session_data:
+        return cached[1]
+    payload = build_replay_payload(session_data, series, clock, key)
+    payload["style"] = player_style(payload, session_data.get("compound_colors"))
+    st.session_state[state_key] = (session_data, payload)
+    return payload
+
+
+def _player_state(key: str, name: str):
+    state = st.session_state.get(f"{PLAYER_PREFIX}:{key}")
+    if state is None:
+        return None
+    return state.get(name) if hasattr(state, "get") else getattr(state, name, None)
+
+
+def _from_player(key: str, clock: ReplayClock) -> None:
+    """The player paused or seeked: its cursor becomes the authoritative one."""
+    value = _player_state(key, "cursor")
+    if value is not None:
+        st.session_state[cursor_key(key)] = clock.clamp(float(value))
+
+
+def _focus_from_player(key: str) -> None:
+    st.session_state[f"{FOCUS_PREFIX}:{key}"] = _player_state(key, "focus")
 
 
 def _shift(key: str, delta: float, clock: ReplayClock) -> None:
@@ -171,6 +223,10 @@ def render_session_replay(session_data: dict, key: str | None = None, on_final=N
     st.session_state.setdefault(speed, "5x")
     st.session_state[cursor] = clock.clamp(st.session_state[cursor])
     is_playing = st.session_state[playing]
+
+    if player_mode() == "browser":
+        _browser_view(session_data, key, series, found, clock, on_final)
+        return
 
     # Row 1: the step controls. Row 2: the scrubber with the clock, the
     # jump list, speed and the switch to the final result.
@@ -256,3 +312,38 @@ def _play(session_data: dict, series: TowerSeries, clock: ReplayClock, key: str)
     render_dashboard(snapshot_at(session_data, moment, series))
     if moment >= clock.end:
         st.session_state[playing] = False
+
+
+def _browser_view(session_data, key, series, found, clock, on_final) -> None:
+    """The browser player, with the panels only Python can draw below it."""
+    payload = replay_payload(session_data, key, series, clock)
+    seek = f"{SEEK_PREFIX}:{key}"
+    st.session_state.setdefault(seek, 0)
+    render_replay_player(
+        payload,
+        key=f"{PLAYER_PREFIX}:{key}",
+        cursor=st.session_state[cursor_key(key)],
+        seek=st.session_state[seek],
+        on_cursor_change=lambda: _from_player(key, clock),
+        on_focus_change=lambda: _focus_from_player(key),
+    )
+
+    moment = st.session_state[cursor_key(key)]
+    jump, final, readout = st.columns([3, 1.2, 5.8], gap="small")
+    targets = {_event_label(t, clock, label): t for t, _, label in found}
+    jump.selectbox(
+        "Jump to",
+        list(targets),
+        index=None,
+        placeholder="Jump to",
+        key=f"{JUMP_PREFIX}:{key}",
+        on_change=_jump,
+        args=(key, targets, clock),
+        label_visibility="collapsed",
+    )
+    if on_final is not None and final.button("Final result", width="stretch"):
+        on_final()
+    readout.caption(f"Sector leaders at {format_clock(moment - clock.lights_out)} (paused)")
+    rows = build_timing_rows(snapshot_at(session_data, moment, series))
+    st.html(DASHBOARD_CSS)
+    st.html(f'<div class="f1-dash">{sector_cards_html(sector_leaders(rows))}</div>')

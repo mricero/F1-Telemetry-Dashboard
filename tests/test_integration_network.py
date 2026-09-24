@@ -131,9 +131,8 @@ class TestAppSmoke:
 
         assert not app.exception, [str(e.value) for e in app.exception]
         assert not app.error, [str(e.value) for e in app.error]
-        # The Replay page opens first; its tower and map are st.html, which
-        # AppTest does not expose, so the controls stand in for it.
-        assert any(button.label == "Lights out" for button in app.button)
+        # The Replay page opens first, on the browser player.
+        assert app.get("bidi_component"), "the replay player should be mounted"
         for url_path in ("results", "analysis", "records"):
             self._open(app, url_path)
             assert not app.exception, (url_path, [str(e.value) for e in app.exception])

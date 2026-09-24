@@ -26,6 +26,15 @@ from ui.replay_view import (
 os.environ.setdefault("F1_METRICS_STORE", ":memory:")
 
 KEY = "fastf1:2026:Test Grand Prix:R"
+
+
+@pytest.fixture(autouse=True)
+def _server_view(monkeypatch):
+    """These tests drive the server-rendered view (REPLAY-04), the fallback
+    behind F1_REPLAY_PLAYER=server; the browser player has its own tests."""
+    monkeypatch.setenv("F1_REPLAY_PLAYER", "server")
+
+
 CURSOR = f"replay_cursor:{KEY}"
 PLAYING = f"replay_playing:{KEY}"
 
@@ -271,3 +280,56 @@ class TestTheReplayIsTheMainView:
         assert any(sub.value == "Tyre strategy" for sub in race_app.subheader)
         final = [row["code"] for row in build_timing_rows(fx.race_session())]
         assert _tower_order(race_app) == final
+
+
+# --- the browser player (REPLAY-05) -----------------------------------------
+
+
+def _player_data(app: AppTest) -> dict:
+    import json
+
+    (element,) = app.get("bidi_component")
+    return json.loads(element.proto.json)
+
+
+class TestTheBrowserPlayerIsTheDefault:
+    @pytest.fixture
+    def player_app(self, monkeypatch) -> AppTest:
+        monkeypatch.delenv("F1_REPLAY_PLAYER", raising=False)
+        test = AppTest.from_function(_replay_script, default_timeout=60)
+        test.run()
+        assert not test.exception, test.exception
+        return test
+
+    def test_the_page_mounts_the_player_under_the_session_key(self, player_app):
+        (element,) = player_app.get("bidi_component")
+
+        assert element.proto.component_name == "f1_replay_player"
+        assert element.proto.id.endswith(f"replay_player:{KEY}")
+
+    def test_its_cursor_defaults_to_lights_out(self, player_app):
+        state = player_app.session_state[f"replay_player:{KEY}"]
+
+        assert state["cursor"] == fx.LIGHTS_OUT
+        assert state["focus"] is None
+
+    def test_it_receives_the_payload_with_styling(self, player_app):
+        data = _player_data(player_app)
+
+        assert data["session_key"] == KEY
+        assert data["cursor"] == fx.LIGHTS_OUT
+        assert set(data["style"]) == {"teams", "flags", "compounds"}
+        assert data["style"]["flags"]["SAFETY CAR"][2] == "SC"
+
+    def test_a_jump_chosen_outside_the_player_bumps_the_seek_token(self, player_app):
+        before = _player_data(player_app)["seek"]
+        jump = player_app.selectbox(key=f"replay_jump:{KEY}")
+        jump.set_value(next(o for o in jump.options if o.endswith("Pit stop - C"))).run()
+
+        data = _player_data(player_app)
+        assert data["seek"] == before + 1
+        assert data["cursor"] == pytest.approx(fx.C_PIT_IN)
+
+    def test_the_server_controls_are_not_duplicated(self, player_app):
+        assert not any(button.label == "Lights out" for button in player_app.button)
+        assert any(button.label == "Final result" for button in player_app.button) is False

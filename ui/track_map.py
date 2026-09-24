@@ -16,12 +16,16 @@ import numpy as np
 import pandas as pd
 
 from processing.timing import segment_boundaries
+from processing.track_geometry import (  # noqa: F401 - re-exported for callers and tests
+    MAX_OUTLINE_POINTS,
+    VIEW_H,
+    VIEW_W,
+    path_from,
+    reference_driver,
+    rotate_points,
+    track_geometry,
+)
 from ui.theme import BORDER, TEXT_DIM, safe_hex, team_color
-
-# Viewport the SVG is drawn into; the track is scaled to fit with padding.
-VIEW_W = 1000
-VIEW_H = 760
-PADDING = 62
 
 # Mini-sectors used for the dominance layer. 3 sectors x 5 segments matches
 # the leaderboard's micro-sector strips so the two views agree.
@@ -34,98 +38,6 @@ SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 # Text inside the map is drawn by the image's own document, which sees
 # neither the page's CSS variables nor its embedded fonts.
 SVG_FONT = "Titillium Web, system-ui, Segoe UI, Roboto, Arial, sans-serif"
-
-# A full-session trace holds every lap (~300 km, tens of thousands of points)
-# and is drawn three times over. Resampling at uniform distance keeps the
-# shape while bounding the SVG the browser has to parse.
-MAX_OUTLINE_POINTS = 1500
-
-
-def rotate_points(xy: np.ndarray, angle_degrees: float) -> np.ndarray:
-    """Rotate an (N, 2) array of coordinates about the origin.
-
-    FastF1 publishes a per-circuit ``rotation`` so maps come out in the
-    orientation broadcasts use; without it circuits appear on their side.
-    """
-    angle = np.deg2rad(angle_degrees or 0.0)
-    matrix = np.array(
-        [[np.cos(angle), np.sin(angle)], [-np.sin(angle), np.cos(angle)]], dtype=float
-    )
-    return np.matmul(np.asarray(xy, dtype=float), matrix)
-
-
-def reference_driver(location: dict[str, pd.DataFrame]) -> str | None:
-    """Whose GPS trace the outline is drawn from (the most complete one)."""
-    best_code, best_len = None, 0
-    for code, frame in (location or {}).items():
-        if frame is None or frame.empty or not {"X", "Y"}.issubset(frame.columns):
-            continue
-        usable = len(frame.dropna(subset=["X", "Y"]))
-        if usable > best_len:
-            best_code, best_len = code, usable
-    return best_code
-
-
-def _reference_trace(location: dict[str, pd.DataFrame]) -> pd.DataFrame | None:
-    """Pick the GPS trace that best describes the circuit outline."""
-    code = reference_driver(location)
-    if code is None:
-        return None
-    return location[code].dropna(subset=["X", "Y"])
-
-
-def _trace_distance(reference: pd.DataFrame, track: np.ndarray) -> np.ndarray:
-    """Distance along the reference trace, for equal-distance slicing.
-
-    Prefers the frame's own ``Distance`` channel (FastF1 integrates it from
-    speed); falls back to the GPS arc length, which is proportional to it.
-    """
-    if "Distance" in reference.columns:
-        values = pd.to_numeric(reference["Distance"], errors="coerce").to_numpy(float)
-        if np.isfinite(values).all() and np.all(np.diff(values) >= 0) and values[-1] > values[0]:
-            return values
-    steps = np.hypot(*np.diff(track, axis=0).T)
-    return np.concatenate([[0.0], np.cumsum(np.nan_to_num(steps))])
-
-
-def _decimate(
-    track: np.ndarray, distance: np.ndarray, limit: int = MAX_OUTLINE_POINTS
-) -> tuple[np.ndarray, np.ndarray]:
-    """Resample a trace to at most ``limit`` points, uniformly by distance."""
-    if len(track) <= limit:
-        return track, distance
-    keep = np.unique(segment_boundaries(distance, limit))
-    return track[keep], distance[keep]
-
-
-def _fit_transform(points: np.ndarray) -> tuple[float, float, float]:
-    """Scale/offset mapping rotated track coordinates into the viewBox."""
-    min_xy, max_xy = points.min(axis=0), points.max(axis=0)
-    span = np.maximum(max_xy - min_xy, 1e-6)
-    scale = min((VIEW_W - 2 * PADDING) / span[0], (VIEW_H - 2 * PADDING) / span[1])
-    # Centre the shape in the viewport.
-    offset_x = (VIEW_W - span[0] * scale) / 2 - min_xy[0] * scale
-    offset_y = (VIEW_H - span[1] * scale) / 2 - min_xy[1] * scale
-    return scale, offset_x, offset_y
-
-
-def _project(points: np.ndarray, scale: float, dx: float, dy: float) -> np.ndarray:
-    """Apply the fit transform; SVG's y-axis grows downward, so flip it."""
-    out = np.asarray(points, dtype=float) * scale
-    out[:, 0] += dx
-    out[:, 1] = VIEW_H - (out[:, 1] + dy)
-    return out
-
-
-def _path_from(points: np.ndarray, close: bool = True) -> str:
-    """SVG path data for a polyline."""
-    if len(points) == 0:
-        return ""
-    parts = [f"M {points[0, 0]:.2f} {points[0, 1]:.2f}"]
-    parts += [f"L {x:.2f} {y:.2f}" for x, y in points[1:]]
-    if close:
-        parts.append("Z")
-    return " ".join(parts)
 
 
 def dominance_segments(
@@ -162,22 +74,16 @@ def build_track_svg(
     evenly. ``markers`` places driver nodes:
     ``[{'code','x','y','team_colour'}]``. Returns None without usable GPS.
     """
-    reference = _reference_trace(location)
-    if reference is None or len(reference) < 10:
+    geometry = track_geometry(location, circuit_info)
+    if geometry is None:
         return None
-
-    rotation = float((circuit_info or {}).get("rotation") or 0.0)
-    track = rotate_points(reference[["X", "Y"]].to_numpy(float), rotation)
-    distance = _trace_distance(reference, track)
-    track, distance = _decimate(track, distance)
-    scale, dx, dy = _fit_transform(track)
-    projected = _project(track.copy(), scale, dx, dy)
+    projected, distance = geometry.outline, geometry.distance
 
     layers: list[str] = []
 
     # Track body: a wide dark casing under a lighter ribbon reads as tarmac
     # and keeps thin sections legible.
-    outline = _path_from(projected)
+    outline = path_from(projected)
     layers.append(
         f'<path d="{outline}" fill="none" stroke="#000000" stroke-width="22" '
         'stroke-linejoin="round" stroke-linecap="round" opacity="0.9"/>'
@@ -206,7 +112,7 @@ def build_track_svg(
                 continue
             info = meta.get(code, {})
             colour = team_color(info.get("team_name"), info.get("team_colour"))
-            slice_path = _path_from(projected[start:end], close=False)
+            slice_path = path_from(projected[start:end], close=False)
             layers.append(
                 f'<path d="{slice_path}" fill="none" stroke="{colour}" stroke-width="7" '
                 'stroke-linejoin="round" stroke-linecap="round" opacity="0.95"/>'
@@ -214,49 +120,33 @@ def build_track_svg(
 
     # Start/finish line, drawn perpendicular to the opening direction.
     if len(projected) > 2:
-        p0, p1 = projected[0], projected[min(4, len(projected) - 1)]
-        direction = p1 - p0
-        norm = float(np.hypot(*direction)) or 1.0
-        perp = np.array([-direction[1], direction[0]]) / norm * 13
+        x1, y1, x2, y2 = geometry.start_finish()
         layers.append(
-            f'<line x1="{p0[0] - perp[0]:.1f}" y1="{p0[1] - perp[1]:.1f}" '
-            f'x2="{p0[0] + perp[0]:.1f}" y2="{p0[1] + perp[1]:.1f}" '
+            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
             'stroke="#ffffff" stroke-width="4"/>'
         )
 
     # Corner markers, nudged outward from the circuit centroid so the
     # numbers do not sit on top of the racing line.
-    corners = (circuit_info or {}).get("corners")
-    if corners is not None and len(corners) > 0:
-        corner_df = pd.DataFrame(corners)
-        corner_xy = rotate_points(corner_df[["X", "Y"]].to_numpy(float), rotation)
-        corner_pts = _project(corner_xy.copy(), scale, dx, dy)
-        centre = projected.mean(axis=0)
-        for (px, py), (_, corner) in zip(corner_pts, corner_df.iterrows(), strict=False):
-            away = np.array([px, py]) - centre
-            away = away / (float(np.hypot(*away)) or 1.0) * 26
-            lx, ly = px + away[0], py + away[1]
-            number = corner.get("Number")
-            letter = corner.get("Letter") or ""
-            label = f"{int(number)}{letter}" if pd.notna(number) else str(letter)
-            layers.append(
-                f'<line x1="{px:.1f}" y1="{py:.1f}" x2="{lx:.1f}" y2="{ly:.1f}" '
-                f'stroke="{TEXT_DIM}" stroke-width="1" opacity="0.5"/>'
-            )
-            layers.append(
-                f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="10" fill="#0a0a0a" '
-                f'stroke="{BORDER}" stroke-width="1.5"/>'
-            )
-            layers.append(
-                f'<text x="{lx:.1f}" y="{ly + 3.5:.1f}" text-anchor="middle" '
-                'fill="#cfcfcf" font-size="11" font-weight="700" '
-                f'font-family="{SVG_FONT}">{html.escape(label)}</text>'
-            )
+    for corner in geometry.corners(circuit_info):
+        px, py, lx, ly = corner["x"], corner["y"], corner["lx"], corner["ly"]
+        layers.append(
+            f'<line x1="{px:.1f}" y1="{py:.1f}" x2="{lx:.1f}" y2="{ly:.1f}" '
+            f'stroke="{TEXT_DIM}" stroke-width="1" opacity="0.5"/>'
+        )
+        layers.append(
+            f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="10" fill="#0a0a0a" '
+            f'stroke="{BORDER}" stroke-width="1.5"/>'
+        )
+        layers.append(
+            f'<text x="{lx:.1f}" y="{ly + 3.5:.1f}" text-anchor="middle" '
+            'fill="#cfcfcf" font-size="11" font-weight="700" '
+            f'font-family="{SVG_FONT}">{html.escape(corner["label"])}</text>'
+        )
 
     # Driver position nodes.
     for marker in markers or []:
-        raw = np.array([[marker["x"], marker["y"]]], dtype=float)
-        point = _project(rotate_points(raw, rotation), scale, dx, dy)[0]
+        point = geometry.project([[marker["x"], marker["y"]]])[0]
         colour = safe_hex(marker.get("team_colour"))
         code = html.escape(str(marker.get("code", "")))
         layers.append(

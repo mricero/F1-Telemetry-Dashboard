@@ -1,0 +1,200 @@
+"""The browser player's payload (IMPROVEMENTS.md REPLAY-05).
+
+The player only looks values up in this payload, so it must say exactly
+what the server-side model says: the tower read from the payload (a Python
+mirror of the JavaScript binary search) is compared with ``snapshot_at`` at
+random moments, and the decoded car positions with the map's projection.
+"""
+
+import json
+import re
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from processing.replay_model import session_clock, snapshot_at, tower_series
+from processing.replay_payload import (
+    POSITION_ABSENT,
+    build_replay_payload,
+    decode_positions,
+    tower_at,
+)
+from processing.timing import build_timing_rows
+from processing.track_geometry import track_geometry
+from tests import replay_fixtures as fx
+
+REQUIRED = {
+    "v": int,
+    "session_key": str,
+    "session": dict,
+    "clock": dict,
+    "track": dict,
+    "drivers": list,
+    "pos": dict,
+    "tower": dict,
+    "defaults": dict,
+    "flags": list,
+    "rcm": list,
+    "weather": list,
+    "leader_laps": list,
+    "events": list,
+    "segments": list,
+    "estimated": bool,
+}
+
+
+def _payload(session):
+    series = tower_series(session)
+    return build_replay_payload(session, series, session_clock(session), "key"), series
+
+
+@pytest.fixture(scope="module")
+def race():
+    return fx.race_session()
+
+
+@pytest.fixture(scope="module")
+def built(race):
+    return _payload(race)
+
+
+class TestShape:
+    def test_required_keys_and_types(self, built):
+        payload, _ = built
+
+        for key, kind in REQUIRED.items():
+            assert isinstance(payload[key], kind), key
+
+    def test_it_is_strict_json(self, built):
+        payload, _ = built
+
+        json.dumps(payload, allow_nan=False)  # NaN would break JSON.parse
+
+    def test_the_clock_is_the_replay_clock(self, built, race):
+        payload, _ = built
+        clock = session_clock(race)
+
+        assert payload["clock"]["lights_out"] == clock.lights_out
+        assert payload["clock"]["total_laps"] == 5
+
+    def test_flags_use_the_flag_state_keys(self, built):
+        payload, _ = built
+
+        states = [state for _, state in payload["flags"]]
+        assert states == ["GREEN", "SAFETY CAR", "GREEN", "CHEQUERED"]
+
+
+class TestPositions:
+    def test_decoding_reproduces_the_projected_positions(self, built, race):
+        payload, _ = built
+        pos = payload["pos"]
+        xy = decode_positions(pos)
+        geometry = track_geometry(race["location"], race["circuit_info"])
+        timeline = race["positions"]
+
+        for code in ("A", "C"):
+            index = pos["codes"].index(code)
+            own = timeline[timeline["Driver"] == code].iloc[::40]
+            frames = np.rint((own["Time"].to_numpy() - pos["t0"]) / pos["step"]).astype(int)
+            expected = geometry.project(own[["X", "Y"]].to_numpy())
+            assert np.nanmax(np.abs(xy[frames, index] - expected)) <= 0.1
+
+    def test_a_car_without_a_sample_is_marked_absent(self, built):
+        payload, _ = built
+        xy = decode_positions(payload["pos"])
+        a = payload["pos"]["codes"].index("A")
+        after_a_stopped = int((fx.RACE_END_BY["A"] + 20 - payload["pos"]["t0"]) / 0.5)
+
+        assert np.isnan(xy[after_a_stopped, a]).all()
+        assert payload["pos"]["absent"] == POSITION_ABSENT
+
+
+class TestTheTowerMatchesTheModel:
+    @pytest.mark.parametrize("seed", range(50))
+    def test_at_a_random_moment(self, race, built, seed):
+        payload, series = built
+        clock = session_clock(race)
+        moment = float(np.random.default_rng(seed).uniform(clock.start, clock.end))
+
+        from_payload = tower_at(payload, moment)
+        rows = build_timing_rows(snapshot_at(race, moment, series))
+
+        assert [row["code"] for row in from_payload] == [row["code"] for row in rows]
+        for mirror, row in zip(from_payload, rows, strict=True):
+            assert mirror["gap"] == row["gap"]
+            assert mirror["int"] == row["interval"]
+            assert mirror["status"] == row["status"]
+            current = row["tyre_history"][-1]["compound"] if row["tyre_history"] else None
+            assert mirror["tyre"] == current
+
+    def test_qualifying_too(self):
+        session = fx.qualifying_session()
+        payload, series = _payload(session)
+
+        for moment in (fx.Q_STARTS[1] + 1, fx.Q2_LATE_LAP_END + 1, fx.Q_STARTS[2] + 1):
+            order = [row["code"] for row in tower_at(payload, moment)]
+            rows = build_timing_rows(snapshot_at(session, moment, series))
+            assert order == [row["code"] for row in rows]
+
+
+class TestBudget:
+    def test_a_two_hour_22_car_race_fits_in_four_megabytes(self):
+        from tests.test_replay_model import _big_race
+
+        session = _big_race()
+        angle = np.linspace(0, 2 * np.pi, 300)
+        session["location"] = {
+            "D00": pd.DataFrame({"X": np.cos(angle) * 5000, "Y": np.sin(angle) * 3000})
+        }
+        grid = np.arange(3600.0, 3600.0 + 7200.0, 0.5)
+        codes = [f"D{index:02d}" for index in range(22)]
+        session["positions"] = pd.DataFrame(
+            {
+                "Time": np.tile(grid, len(codes)),
+                "Driver": np.repeat(codes, len(grid)),
+                "X": np.tile(np.cos(grid / 90) * 5000, len(codes)),
+                "Y": np.tile(np.sin(grid / 90) * 3000, len(codes)),
+            }
+        )
+        session["session_info"]["replay_clock"] = {
+            "start": 3600.0,
+            "lights_out": 3600.0,
+            "end": 3600.0 + 7200.0,
+            "step": 0.5,
+        }
+        payload, _ = _payload(session)
+
+        size = len(json.dumps(payload, allow_nan=False))
+        assert payload["pos"]["frames"] >= 14_000
+        assert size <= 4 * 1024 * 1024, f"{size / 1e6:.2f} MB"
+
+
+class TestTheComponentFiles:
+    """Guideline 5.12 runs over the component too; these pin its contract."""
+
+    def test_the_tokens_are_defined_once_in_root(self):
+        from ui.components.replay_player import component_source
+
+        css = component_source()["css"]
+        blocks = re.findall(r":root[^{]*\{([^}]*)\}", css)
+
+        assert len(blocks) == 1
+        for token in ("--bg", "--surface", "--surface-2", "--line", "--text", "--text-dim"):
+            assert f"{token}:" in blocks[0]
+        assert "--accent:" in blocks[0]
+
+    def test_the_three_breakpoints_exist(self):
+        from ui.components.replay_player import component_source
+
+        css = component_source()["css"]
+
+        assert "max-width: 1199px" in css
+        assert "max-width: 899px" in css
+        assert "prefers-reduced-motion" in css
+
+    def test_the_player_never_builds_markup_from_strings(self):
+        """Feed strings must not reach innerHTML unescaped."""
+        from ui.components.replay_player import component_source
+
+        assert "innerHTML" not in component_source()["js"]
