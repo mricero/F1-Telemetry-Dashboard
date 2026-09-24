@@ -19,6 +19,7 @@ TEXT_DIM = "#9aa1ab"  # secondary text
 ACCENT = "#e10600"  # focus, playhead, cursor marker, primary button only
 BLACK = "#000000"
 WHITE = "#ffffff"
+EDGE = "#07080a"  # the 1 px darker edge under the track ribbon
 
 # --- Timing conventions ---------------------------------------------------
 BEST = "#b138dd"  # session best (purple)
@@ -96,6 +97,10 @@ FLAG_STATES = {
     "FINISHED": (LINE, TEXT_DIM, "ENDED"),
 }
 
+# Chart series without a team colour (weather): one warm, one cool.
+CHART_WARM = FLAG_AMBER
+CHART_COOL = "#4ea8de"
+
 # --- Typography (guideline 5.3) -----------------------------------------
 SYSTEM_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
 LABEL_STACK = f'"Titillium Web", {SYSTEM_STACK}'
@@ -168,6 +173,35 @@ def status_chip(label: str, state: str) -> str:
         f'<span class="f1-chip" style="background:{background};color:{foreground}">'
         f"{html.escape(label)}</span>"
     )
+
+
+def chart_layout(series_count: int) -> dict:
+    """The one Plotly layout every chart uses (guideline 5.6).
+
+    Transparent paper on a ``--surface`` plot area, 1 px ``--line`` grid,
+    11 px ``--text-dim`` ticks, no title inside the figure (the panel label
+    is the title), a legend only above three series, and an x-unified hover.
+    """
+    axis = {
+        "gridcolor": LINE,
+        "linecolor": LINE,
+        "zerolinecolor": LINE,
+        "tickfont": {"size": 11, "color": TEXT_DIM},
+        "title": {"font": {"size": 11, "color": TEXT_DIM}},
+    }
+    return {
+        "title": None,
+        "paper_bgcolor": "rgba(0,0,0,0)",
+        "plot_bgcolor": SURFACE,
+        "font": {"family": SYSTEM_STACK, "size": 13, "color": TEXT},
+        "xaxis": axis,
+        "yaxis": axis,
+        "showlegend": series_count > 3,
+        "legend": {"font": {"size": 11, "color": TEXT_DIM}, "orientation": "h", "y": 1.02},
+        "hovermode": "x unified",
+        "hoverlabel": {"bgcolor": SURFACE_2, "bordercolor": LINE, "font": {"size": 12}},
+        "margin": {"l": 48, "r": 16, "t": 16, "b": 40},
+    }
 
 
 def segment_color(state: str) -> str:
@@ -267,6 +301,20 @@ DASHBOARD_CSS = f"""
 .f1-tower tbody tr:nth-child(even) {{ background: var(--surface-2); }}
 .f1-tower tbody tr.ko {{ background: var(--surface-2); color: var(--text-dim); }}
 .f1-tower td {{ padding: 4px 8px; height: 28px; vertical-align: middle; white-space: nowrap; }}
+/* Sticky header row and sticky first two columns (position, driver), so the
+   tower stays readable when it scrolls either way. */
+.f1-tower th:nth-child(1), .f1-tower td:nth-child(1),
+.f1-tower th:nth-child(2), .f1-tower td:nth-child(2) {{
+  position: sticky; z-index: 1; background: inherit;
+}}
+.f1-tower tbody tr {{ background: var(--surface); }}
+.f1-tower th:nth-child(1), .f1-tower td:nth-child(1) {{ left: 0; }}
+.f1-tower th:nth-child(2), .f1-tower td:nth-child(2) {{ left: 34px; }}
+.f1-tower thead th:nth-child(1), .f1-tower thead th:nth-child(2) {{ z-index: 3; }}
+@media (max-width: 1199px) {{
+  .f1-tower .col-compact {{ display: none; }}
+}}
+.f1-empty {{ padding: 24px; color: var(--text-dim); text-align: center; }}
 
 .f1-pos {{
   font-weight: 600; text-align: right; width: 34px;

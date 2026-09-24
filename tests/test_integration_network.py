@@ -204,7 +204,7 @@ class TestDashboardOnRealSession:
             if r["code"] in q3.index and pd.notna(q3.get(r["code"]))
         ]
         assert set_a_q3_lap == sorted(set_a_q3_lap)
-        assert rows[0]["gap"] == "----" and rows[0]["is_overall_best"]
+        assert rows[0]["gap"] == "LEADER" and rows[0]["is_overall_best"]
         assert rows[1]["gap"].startswith("+")
         # Every timed row carries a team, a speed trap reading and tyre history.
         leader = rows[0]
@@ -290,7 +290,7 @@ class TestRaceClassificationOnRealSession:
         rows = build_timing_rows(session)
         results = session["results"].set_index("Abbreviation")
 
-        assert rows[0]["gap"] == "----"
+        assert rows[0]["gap"] == "LEADER"
         for row in rows[1:4]:
             official = to_seconds(results.loc[row["code"], "Time"])
             assert abs(float(row["gap"].lstrip("+")) - official) < 0.1

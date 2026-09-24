@@ -25,7 +25,7 @@ from processing.track_geometry import (  # noqa: F401 - re-exported for callers 
     rotate_points,
     track_geometry,
 )
-from ui.theme import BORDER, TEXT_DIM, safe_hex, team_color
+from ui.theme import BG, EDGE, SURFACE_2, TEXT, TEXT_DIM, WHITE, safe_hex, team_color
 
 # Mini-sectors used for the dominance layer. 3 sectors x 5 segments matches
 # the leaderboard's micro-sector strips so the two views agree.
@@ -64,6 +64,7 @@ def build_track_svg(
     dominance: Sequence[str | None] | None = None,
     markers: Sequence[dict] | None = None,
     segment_distances: Sequence[float] | None = None,
+    title: str = "Track map",
 ) -> str | None:
     """Render the circuit to an SVG string.
 
@@ -81,15 +82,15 @@ def build_track_svg(
 
     layers: list[str] = []
 
-    # Track body: a wide dark casing under a lighter ribbon reads as tarmac
-    # and keeps thin sections legible.
+    # Track body (guideline 5.6): a 14 px ribbon in --surface-2 over a
+    # 1 px darker edge, so thin sections stay legible without decoration.
     outline = path_from(projected)
     layers.append(
-        f'<path d="{outline}" fill="none" stroke="#000000" stroke-width="22" '
-        'stroke-linejoin="round" stroke-linecap="round" opacity="0.9"/>'
+        f'<path d="{outline}" fill="none" stroke="{EDGE}" stroke-width="16" '
+        'stroke-linejoin="round" stroke-linecap="round"/>'
     )
     layers.append(
-        f'<path d="{outline}" fill="none" stroke="#2f2f2f" stroke-width="16" '
+        f'<path d="{outline}" fill="none" stroke="{SURFACE_2}" stroke-width="14" '
         'stroke-linejoin="round" stroke-linecap="round"/>'
     )
 
@@ -123,26 +124,17 @@ def build_track_svg(
         x1, y1, x2, y2 = geometry.start_finish()
         layers.append(
             f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-            'stroke="#ffffff" stroke-width="4"/>'
+            f'stroke="{WHITE}" stroke-width="3"/>'
         )
 
-    # Corner markers, nudged outward from the circuit centroid so the
-    # numbers do not sit on top of the racing line.
-    for corner in geometry.corners(circuit_info):
-        px, py, lx, ly = corner["x"], corner["y"], corner["lx"], corner["ly"]
-        layers.append(
-            f'<line x1="{px:.1f}" y1="{py:.1f}" x2="{lx:.1f}" y2="{ly:.1f}" '
-            f'stroke="{TEXT_DIM}" stroke-width="1" opacity="0.5"/>'
-        )
-        layers.append(
-            f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="10" fill="#0a0a0a" '
-            f'stroke="{BORDER}" stroke-width="1.5"/>'
-        )
-        layers.append(
-            f'<text x="{lx:.1f}" y="{ly + 3.5:.1f}" text-anchor="middle" '
-            'fill="#cfcfcf" font-size="11" font-weight="700" '
-            f'font-family="{SVG_FONT}">{html.escape(corner["label"])}</text>'
-        )
+    # Corner numbers in --text-dim, nudged outward from the circuit
+    # centroid so they do not sit on the racing line; no circles.
+    layers.extend(
+        f'<text class="corner" x="{corner["lx"]:.1f}" y="{corner["ly"] + 5:.1f}" '
+        f'text-anchor="middle" fill="{TEXT_DIM}" font-size="16" '
+        f'font-family="{SVG_FONT}">{html.escape(corner["label"])}</text>'
+        for corner in geometry.corners(circuit_info)
+    )
 
     # Driver position nodes.
     for marker in markers or []:
@@ -151,19 +143,19 @@ def build_track_svg(
         code = html.escape(str(marker.get("code", "")))
         layers.append(
             f'<circle cx="{point[0]:.1f}" cy="{point[1]:.1f}" r="9" fill="{colour}" '
-            'stroke="#0a0a0a" stroke-width="2"/>'
+            f'stroke="{BG}" stroke-width="2"/>'
         )
         layers.append(
             f'<text x="{point[0]:.1f}" y="{point[1] - 14:.1f}" text-anchor="middle" '
-            'fill="#ffffff" font-size="11" font-weight="700" '
+            f'fill="{TEXT}" font-size="16" font-weight="600" '
             f'font-family="{SVG_FONT}">{code}</text>'
         )
 
     body = "\n".join(layers)
     return (
-        f'<svg viewBox="0 0 {VIEW_W} {VIEW_H}" width="100%" '
+        f'<svg viewBox="0 0 {VIEW_W} {VIEW_H}" width="100%" role="img" '
         'style="display:block;max-height:560px;">\n'
-        f"{body}\n</svg>"
+        f"<title>{html.escape(title)}</title>\n{body}\n</svg>"
     )
 
 

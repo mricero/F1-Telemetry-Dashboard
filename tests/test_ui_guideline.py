@@ -13,8 +13,6 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
 
 # Pictographs and emoji presentation (guideline 5.12, check 1). Typographic
@@ -84,7 +82,7 @@ def _python_strings(path: Path) -> list[tuple[int, str]]:
 
 def _strip_root_block(css: str) -> str:
     """The player's ``:root`` token block is where its colours may live."""
-    return re.sub(r":root\s*\{[^}]*\}", "", css)
+    return re.sub(r":root[^{]*\{[^}]*\}", "", css)
 
 
 def _offences(pattern: re.Pattern, *, skip: tuple[str, ...] = (), root_block_ok=False):
@@ -166,7 +164,6 @@ class TestSelfContained:
 class TestColoursComeFromTheTheme:
     """Check 5: hex literals only in ui/theme.py, the config and the player :root."""
 
-    @pytest.mark.xfail(strict=True, reason="UI-05 moves the remaining literals into tokens")
     def test_no_hex_literals_outside_the_theme(self):
         offenders = _offences(HEX, skip=("theme.py",), root_block_ok=True)
 

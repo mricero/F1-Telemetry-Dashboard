@@ -17,6 +17,7 @@ from processing.replay import format_clock, positions_at
 from processing.replay_model import TRACK_STATUS_FLAGS, flag_state, race_clock_text
 from processing.time_utils import to_seconds
 from processing.timing import (
+    MISSING,
     build_timing_rows,
     dashboard_frames,
     format_lap,
@@ -31,6 +32,7 @@ from ui.theme import (
     COMPOUND_RING,
     DASHBOARD_CSS,
     FLAG_STATES,
+    NEUTRAL_GREY,
     segment_color,
     status_chip,
     team_color,
@@ -58,8 +60,11 @@ TOWER_COLUMNS = [
     "Sector 3",
     "Tyre history",
     "Diff",
-    "Speed",
+    "Speed km/h",
 ]
+
+# Columns dropped below 1200 px (guideline 5.5: low-priority columns first).
+COLUMN_CLASSES = {"Tyre history": "col-compact", "Diff": "col-compact", "Speed km/h": "col-compact"}
 
 _CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
@@ -250,19 +255,34 @@ def header_html(session_data: dict) -> str:
 {estimated_note}"""
 
 
-def _segments_html(states: Sequence[str]) -> str:
-    cells = "".join(f'<span style="background:{segment_color(s)}"></span>' for s in states)
+# What each mini-sector colour means, for the cell's tooltip: colour is
+# never the only carrier of the meaning (guideline 5.4).
+SEGMENT_WORDS = {
+    "PURPLE": "session best",
+    "GREEN": "personal best",
+    "YELLOW": "slower than personal best",
+    "NONE": "no time",
+}
+
+
+def _segments_html(states: Sequence[str], sector: int = 1) -> str:
+    cells = "".join(
+        f'<span style="background:{segment_color(state)}" '
+        f'title="Sector {sector} · mini {index} · '
+        f'{SEGMENT_WORDS.get(str(state).upper(), "no time")}"></span>'
+        for index, state in enumerate(states, start=1)
+    )
     return f'<div class="f1-seg">{cells}</div>'
 
 
 def _tyres_html(history: Sequence[dict]) -> str:
     if not history:
-        return '<span class="f1-dim">—</span>'
+        return f'<span class="f1-dim">{MISSING}</span>'
     badges = []
     for stint in history[:6]:
         compound = str(stint.get("compound", "UNKNOWN")).upper()
         letter = COMPOUND_LETTER.get(compound, "?")
-        ring = COMPOUND_RING.get(compound, "#8a8a8a")
+        ring = COMPOUND_RING.get(compound, NEUTRAL_GREY)
         # The number is the tyre's *age*, which exceeds the stint length when
         # the driver started on a scrubbed set.
         age = stint.get("laps_used", 0)
@@ -295,6 +315,9 @@ STATUS_CSS = {
 
 
 def _status_html(status: str) -> str:
+    # On track is the normal state: an empty cell (guideline 5.6).
+    if status == "ON TRACK":
+        return ""
     css = STATUS_CSS.get(status)
     if css is None:
         css = "track" if status.startswith("+") and status.endswith("L") else "out"
@@ -304,9 +327,9 @@ def _status_html(status: str) -> str:
 def tower_html(rows: Sequence[dict]) -> str:
     """The driver leaderboard matrix (spec section 3)."""
     if not rows:
-        return '<div style="padding:24px;color:#8a8a8a">No timing data for this session.</div>'
+        return '<div class="f1-empty">No timing data for this session.</div>'
 
-    head = "".join(f"<th>{_esc(c)}</th>" for c in TOWER_COLUMNS)
+    head = "".join(f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(c)}</th>' for c in TOWER_COLUMNS)
     body: list[str] = []
 
     for row in rows:
@@ -321,12 +344,16 @@ def tower_html(rows: Sequence[dict]) -> str:
 
         accent = team_color(row.get("team_name"), row.get("team_colour"))
         best_class = "f1-time best" if row.get("is_overall_best") else "f1-time"
-        last_class = "f1-time best" if row.get("last_is_session_best") else "f1-time"
+        last_class = (
+            "f1-time best"
+            if row.get("last_is_session_best")
+            else "f1-time pb" if row.get("last_is_personal_best") else "f1-time"
+        )
         status = (
             "KO" if row.get("knocked_out") and row.get("status") == "CLASSIFIED" else row["status"]
         )
         speed = row.get("speed_kmh")
-        speed_text = f"{speed:.0f} km/h" if speed is not None and pd.notna(speed) else "—"
+        speed_text = f"{speed:.0f}" if speed is not None and pd.notna(speed) else MISSING
         # Diff is measured against the session ideal; the driver's own ideal
         # lap is the other half of the picture (spec section 3.12).
         personal_ideal = row.get("personal_ideal")
@@ -338,8 +365,8 @@ def tower_html(rows: Sequence[dict]) -> str:
 
         sector_cells = "".join(
             f'<td><span class="f1-time f1-num">{_esc(s["display"])}</span>'
-            f'{_segments_html(s["segments"])}</td>'
-            for s in row["sectors"]
+            f'{_segments_html(s["segments"], number)}</td>'
+            for number, s in enumerate(row["sectors"], start=1)
         )
 
         body.append(
@@ -353,10 +380,10 @@ def tower_html(rows: Sequence[dict]) -> str:
             f'<td><span class="f1-time f1-num f1-dim">{_esc(row["interval"])}</span></td>'
             f'<td><span class="f1-time f1-num f1-dim">{_esc(row["gap"])}</span></td>'
             f"{sector_cells}"
-            f"<td>{_tyres_html(row['tyre_history'])}</td>"
-            f'<td><span class="f1-time f1-num f1-dim" title="{_esc(ideal_hint)}">'
-            f'{_esc(row["diff"])}</span></td>'
-            f'<td><span class="f1-time f1-num">{_esc(speed_text)}</span></td>'
+            f'<td class="col-compact">{_tyres_html(row["tyre_history"])}</td>'
+            f'<td class="col-compact"><span class="f1-time f1-num f1-dim" '
+            f'title="{_esc(ideal_hint)}">{_esc(row["diff"])}</span></td>'
+            f'<td class="col-compact"><span class="f1-time f1-num">{_esc(speed_text)}</span></td>'
             "</tr>"
         )
 
@@ -425,6 +452,16 @@ def _last_positions(location: dict[str, pd.DataFrame], rows: Sequence[dict]) -> 
     return markers
 
 
+def _map_name(session_data: dict) -> str:
+    info = session_data.get("session_info") or {}
+    parts = [
+        str(info.get("gp") or "Session"),
+        str(info.get("year") or ""),
+        str(info.get("session_name") or ""),
+    ]
+    return " ".join(part for part in parts if part)
+
+
 def info_time(session_data: dict) -> str:
     """The snapshot's moment as race time, for the map's alternative text."""
     info = session_data.get("session_info") or {}
@@ -457,10 +494,11 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
             circuit_info=session_data.get("circuit_info"),
             driver_meta=_driver_meta(rows),
             markers=_replay_markers(session_data, rows),
+            title=f"{_map_name(session_data)} at {info_time(session_data)}",
         )
         if svg is None:
             return (
-                '<div style="padding:32px;color:#8a8a8a;text-align:center;">'
+                '<div class="f1-empty">'
                 "No GPS telemetry for this session, so the track map cannot be drawn."
                 "</div>"
             )
@@ -503,17 +541,18 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
         dominance=dominance,
         markers=markers,
         segment_distances=segment_distances,
+        title=f"{_map_name(session_data)}: fastest driver through each mini-sector",
     )
     if svg is None:
         return (
-            '<div style="padding:32px;color:#8a8a8a;text-align:center;">'
+            '<div class="f1-empty">'
             "No GPS telemetry for this session, so the track map cannot be drawn."
             "</div>"
         )
 
     best = theoretical_best(rows)
     fastest = next((row for row in rows if row.get("is_overall_best")), rows[0] if rows else None)
-    leader = fastest["best_lap"] if fastest else "—"
+    leader = fastest["best_lap"] if fastest else MISSING
     ideal = (
         f'<div class="f1-bench-label" style="margin-top:4px">'
         f"Session ideal {format_lap(best)}</div>"

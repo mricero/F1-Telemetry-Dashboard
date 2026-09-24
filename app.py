@@ -77,6 +77,7 @@ from processing.telemetry_processor import TelemetryProcessor, max_lap_number  #
 from ui.layout import render_header, render_session_selector  # noqa: E402
 from ui.pages import CONTEXT_KEY, pages_for  # noqa: E402
 from ui.replay_view import session_key  # noqa: E402
+from ui.theme import NEUTRAL_GREY  # noqa: E402
 
 
 def load_session_data(data_manager, selection: dict) -> dict:
@@ -124,7 +125,7 @@ def ensure_driver_table(session_data: dict) -> pd.DataFrame:
         {
             "driver_number": names,
             "name_acronym": names,
-            "team_colour": ["#888888"] * len(names),
+            "team_colour": [NEUTRAL_GREY] * len(names),
             "team_name": [""] * len(names),
             "full_name": names,
         }

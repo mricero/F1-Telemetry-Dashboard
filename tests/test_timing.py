@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from processing.timing import (
+    MISSING,
     SECTORS,
     SEGMENTS_PER_SECTOR,
     TOTAL_SEGMENTS,
@@ -91,13 +92,13 @@ def session():
 class TestFormatting:
     @pytest.mark.parametrize(
         "seconds,expected",
-        [(93.456, "1:33.456"), (45.5, "45.500"), (None, "—"), (float("nan"), "—")],
+        [(93.456, "1:33.456"), (45.5, "45.500"), (None, MISSING), (float("nan"), MISSING)],
     )
     def test_format_lap(self, seconds, expected):
         assert format_lap(seconds) == expected
 
     @pytest.mark.parametrize(
-        "seconds,expected", [(0.102, "+0.102"), (-0.25, "-0.250"), (None, "----")]
+        "seconds,expected", [(0.102, "+0.102"), (-0.25, "-0.250"), (None, MISSING)]
     )
     def test_format_delta(self, seconds, expected):
         assert format_delta(seconds) == expected
@@ -113,8 +114,8 @@ class TestClassification:
     def test_leader_has_blank_gap_and_interval(self, session):
         rows = build_timing_rows(session)
 
-        assert rows[0]["gap"] == "----"
-        assert rows[0]["interval"] == "----"
+        assert rows[0]["gap"] == "LEADER"
+        assert rows[0]["interval"] == "LEADER"
         assert rows[0]["is_overall_best"] is True
 
     def test_gap_is_to_leader_interval_to_car_ahead(self, session):
@@ -156,8 +157,8 @@ class TestClassification:
         rows = build_timing_rows({"laps": laps, "drivers": _drivers(), "is_live": False})
 
         assert rows[-1]["code"] == "SAR"
-        assert rows[-1]["best_lap"] == "—"
-        assert rows[-1]["gap"] == "----"
+        assert rows[-1]["best_lap"] == MISSING
+        assert rows[-1]["gap"] == MISSING
 
     def test_empty_laps_yield_no_rows(self):
         assert build_timing_rows({"laps": pd.DataFrame()}) == []
@@ -336,7 +337,7 @@ class TestRaceClassification:
     def test_gap_is_race_time_behind_the_leader(self, race_session):
         rows = build_timing_rows(race_session)
 
-        assert rows[0]["gap"] == "----"
+        assert rows[0]["gap"] == "LEADER"
         assert rows[1]["gap"] == "+5.000"
 
     def test_lapped_cars_show_a_lap_gap(self, race_session):

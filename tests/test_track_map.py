@@ -75,7 +75,7 @@ class TestTrackSvg:
 
         svg = build_track_svg(location, circuit_info={"corners": corners, "rotation": 0.0})
 
-        assert svg.count("<circle") == 2
+        assert svg.count('class="corner"') == 2  # numbers, no circles
         assert ">1<" in svg and ">2<" in svg
 
     def test_dominance_adds_one_path_per_segment(self, location):
@@ -455,7 +455,7 @@ class TestDominancePlacement:
         )
 
         first_slice = self._path_lengths(svg, "#3671c6")
-        outline = self._path_lengths(svg, "#000000")
+        outline = self._path_lengths(svg, "#07080a")
         # 90 % of the samples sit in the first 10 % of the lap; the slice must
         # follow the distance, so it covers about a tenth of the path.
         assert 0.05 < first_slice / outline < 0.2
@@ -472,7 +472,7 @@ class TestDominancePlacement:
         )
 
         covered = self._path_lengths(svg, "#3671c6")
-        outline = self._path_lengths(svg, "#000000")
+        outline = self._path_lengths(svg, "#07080a")
         assert covered >= outline * 0.95
 
 
@@ -500,13 +500,13 @@ class TestOutlineDecimation:
         from ui.track_map import MAX_OUTLINE_POINTS
 
         svg = build_track_svg({"VER": self._long_trace()})
-        outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#000000"', svg).group(1)
+        outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#07080a"', svg).group(1)
 
         assert outline.count("L") <= MAX_OUTLINE_POINTS
 
     def test_short_traces_are_untouched(self, location):
         svg = build_track_svg(location)
-        outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#000000"', svg).group(1)
+        outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#07080a"', svg).group(1)
 
         assert outline.count("L") == len(location["VER"]) - 1
 
@@ -558,7 +558,7 @@ class TestMapFollowsRealSectors:
         )
 
         first_slice = TestDominancePlacement._path_lengths(svg, "#3671c6")
-        outline = TestDominancePlacement._path_lengths(svg, "#000000")
+        outline = TestDominancePlacement._path_lengths(svg, "#07080a")
         # One fifth of a 600 m sector = 120 m of a 3000 m lap = 4 %.
         assert 0.02 < first_slice / outline < 0.07
 
@@ -574,7 +574,7 @@ class TestMapFollowsRealSectors:
         )
 
         first_slice = TestDominancePlacement._path_lengths(svg, "#3671c6")
-        outline = TestDominancePlacement._path_lengths(svg, "#000000")
+        outline = TestDominancePlacement._path_lengths(svg, "#07080a")
         assert 0.05 < first_slice / outline < 0.08  # 1/15 of the lap
 
 
@@ -746,7 +746,7 @@ class TestSpecGapMarkup:
     def test_a_car_in_the_pits_reads_zero_kmh(self):
         markup = tower_html([TestTowerPartitions._row(1, status="IN PIT", speed_kmh=0.0)])
 
-        assert "0 km/h" in markup
+        assert '<span class="f1-time f1-num">0</span>' in markup  # the unit is in the header
 
     def test_wind_shows_a_compass_arrow(self):
         weather = pd.DataFrame(
@@ -770,3 +770,35 @@ class TestSpecGapMarkup:
         )
 
         assert "Netherlands" in markup
+
+
+class TestResultsPolish:
+    """UI-05: accessible map, sticky tower, low-priority columns that fold."""
+
+    def test_the_map_is_an_image_with_a_title(self):
+        svg = build_track_svg({"VER": _oval()}, title="Bahrain Grand Prix 2023 Race")
+
+        assert 'role="img"' in svg
+        assert "<title>Bahrain Grand Prix 2023 Race</title>" in svg
+
+    def test_the_tower_header_and_first_two_columns_are_sticky(self):
+        from ui.theme import DASHBOARD_CSS
+
+        assert "position: sticky; top: 0" in DASHBOARD_CSS
+        assert ".f1-tower td:nth-child(1)" in DASHBOARD_CSS
+        assert ".f1-tower td:nth-child(2)" in DASHBOARD_CSS
+        assert ".f1-tower .col-compact { display: none; }" in DASHBOARD_CSS
+
+    def test_mini_sector_cells_say_what_their_colour_means(self):
+        from ui.dashboard import _segments_html
+
+        markup = _segments_html(["PURPLE", "GREEN"], sector=2)
+
+        assert "Sector 2" in markup and "mini 1" in markup and "session best" in markup
+        assert "personal best" in markup
+
+    def test_an_on_track_car_has_an_empty_status_cell(self):
+        from ui.dashboard import _status_html
+
+        assert _status_html("ON TRACK") == ""
+        assert "PIT" in _status_html("IN PIT")

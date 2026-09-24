@@ -28,14 +28,13 @@ import pandas as pd
 from processing.replay import ReplayClock, format_clock, replay_clock
 from processing.time_utils import seconds_series
 from processing.timing import (
+    LEADER,
     MISSING,
     format_lap_gap,
     is_qualifying_session,
     is_race_session,
     qualifying_cutoffs,
 )
-
-LEADER = "LEADER"
 
 # Car states in the tower. The UI shows ON TRACK as an empty cell.
 ON_TRACK = "ON TRACK"

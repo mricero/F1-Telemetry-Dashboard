@@ -21,6 +21,8 @@ from processing.time_utils import to_seconds
 
 # Missing values in the tower read as an en dash (UI guideline 5.7).
 MISSING = "\u2013"
+# The race leader's gap and interval cells (UI guideline 5.7).
+LEADER = "LEADER"
 
 # Each of the three sectors is split into this many micro-sectors for the
 # heat strip under the sector time (spec section 3.8).
@@ -50,23 +52,23 @@ SEGMENT_HEADINGS = {"Q3": "Q3", "Q2": "Eliminated in Q2", "Q1": "Eliminated in Q
 
 
 def format_lap(seconds: float | None) -> str:
-    """``93.456`` -> ``'1:33.456'``; missing values render as an em dash."""
+    """``93.456`` -> ``'1:33.456'``; missing values render as an en dash."""
     if seconds is None:
-        return "—"
+        return MISSING
     try:
         if pd.isna(seconds):
-            return "—"
+            return MISSING
     except (TypeError, ValueError):
-        return "—"
+        return MISSING
     minutes = int(seconds // 60)
     rest = seconds - minutes * 60
     return f"{minutes}:{rest:06.3f}" if minutes else f"{rest:.3f}"
 
 
 def format_delta(seconds: float | None) -> str:
-    """Signed gap string, e.g. ``'+0.102'``. Missing deltas render ``'----'``."""
+    """Signed gap string, e.g. ``'+0.102'``; missing deltas render as an en dash."""
     if seconds is None or pd.isna(seconds):
-        return "----"
+        return MISSING
     return f"+{seconds:.3f}" if seconds >= 0 else f"{seconds:.3f}"
 
 
@@ -626,12 +628,12 @@ def _classify_by_best_lap(rows: list[dict]) -> list[dict]:
     previous = None
     for row in ordered:
         if row["best_seconds"] is None or leader is None:
-            row["gap"] = "----"
-            row["interval"] = "----"
+            row["gap"] = MISSING
+            row["interval"] = MISSING
             continue
-        row["gap"] = "----" if row is timed[0] else format_delta(row["best_seconds"] - leader)
+        row["gap"] = LEADER if row is timed[0] else format_delta(row["best_seconds"] - leader)
         row["interval"] = (
-            "----" if previous is None else format_delta(row["best_seconds"] - previous)
+            LEADER if previous is None else format_delta(row["best_seconds"] - previous)
         )
         previous = row["best_seconds"]
     return ordered
@@ -716,12 +718,12 @@ def _classify_qualifying(rows: list[dict], results: dict[str, dict]) -> list[dic
             row["partition"] = SEGMENT_HEADINGS[row["segment"]]
             seen_segments.add(row["segment"])
         if row["best_seconds"] is None or leader is None:
-            row["gap"] = "----"
-            row["interval"] = "----"
+            row["gap"] = MISSING
+            row["interval"] = MISSING
             continue
-        row["gap"] = "----" if row is ordered[0] else format_delta(row["best_seconds"] - leader)
+        row["gap"] = LEADER if row is ordered[0] else format_delta(row["best_seconds"] - leader)
         row["interval"] = (
-            "----" if previous is None else format_delta(row["best_seconds"] - previous)
+            LEADER if previous is None else format_delta(row["best_seconds"] - previous)
         )
         previous = row["best_seconds"]
     return ordered
@@ -769,14 +771,14 @@ def _classify_race(rows: list[dict], results: dict[str, dict]) -> list[dict]:
     previous = ordered[0]
     for index, row in enumerate(ordered):
         if index == 0:
-            row["gap"] = "----"
-            row["interval"] = "----"
+            row["gap"] = LEADER
+            row["interval"] = LEADER
             continue
 
         row["gap"] = (
             format_lap_gap(row["laps_down"])
             if row["laps_down"] > 0
-            else format_delta(row["gap_seconds"]) if row["gap_seconds"] is not None else "----"
+            else format_delta(row["gap_seconds"]) if row["gap_seconds"] is not None else MISSING
         )
 
         laps_behind_ahead = row["laps_down"] - previous["laps_down"]
@@ -785,7 +787,7 @@ def _classify_race(rows: list[dict], results: dict[str, dict]) -> list[dict]:
         elif row["gap_seconds"] is not None and previous["gap_seconds"] is not None:
             row["interval"] = format_delta(row["gap_seconds"] - previous["gap_seconds"])
         else:
-            row["interval"] = "----"
+            row["interval"] = MISSING
         previous = row
     return ordered
 
@@ -890,7 +892,7 @@ def _rows_from_standings(session_data: dict, standings: pd.DataFrame) -> list[di
         if row["best_seconds"] is not None and best_possible is not None:
             row["diff"] = format_delta(row["best_seconds"] - best_possible)
         else:
-            row["diff"] = "----"
+            row["diff"] = MISSING
     return rows
 
 
@@ -953,7 +955,7 @@ def build_timing_rows(session_data: dict) -> list[dict]:
             sectors.append(
                 {
                     "seconds": seconds,
-                    "display": f"{seconds:.3f}" if seconds is not None else "—",
+                    "display": f"{seconds:.3f}" if seconds is not None else MISSING,
                     "segments": states.get(str(code), default_states)[
                         start : start + SEGMENTS_PER_SECTOR
                     ],
@@ -1024,5 +1026,5 @@ def build_timing_rows(session_data: dict) -> list[dict]:
         if row["best_seconds"] is not None and best_possible is not None:
             row["diff"] = format_delta(row["best_seconds"] - best_possible)
         else:
-            row["diff"] = "----"
+            row["diff"] = MISSING
     return ordered

@@ -20,19 +20,22 @@ from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
-from ui.theme import APP_CSS, CSS_TOKENS, status_chip
+from ui.theme import (
+    APP_CSS,
+    CHART_COOL,
+    CHART_WARM,
+    COMPOUND_RING,
+    CSS_TOKENS,
+    NEUTRAL_GREY,
+    TEXT,
+    TEXT_DIM,
+    chart_layout,
+    status_chip,
+)
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
-# (see FastF1Adapter.compound_colors); these hexes match the 2024+ branding.
-COMPOUND_COLORS = {
-    "SOFT": "#da291c",
-    "MEDIUM": "#ffd12e",
-    "HARD": "#f0f0ec",
-    "INTERMEDIATE": "#43b02a",
-    "WET": "#0067ad",
-    "UNKNOWN": "#00ffff",
-    "TEST-UNKNOWN": "#434649",
-}
+# (see FastF1Adapter.compound_colors); the defaults are the theme's.
+COMPOUND_COLORS = dict(COMPOUND_RING)
 
 # Official F1 TrackStatus codes (SignalR feed) -> (flag state, label). The
 # state picks the chip colour from ui.theme.FLAG_STATES; the label is what the
@@ -45,6 +48,12 @@ TRACK_STATUS = {
     "6": ("VSC", "Virtual safety car"),
     "7": ("VSC", "VSC ending"),
 }
+
+
+def _plot(fig: go.Figure, *args, **kwargs):
+    """Draw a chart in the shared style (guideline 5.6)."""
+    fig.update_layout(**chart_layout(len(fig.data)))
+    return st.plotly_chart(fig, *args, **kwargs)
 
 
 def compound_palette(compound_colors: dict[str, str] | None = None) -> dict[str, str]:
@@ -314,7 +323,7 @@ def create_telemetry_chart(
             continue
 
         has_data = True
-        color = color_map.get(driver, "#888888")
+        color = color_map.get(driver, NEUTRAL_GREY)
 
         if col == "Gear":
             fig.add_trace(
@@ -343,7 +352,6 @@ def create_telemetry_chart(
         return None
 
     layout = dict(
-        title=f"{col} by Track Distance",
         xaxis_title="Distance (m)",
         yaxis_title=f"{col} ({unit})" if unit else col,
         hovermode="x unified",
@@ -354,7 +362,6 @@ def create_telemetry_chart(
         # Gear labels are categorical ('N', '1'..'8'); without an explicit
         # order Plotly sorts them lexically and puts N and 1 in odd places.
         layout["yaxis"] = dict(
-            title="Gear",
             type="category",
             categoryorder="array",
             categoryarray=TelemetryProcessor.GEAR_CATEGORIES,
@@ -384,7 +391,7 @@ def render_telemetry_charts(telemetry_data: dict[str, pd.DataFrame], color_map: 
         with tabs[i]:
             fig = create_telemetry_chart(telemetry_data, cfg, color_map)
             if fig:
-                st.plotly_chart(fig, width="stretch")
+                _plot(fig, width="stretch")
             else:
                 st.info(f"No {cfg['col']} data available")
 
@@ -411,7 +418,7 @@ def render_lap_times(laps_df: pd.DataFrame, color_map: dict[str, str]):
 
     for driver in laps_df[driver_col].dropna().unique():
         driver_laps = laps_df[laps_df[driver_col] == driver].sort_values("LapNumber")
-        color = color_map.get(driver, "#888888")
+        color = color_map.get(driver, NEUTRAL_GREY)
 
         lap_times_sec = seconds_series(driver_laps["LapTime"])
         if "IsPitOutLap" in driver_laps.columns:
@@ -442,13 +449,12 @@ def render_lap_times(laps_df: pd.DataFrame, color_map: dict[str, str]):
         )
 
     fig.update_layout(
-        title="Lap Times by Driver",
         xaxis_title="Lap Number",
         yaxis_title="Lap Time (seconds)",
         hovermode="x unified",
         height=500,
     )
-    st.plotly_chart(fig, width="stretch")
+    _plot(fig, width="stretch")
 
 
 def _as_lap_number(value, default):
@@ -552,20 +558,19 @@ def render_tire_strategy(
             yref="y",
             text=f"<b>{driver}</b>",
             showarrow=False,
-            font=dict(color=color_map.get(driver, "#AAA"), size=12),
+            font=dict(color=color_map.get(driver, NEUTRAL_GREY), size=12),
             align="right",
             xanchor="right",
         )
 
     fig.update_layout(
-        title="Tire Strategy by Driver",
         xaxis_title="Lap Number",
         barmode="stack",
         height=max(400, len(stints_df[driver_col].unique()) * 30 + 100),
         margin=dict(l=120),
         yaxis=dict(showticklabels=False),
     )
-    st.plotly_chart(fig, width="stretch")
+    _plot(fig, width="stretch")
 
 
 @st.fragment(run_every=3)
@@ -656,14 +661,13 @@ def render_position_changes(laps_df: pd.DataFrame, color_map: dict[str, str]):
                 y=driver_laps["_pos"],
                 mode="lines",
                 name=str(driver),
-                line=dict(color=color_map.get(driver, "#888888"), width=2),
+                line=dict(color=color_map.get(driver, NEUTRAL_GREY), width=2),
                 hovertemplate=f"{driver}: P%{{y}}<br>Lap %{{x}}<extra></extra>",
                 connectgaps=True,
             )
         )
 
     fig.update_layout(
-        title="Position Changes",
         xaxis_title="Lap Number",
         # P1 belongs at the top.
         yaxis=dict(title="Position", autorange="reversed", dtick=1, tickformat="d"),
@@ -671,7 +675,7 @@ def render_position_changes(laps_df: pd.DataFrame, color_map: dict[str, str]):
         height=560,
         legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01),
     )
-    st.plotly_chart(fig, width="stretch")
+    _plot(fig, width="stretch")
 
 
 def render_weather(weather_df: pd.DataFrame):
@@ -703,8 +707,8 @@ def render_weather(weather_df: pd.DataFrame):
     x = _elapsed_minutes(weather_df)
     fig = go.Figure()
     for key, label, color in (
-        ("TrackTemp", "Track temp (°C)", "#e10600"),
-        ("AirTemp", "Air temp (°C)", "#00a0de"),
+        ("TrackTemp", "Track temp (°C)", CHART_WARM),
+        ("AirTemp", "Air temp (°C)", CHART_COOL),
     ):
         if key in weather_df.columns:
             fig.add_trace(
@@ -723,13 +727,12 @@ def render_weather(weather_df: pd.DataFrame):
                 y=weather_df["Humidity"],
                 mode="lines",
                 name="Humidity (%)",
-                line=dict(color="#7a7a7a", width=1, dash="dot"),
+                line=dict(color=TEXT_DIM, width=1, dash="dot"),
                 yaxis="y2",
             )
         )
 
     fig.update_layout(
-        title="Track Conditions",
         xaxis_title="Session time (min)",
         yaxis=dict(title="Temperature (°C)"),
         yaxis2=dict(title="Humidity (%)", overlaying="y", side="right", showgrid=False),
@@ -737,7 +740,7 @@ def render_weather(weather_df: pd.DataFrame):
         height=340,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    st.plotly_chart(fig, width="stretch")
+    _plot(fig, width="stretch")
 
 
 def _elapsed_minutes(df: pd.DataFrame) -> pd.Series:
@@ -827,19 +830,18 @@ def render_driver_comparison(
                 y=df["Speed"],
                 mode="lines",
                 name=driver,
-                line=dict(color=color_map.get(driver, "#888888"), width=2),
+                line=dict(color=color_map.get(driver, NEUTRAL_GREY), width=2),
                 hovertemplate=f"{driver}: %{{y}} km/h<br>%{{x:.0f}} m<extra></extra>",
             )
         )
     fig.update_layout(
-        title=f"Speed trace - {reference} vs {compare}",
         xaxis_title="Distance (m)",
         yaxis_title="Speed (km/h)",
         hovermode="x unified",
         height=380,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    st.plotly_chart(fig, width="stretch")
+    _plot(fig, width="stretch")
 
     if delta_seconds is None:
         st.caption("Not enough overlapping distance to compute a time delta.")
@@ -852,20 +854,19 @@ def render_driver_comparison(
             y=delta_seconds,
             mode="lines",
             name="Delta",
-            line=dict(color="#ffffff", width=2),
+            line=dict(color=TEXT, width=2),
             hovertemplate="%{y:+.3f} s at %{x:.0f} m<extra></extra>",
         )
     )
-    delta_fig.add_hline(y=0, line=dict(color="#888888", width=1, dash="dot"))
+    delta_fig.add_hline(y=0, line=dict(color=NEUTRAL_GREY, width=1, dash="dot"))
     delta_fig.update_layout(
-        title=f"Cumulative time delta - {compare} relative to {reference}",
         xaxis_title="Distance (m)",
         yaxis_title=f"Δ time (s) — below 0 = {compare} ahead",
         hovermode="x unified",
         height=320,
         showlegend=False,
     )
-    st.plotly_chart(delta_fig, width="stretch")
+    _plot(delta_fig, width="stretch")
 
     gained = float(delta_seconds[-1])
     verdict = f"{compare} is {abs(gained):.3f} s " + ("behind" if gained > 0 else "ahead")
