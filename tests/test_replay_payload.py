@@ -198,3 +198,41 @@ class TestTheComponentFiles:
         from ui.components.replay_player import component_source
 
         assert "innerHTML" not in component_source()["js"]
+
+
+class TestTrackState:
+    """REPLAY-07: the safety car period is on the flag timeline the map tints from."""
+
+    def test_the_safety_car_period_is_a_safety_car_state(self, built):
+        payload, _ = built
+        flags = payload["flags"]
+
+        def state_at(moment):
+            current = "GREEN"
+            for t, state in flags:
+                if t <= moment:
+                    current = state
+            return current
+
+        assert state_at(fx.SC_START - 1) == "GREEN"
+        assert state_at(fx.SC_START + 1) == "SAFETY CAR"
+        assert state_at(fx.SC_END - 1) == "SAFETY CAR"
+        assert state_at(fx.SC_END + 1) == "GREEN"
+
+    def test_the_player_tints_the_track_and_names_the_state(self):
+        from ui.components.replay_player import component_source
+
+        js = component_source()["js"]
+
+        assert (
+            "this.tint" in js and 'MAP_CHIPS = { "SAFETY CAR": "SC", VSC: "VSC", RED: "RED" }' in js
+        )
+
+    def test_the_server_map_shows_the_chip(self, race):
+        from processing.replay_model import snapshot_at
+        from ui.dashboard import map_panel_html
+
+        snapshot = snapshot_at(race, fx.SC_START + 5)
+        markup = map_panel_html(snapshot, build_timing_rows(snapshot))
+
+        assert ">SC</span>" in markup

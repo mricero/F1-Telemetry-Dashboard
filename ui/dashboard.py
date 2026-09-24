@@ -32,6 +32,7 @@ from ui.theme import (
     DASHBOARD_CSS,
     FLAG_STATES,
     segment_color,
+    status_chip,
     team_color,
     text_on,
 )
@@ -95,6 +96,10 @@ def wind_kmh(wind_speed) -> float | None:
     if wind_speed is None or pd.isna(wind_speed):
         return None
     return float(wind_speed) * MS_TO_KMH
+
+
+# Track states worth a chip on the map, and the chip's word.
+TRACK_CHIPS = {"SAFETY CAR": "SC", "VSC": "VSC", "RED": "RED"}
 
 
 def _is_snapshot(session_data: dict) -> bool:
@@ -460,7 +465,14 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
                 "</div>"
             )
         label = f"Track map with every car at {info_time(session_data)}"
-        return f'<div class="f1-map-wrap">{svg_image(svg, label)}</div>'
+        # REPLAY-07: under a safety car, VSC or red flag the map says so.
+        state = flag_state(session_data)
+        chip = (
+            f'<div class="f1-bench">{status_chip(TRACK_CHIPS[state], state)}</div>'
+            if state in TRACK_CHIPS
+            else ""
+        )
+        return f'<div class="f1-map-wrap">{chip}{svg_image(svg, label)}</div>'
 
     micro = {}
     for code, frame in telemetry.items():
