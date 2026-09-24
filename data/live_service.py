@@ -29,7 +29,7 @@ def get_live_adapter() -> SignalRLiveAdapter:
     global _adapter
     with _lock:
         if _adapter is None:
-            _adapter = SignalRLiveAdapter(use_livef1=True)
+            _adapter = SignalRLiveAdapter()
         return _adapter
 
 

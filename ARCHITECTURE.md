@@ -4,14 +4,13 @@
 
 A professional Formula 1 Telemetry Dashboard built with **Streamlit + Plotly** supporting:
 - **Historical Race Playback** via FastF1 (local caching, full telemetry)
-- **Real-time Live Telemetry** via the LiveF1 package. This is an **unofficial** use of undocumented endpoints: LiveF1 connects to the legacy `/signalr/` hub, not the `wss://livetiming.formula1.com/signalrcore` endpoint FastF1 uses (LIVE-01), and car telemetry/positions need an `F1TV_SUBSCRIPTION_TOKEN` subscription token.
+- **Real-time Live Telemetry** over F1's SignalR Core hub (`wss://livetiming.formula1.com/signalrcore`, client in `data/signalr_core.py`). This is an **unofficial** use of undocumented endpoints; car telemetry/positions need an `F1TV_SUBSCRIPTION_TOKEN` subscription token.
 - **Graceful Fallback** when no live session is active (defaults to most recent cached race)
 - **Session Recording & Replay** - save live sessions for offline replay
 
 **Key Difference from Original Plan:** OpenF1 live data requires paid subscription. **We use FREE alternatives:**
-1. **FastF1 SignalRClient** (built-in) - `fastf1.livetiming.SignalRClient`
-2. **LiveF1 Package** - `pip install livef1` → `RealF1Client`
-Both connect to the same official F1 SignalR endpoint - no subscription needed!
+1. **Our own SignalR Core client** - `data/signalr_core.py`, the same protocol `fastf1.livetiming.SignalRClient` uses, but streaming into merged state instead of a file.
+2. LiveF1's `RealF1Client` is no longer used for live: it targets the classic `/signalr/` hub, which answers 401 since 2025.
 
 ---
 
@@ -175,43 +174,40 @@ class JolpicaAdapter:
 ### 1.3 Live Telemetry Adapter (`data/live_adapter.py`)
 
 **Wire format (verified against LiveF1 source & FastF1 docs):**
-- Endpoint in use: the legacy `https://livetiming.formula1.com/signalr/` hub (LiveF1). FastF1 uses `/signalrcore`; see LIVE-01.
+- Endpoint in use: `wss://livetiming.formula1.com/signalrcore` (SignalR Core; see `data/signalr_core.py` for the handshake).
 - Compressed topics (`CarData.z`, `Position.z`) carry base64-encoded **raw DEFLATE**
   JSON (`zlib.decompress(b64decode(text), -zlib.MAX_WBITS)`).
 - CarData channels: `0`=RPM, `2`=Speed, `3`=Gear, `4`=Throttle, `5`=Brake, `45`=DRS.
-- LiveF1's `MessageHandlerTemplate` parses messages through its `function_map`
-  **before** invoking callbacks, so our buffers hold flat records
-  (`DriverNo`, `speed`, `rpm`, `n_gear`, `X/Y/Z`, ...). All subscribed topics
-  have dedicated parsers there; unknown topics would raise on every message.
+- Raw feed messages reach `SignalRLiveAdapter.handle_message(topic, data, timestamp)`.
+  Delta topics are deep-merged into `LiveState`; `CarData.z`/`Position.z` are decoded
+  into flat records (`DriverNo`, `speed`, `rpm`, `n_gear`, `X/Y/Z`, ...) for the
+  bounded buffers. An unknown topic simply never delivers anything.
 
 ```python
 class SignalRLiveAdapter:
     """
     FREE live telemetry via SignalR - connects directly to the official F1 feed.
     Two implementations available:
-    1. LiveF1 package: livef1.adapters.RealF1Client (async callbacks)
-    2. FastF1 built-in: fastf1.livetiming.SignalRClient (saves raw stream to file)
-    LiveF1 uses the legacy /signalr/ hub; FastF1 uses /signalrcore (LIVE-01).
+    Connects with data.signalr_core.SignalRCoreClient to /signalrcore.
+    (LiveF1's RealF1Client is no longer used: its legacy hub answers 401.)
     """
 
     TELEMETRY_TOPICS = [
         "CarData.z",       # Speed, Throttle, Brake, RPM, Gear, DRS
         "Position.z",      # GPS position X,Y,Z
-        "TimingData", "WeatherData",
+        "TimingData", "TimingAppData", "WeatherData",
         "RaceControlMessages", "TrackStatus", "SessionInfo",
-        "SessionStatus", "DriverList", "LapSeries", "CurrentTyres",
-        "PitLaneTimeCollection", "TyreStintSeries",
+        "SessionStatus", "DriverList", "ExtrapolatedClock", "LapCount", ...
     ]
 
     def start_async(self, topics=None, log_file=None):
-        """Run the client in a daemon thread.
+        """Start the SignalR Core client on its own daemon thread.
 
-        RealF1Client.run() creates and owns its own event loop internally,
-        so the background thread must call it directly - wrapping it in
-        another asyncio loop raises RuntimeError.
+        It negotiates, subscribes, feeds handle_message() and reconnects with
+        backoff until stop() is called; status() reports its state.
         """
 
-    def register_callback(self, topic: str, callback): ...
+    def status(self) -> FeedStatus: ...
     def get_buffered_data(self, topic: str) -> list[dict]: ...
     def get_latest_data(self, topic: str) -> dict | None: ...
     def stop(self): ...
@@ -283,7 +279,7 @@ class DataSourceManager:
     def __init__(self):
         self.fastf1 = FastF1Adapter()
         self.jolpica = JolpicaAdapter()   # race-weekend detection + schedule fallback
-        self.live = SignalRLiveAdapter(use_livef1=True)
+        self.live = get_live_adapter()
         self.replay_dir = Path("./replay_sessions")
 
     def get_session_data(self,

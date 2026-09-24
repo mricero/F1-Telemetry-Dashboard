@@ -21,9 +21,32 @@ from data.fastf1_adapter import (
 from data.jolpica_adapter import JolpicaAdapter
 from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
 from data.live_service import get_live_adapter
+from data.live_state import as_list
 from processing.replay import ReplayClock, replay_clock
+from processing.time_utils import to_seconds
+from processing.timing import is_race_session
 
 logger = logging.getLogger(__name__)
+
+
+def extrapolated_remaining(clock: dict, now: pd.Timestamp | None = None) -> str | None:
+    """Time left on the session clock, as ``H:MM:SS``.
+
+    ``ExtrapolatedClock`` gives ``Remaining`` at ``Utc``; while
+    ``Extrapolating`` is true the clock is running, so the time elapsed since
+    ``Utc`` is subtracted - the feed only sends a new value when the clock
+    starts, stops or is corrected.
+    """
+    remaining = to_seconds(clock.get("Remaining")) if clock else None
+    if remaining is None:
+        return None
+    if clock.get("Extrapolating") in (True, "true", "True"):
+        stamp = pd.to_datetime(clock.get("Utc"), utc=True, errors="coerce")
+        if pd.notna(stamp):
+            current = now if now is not None else pd.Timestamp.now(tz="UTC")
+            remaining -= max((current - stamp).total_seconds(), 0.0)
+    total = max(round(remaining), 0)
+    return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
 
 
 def _safe_name(value) -> str:
@@ -397,6 +420,10 @@ class DataSourceManager:
         # than reprocessing the buffers for an identical result (LIVE-11).
         token = adapter.change_token()
         if self._live_snapshot is not None and token == self._live_snapshot_token:
+            # The session clock runs between messages; only it is refreshed.
+            remaining = extrapolated_remaining(adapter.state.get("ExtrapolatedClock") or {})
+            if remaining is not None:
+                self._live_snapshot["session_info"]["extrapolated_clock"] = remaining
             return self._live_snapshot
 
         car_df = LiveDataProcessor.parse_car_data(adapter.get_buffered_data("CarData.z"))
@@ -408,7 +435,11 @@ class DataSourceManager:
         # pre-parsed records, so those buffers remain the fallback.
         timing_state = adapter.state.get("TimingData")
         driver_state = adapter.state.get("DriverList")
-        stint_state = adapter.state.get("TyreStintSeries")
+        # TyreStintSeries when the feed delivers it; TimingAppData carries the
+        # same per-driver stints and is the one every client subscribes to.
+        stint_state = adapter.state.get("TyreStintSeries") or (
+            LiveDataProcessor.stints_from_timing_app(adapter.state.get("TimingAppData"))
+        )
 
         drivers_df = (
             LiveDataProcessor.drivers_from_state(driver_state)
@@ -551,11 +582,25 @@ class DataSourceManager:
                     stints_df[col] = default
 
         info = self._session_info_from_feed(adapter)
-        race_control_df = LiveDataProcessor.parse_race_control(
-            adapter.get_buffered_data("RaceControlMessages")
+        # Race control and track status are merged state on the SignalR Core
+        # path; the buffers only ever held records from the old livef1 path.
+        rcm_state = adapter.state.get("RaceControlMessages")
+        rcm_records = (
+            [m for m in as_list(rcm_state.get("Messages")) if isinstance(m, dict)]
+            if rcm_state
+            else adapter.get_buffered_data("RaceControlMessages")
         )
+        race_control_df = LiveDataProcessor.parse_race_control(rcm_records)
+        track_state = adapter.state.get("TrackStatus")
         track_status = LiveDataProcessor.parse_track_status(
-            adapter.get_buffered_data("TrackStatus")
+            [track_state] if track_state else adapter.get_buffered_data("TrackStatus")
+        )
+        standings = (
+            LiveDataProcessor.standings_from_state(
+                timing_state, acr_by_num, race=is_race_session(info)
+            )
+            if timing_state
+            else pd.DataFrame()
         )
 
         snapshot = {
@@ -576,6 +621,9 @@ class DataSourceManager:
             "laps": laps_df,
             "stints": stints_df,
             "results": pd.DataFrame(),  # live order comes from TimingData
+            # The timing screen's own order, gaps and status (same shape as a
+            # replay snapshot's), so the tower is right during a race.
+            "standings": standings,
             "positions": pd.DataFrame(),
             "timing_stream": pd.DataFrame(),
             "track_status": pd.DataFrame(),
@@ -737,6 +785,16 @@ class DataSourceManager:
             adapter.state.get("SessionStatus") or adapter.get_latest_data("SessionStatus") or {}
         )
         info["status"] = status.get("Status", "")
+
+        clock = adapter.state.get("ExtrapolatedClock") or {}
+        remaining = extrapolated_remaining(clock)
+        if remaining is not None:
+            info["extrapolated_clock"] = remaining
+        lap_count = adapter.state.get("LapCount") or {}
+        if lap_count.get("CurrentLap") is not None:
+            info["current_lap_number"] = lap_count.get("CurrentLap")
+            info["total_laps"] = lap_count.get("TotalLaps")
+        info["last_heartbeat"] = adapter.last_heartbeat
         return info
 
     def _get_most_recent_completed_race(self) -> dict:

@@ -1,70 +1,101 @@
-"""Live SignalR end-to-end smoke test (manual, run during a race weekend).
+"""Live SignalR Core smoke test (manual; meaningful during a session weekend).
 
-Connects to the official F1 live timing feed for N seconds and prints what
-actually arrived per topic - the fastest way to verify auth, buffering rates
-and parsing before/during a live session:
+Connects to F1's live timing hub at ``wss://livetiming.formula1.com/signalrcore``
+with the app's own client for N seconds and prints what arrived per topic, the
+connection state as it changes, and what the dashboard would show - the
+fastest way to check connectivity, the token and parsing before a session:
 
-    .venv/Scripts/python scripts/live_smoke.py [seconds]
+    .venv/Scripts/python scripts/live_smoke.py [seconds] [--record DIR]
 
-Optionally records a raw stream file (replayable via
-fastf1.livetiming.messages_from_raw / LiveDataProcessor.decode_topic_payload):
-
-    F1_LIVE_LOG=raw.txt python scripts/live_smoke.py 30
+Between sessions the hub still answers: the subscription snapshot holds the
+last session's final state, then only pings arrive (state WAITING). During a
+session the state turns LIVE and TimingData, TrackStatus, WeatherData ...
+start counting. Set F1TV_SUBSCRIPTION_TOKEN to also receive CarData.z and
+Position.z.
 """
 
-import asyncio
+import argparse
 import sys
 import time
-from collections import Counter
+from pathlib import Path
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
+from config import config  # noqa: F401  (loads .env: F1TV_SUBSCRIPTION_TOKEN)
+from data.live_adapter import SignalRLiveAdapter, subscription_token
+from data.signalr_core import token_expiry
 
 
-def main(duration: int = 30):
+def main(duration: int = 30, record: str | None = None) -> int:
     adapter = SignalRLiveAdapter()
-    counts: Counter = Counter()
+    token = subscription_token()
+    if token:
+        expiry = token_expiry(token)
+        print(
+            f"Subscription token: set (expires {expiry:%Y-%m-%d %H:%M} UTC)"
+            if expiry
+            else "Subscription token: set (expiry unknown)"
+        )
+    else:
+        print("Subscription token: not set - CarData.z / Position.z will not arrive")
+    if record:
+        adapter.start_recording(record)
+        print(f"Recording the raw stream to {record}")
 
-    adapter.register_callback("CarData.z", lambda d: counts.update(["CarData.z"]))
-    # LiveF1 targets the legacy /signalr/ hub, not /signalrcore (LIVE-01).
-    print(f"Connecting to F1 live timing (legacy /signalr/ hub) for {duration}s ...")
-    log_file = __import__("os").environ.get("F1_LIVE_LOG")
-    adapter.start_async(log_file=log_file)
-
-    t0 = time.time()
+    print(f"Connecting to wss://livetiming.formula1.com/signalrcore for {duration}s ...")
+    adapter.start_async()
+    started = time.time()
+    last_status = None
     try:
-        while time.time() - t0 < duration:
-            time.sleep(2)
-            if adapter.last_error():
-                print(f"ERROR from live thread: {adapter.last_error()!r}")
-                return 1
-            print(f"[{time.time() - t0:5.1f}s] running={adapter.is_running()}")
+        while time.time() - started < duration:
+            time.sleep(1)
+            status = adapter.status()
+            if status is not last_status:
+                print(f"[{time.time() - started:5.1f}s] {adapter.status_text()}")
+                last_status = status
     except KeyboardInterrupt:
         pass
+    finally:
+        adapter.stop()
+        adapter.stop_recording()
 
-    print("\n--- buffer summary ---")
-    for topic in SignalRLiveAdapter.TELEMETRY_TOPICS:
-        n = len(adapter.get_buffered_data(topic))
-        if n:
-            counts[topic] += n
-            print(f"{topic:<24} {n:>6} records")
+    stats = adapter.client.stats if adapter.client is not None else None
+    print("\n--- messages per topic ---")
+    if stats is None or not stats.per_topic:
+        print("(no feed messages - no session on air, or the connection was refused)")
+    else:
+        for topic, count in sorted(stats.per_topic.items()):
+            print(f"{topic:<24} {count:>6}")
+        print(f"snapshots: {stats.snapshots}  reconnects: {stats.reconnects}")
+    if stats is not None and stats.last_error:
+        print(f"last error: {stats.last_error}")
 
-    car = LiveDataProcessor.parse_car_data(adapter.get_buffered_data("CarData.z"))
-    pos = LiveDataProcessor.parse_position_data(adapter.get_buffered_data("Position.z"))
-    drv = LiveDataProcessor.parse_driver_list(adapter.get_buffered_data("DriverList"))
+    print("\n--- what the dashboard would show ---")
+    from data.source_manager import DataSourceManager
+
+    manager = DataSourceManager(live_adapter=adapter)
+    snapshot = manager.poll_live_data()
+    info = snapshot["session_info"]
+    print(f"session: {info.get('gp')} - {info.get('session_name')} ({info.get('status')})")
+    print(f"drivers: {len(snapshot['drivers'])}  laps: {len(snapshot['laps'])}")
+    standings = snapshot.get("standings")
+    if standings is not None and not standings.empty:
+        print(
+            standings[["Position", "Driver", "Gap", "Interval", "Status"]]
+            .head(10)
+            .to_string(index=False)
+        )
+    print(f"race control messages: {len(snapshot['race_control'])}")
     print(
-        f'\nCarData rows: {len(car)} ({car["driver_number"].nunique()} drivers)'
-        f'\nPosition rows: {len(pos)} ({pos["driver_number"].nunique()} drivers)'
-        f"\nDrivers identified: {len(drv)}"
+        f"car telemetry for {len(snapshot['telemetry'])} driver(s), "
+        f"positions for {len(snapshot['location'])}"
     )
-
-    # Async sanity check used by RealF1Client internally
-    asyncio.run(asyncio.sleep(0))
-    adapter.stop()
-    return 0
+    return 0 if stats is not None and (stats.snapshots or stats.messages) else 1
 
 
 if __name__ == "__main__":
-    secs = int(sys.argv[1]) if len(sys.argv) > 1 else 30
-    raise SystemExit(main(secs))
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("seconds", nargs="?", type=int, default=30)
+    parser.add_argument("--record", help="directory to record the raw stream into")
+    args = parser.parse_args()
+    raise SystemExit(main(args.seconds, args.record))

@@ -5,6 +5,7 @@ single source of truth for the dashboard's visuals (the former
 ``ui/layout_new.py`` variant was removed).
 """
 
+import html
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -584,10 +585,57 @@ def render_tire_strategy(
     _plot(fig, width="stretch")
 
 
+# Feed state -> (chip label, FLAG_STATES key). Text carries the meaning.
+FEED_CHIPS = {
+    "idle": ("OFFLINE", "FINISHED"),
+    "connecting": ("CONNECTING", "YELLOW"),
+    "waiting": ("WAITING", "FINISHED"),
+    "live": ("LIVE", "GREEN"),
+    "stale": ("STALE", "YELLOW"),
+    "reconnecting": ("RECONNECTING", "YELLOW"),
+    "auth_required": ("TOKEN NEEDED", "RED"),
+    "blocked": ("REFUSED", "RED"),
+    "stopped": ("STOPPED", "FINISHED"),
+}
+
+
+def render_feed_status(live_client) -> None:
+    """The connection state chip, its explanation and the token's expiry."""
+    if live_client is None:
+        return
+    from data.signalr_core import token_expiry
+
+    status = live_client.status()
+    label, state = FEED_CHIPS.get(status.value, ("UNKNOWN", "FINISHED"))
+    parts = [live_client.status_text()]
+    stats = getattr(live_client.client, "stats", None)
+    if stats is not None and stats.reconnects:
+        parts.append(f"{stats.reconnects} reconnect(s)")
+    token = subscription_token()
+    if token:
+        expiry = token_expiry(token)
+        if expiry is not None:
+            remaining = expiry - datetime.now(UTC)
+            if remaining.total_seconds() <= 0:
+                parts.append("subscription token expired - set a new one")
+            else:
+                parts.append(f"subscription token valid for {remaining.days} more day(s)")
+        else:
+            parts.append("subscription token set")
+    else:
+        parts.append("no subscription token: timing, tyres, race control and weather only")
+    st.html(
+        f'<div class="f1-dash" style="display:flex;gap:8px;align-items:center">'
+        f"{status_chip(label, state)}"
+        f'<span class="f1-dim">{html.escape(" · ".join(parts))}</span></div>'
+    )
+
+
 @st.fragment(run_every=3)
 def render_live_dashboard(data_manager, processor):
     """Auto-refreshing live view: polls the SignalR buffers every 3 s and
     renders telemetry channels, the track map, tyre stints and lap info."""
+    render_feed_status(data_manager.live)
     snapshot = data_manager.poll_live_data()
     telemetry = snapshot["telemetry"]
     location = snapshot["location"]

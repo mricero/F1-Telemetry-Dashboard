@@ -40,6 +40,11 @@ STATE_TOPICS = frozenset(
         "PitLaneTimeCollection",
         "ChampionshipPrediction",
         "DriverRaceInfo",
+        # Index-addressed message lists: a snapshot list, then {"12": {...}}
+        # deltas. Merging (rather than appending each message) means a
+        # reconnect's fresh snapshot cannot duplicate every message.
+        "RaceControlMessages",
+        "TeamRadio",
     }
 )
 

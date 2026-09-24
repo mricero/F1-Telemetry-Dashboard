@@ -18,12 +18,12 @@ class TestConcurrentBufferAccess:
 
         def write():
             for index in range(20000):
-                adapter.handle_message("CarData.z", {"n": index})
+                adapter.handle_message("WeatherData", {"n": index})
             stop.set()
 
         def read():
             while not stop.is_set():
-                records = adapter.get_buffered_data("CarData.z")
+                records = adapter.get_buffered_data("WeatherData")
                 numbers = [record["n"] for record in records]
                 if numbers != sorted(numbers):
                     problems.append(numbers[:5])
@@ -40,20 +40,20 @@ class TestConcurrentBufferAccess:
 
     def test_readers_get_their_own_copy(self):
         adapter = SignalRLiveAdapter()
-        adapter.handle_message("CarData.z", {"n": 1})
+        adapter.handle_message("WeatherData", {"n": 1})
 
-        snapshot = adapter.get_buffered_data("CarData.z")
-        adapter.handle_message("CarData.z", {"n": 2})
+        snapshot = adapter.get_buffered_data("WeatherData")
+        adapter.handle_message("WeatherData", {"n": 2})
 
         assert len(snapshot) == 1, "the reader's list must not grow underneath it"
 
     def test_mutating_a_snapshot_does_not_corrupt_the_buffer(self):
         adapter = SignalRLiveAdapter()
-        adapter.handle_message("CarData.z", {"n": 1})
+        adapter.handle_message("WeatherData", {"n": 1})
 
-        adapter.get_buffered_data("CarData.z").clear()
+        adapter.get_buffered_data("WeatherData").clear()
 
-        assert len(adapter.get_buffered_data("CarData.z")) == 1
+        assert len(adapter.get_buffered_data("WeatherData")) == 1
 
     def test_state_updates_are_serialised(self):
         adapter = SignalRLiveAdapter()
@@ -81,9 +81,9 @@ class TestConcurrentBufferAccess:
                 {"Lines": {"1": {"NumberOfLaps": lap, "LastLapTime": {"Value": f"1:3{lap}.000"}}}},
             )
         for index in range(500):
-            adapter.handle_message("CarData.z", {"n": index})
+            adapter.handle_message("WeatherData", {"n": index})
 
-        assert len(adapter.get_buffered_data("CarData.z")) == 100
+        assert len(adapter.get_buffered_data("WeatherData")) == 100
         assert len(adapter.lap_history) == 5
 
 

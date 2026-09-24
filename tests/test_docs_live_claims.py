@@ -1,9 +1,10 @@
-"""Docs must not promise a live endpoint the code does not use (DOC-01).
+"""Docs must describe the live endpoint the code actually uses (DOC-01, LIVE-01).
 
-livef1's RealF1Client connects to the legacy `/signalr/` endpoint, but the
-readme, the adapter docstring, the smoke script and ARCHITECTURE.md all
-claimed the `/signalrcore` endpoint FastF1 moved to - which is the one this
-app will use only once LIVE-01 lands.
+Until LIVE-01 the app ran LiveF1's RealF1Client against the legacy `/signalr/`
+hub and the docs had to say so. Since LIVE-01 the app connects to
+`/signalrcore` itself (`data/signalr_core.py`); the classic negotiate now
+answers 401, so any doc still telling people live mode goes through LiveF1 or
+the legacy hub is wrong.
 """
 
 from pathlib import Path
@@ -12,7 +13,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCS = ("readme.md", "ARCHITECTURE.md")
-CODE = ("data/live_adapter.py", "scripts/live_smoke.py")
+CODE = ("data/live_adapter.py", "data/signalr_core.py", "scripts/live_smoke.py")
 
 
 def _text(relative: str) -> str:
@@ -21,21 +22,19 @@ def _text(relative: str) -> str:
 
 class TestEndpointClaims:
     @pytest.mark.parametrize("path", DOCS + CODE)
-    def test_signalrcore_is_never_claimed_unqualified(self, path):
-        text = _text(path)
-        for line in text.splitlines():
-            if "signalrcore" not in line:
-                continue
-            # Mentioning the endpoint is fine; claiming this app connects to
-            # it is not, until LIVE-01 replaces the client.
-            assert any(
-                marker in line.lower()
-                for marker in ("not", "legacy", "live-01", "would", "planned", "fastf1 uses")
-            ), f"{path}: unqualified /signalrcore claim: {line.strip()}"
+    def test_the_signalr_core_endpoint_is_named(self, path):
+        assert "signalrcore" in _text(path)
 
-    @pytest.mark.parametrize("path", DOCS)
-    def test_the_legacy_endpoint_is_named(self, path):
-        assert "/signalr/" in _text(path), "docs should say which endpoint is actually used"
+    @pytest.mark.parametrize("path", DOCS + CODE)
+    def test_live_mode_is_not_said_to_run_through_livef1(self, path):
+        for line in _text(path).splitlines():
+            lowered = line.lower()
+            if "realf1client" not in lowered:
+                continue
+            # Naming RealF1Client is fine only to say it is no longer used.
+            assert any(
+                marker in lowered for marker in ("no longer", "not used", "401", "legacy")
+            ), f"{path}: live mode described as LiveF1's RealF1Client: {line.strip()}"
 
     @pytest.mark.parametrize("path", DOCS)
     def test_the_token_requirement_is_documented(self, path):

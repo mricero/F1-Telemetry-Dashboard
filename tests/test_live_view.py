@@ -225,3 +225,56 @@ class TestLiveDashboardRendersInTheFragment:
         pages = [page for page, _, _ in page_specs({"is_live": True})]
         assert results_page not in pages
         assert "render_dashboard" not in inspect.getsource(live_page)
+
+
+def _full_feed_script():
+    import streamlit as st
+
+    from data.live_adapter import SignalRLiveAdapter
+    from data.source_manager import DataSourceManager
+    from processing.telemetry_processor import TelemetryProcessor
+    from tests import live_fixtures
+    from ui.layout import render_live_dashboard
+
+    adapter = SignalRLiveAdapter()
+    messages = []
+    for topic in live_fixtures.available_topics():
+        for timestamp, payload in live_fixtures.messages(topic):
+            messages.append((timestamp, topic, payload))
+    for timestamp, topic, payload in sorted(messages, key=lambda m: m[0]):
+        adapter.handle_message(topic, payload, timestamp)
+
+    manager = DataSourceManager(live_adapter=adapter)
+    st.session_state["snapshot"] = manager.poll_live_data()
+    render_live_dashboard(manager, TelemetryProcessor())
+
+
+class TestFullFeedThroughTheRealIngestPath:
+    """Every recorded topic, raw, through handle_message (the SignalR Core path)."""
+
+    @pytest.fixture
+    def app(self, monkeypatch):
+        import data.source_manager as source_manager
+
+        monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+        app = AppTest.from_function(_full_feed_script, default_timeout=60)
+        app.run()
+        return app
+
+    def test_it_renders_without_errors(self, app):
+        assert not app.exception
+
+    def test_the_tower_follows_the_timing_screen(self, app):
+        from processing.timing import build_timing_rows
+
+        snapshot = app.session_state["snapshot"]
+        rows = build_timing_rows(snapshot)
+
+        assert not snapshot["standings"].empty
+        assert [row["code"] for row in rows] == list(snapshot["standings"]["Driver"])
+        assert rows[0]["gap"] == "LEADER"
+
+    def test_the_feed_state_is_shown(self, app):
+        html = " ".join(str(element.proto) for element in app.get("html"))
+
+        assert "OFFLINE" in html  # no client started in this test

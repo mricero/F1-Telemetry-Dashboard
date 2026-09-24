@@ -13,6 +13,7 @@ from data.runtime_cache import runtime_cache
 from ui.dashboard import render_dashboard
 from ui.layout import (
     render_driver_comparison,
+    render_feed_status,
     render_lap_times,
     render_live_controls,
     render_live_dashboard,
@@ -180,14 +181,19 @@ def live_page() -> None:
     """The live timing screen, polled from the SignalR buffers."""
     context = _context()
     live_client = context["session_data"].get("live_client")
-    if live_client and not live_client.is_running():
-        if st.button("Start live stream", type="primary"):
+    if live_client is None:
+        st.info("No live client is available in this process.")
+    elif not live_client.is_running():
+        render_feed_status(live_client)
+        if st.button("Connect to live timing", type="primary"):
             live_client.start_async()
             st.rerun()
-    elif live_client and live_client.is_running():
         error = live_client.last_error()
         if error:
-            st.error(f"Live client error: {error}")
+            st.error(f"The live client stopped: {error}")
+    else:
+        # Status chip, reconnects and the dashboard refresh every 3 s inside
+        # the fragment; between sessions it shows the last session's state.
         render_live_dashboard(context["data_manager"], context["processor"])
     # Buffer counts, raw-stream recording and Stop Live (LIVE-12).
     render_live_controls(live_client)

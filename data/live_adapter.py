@@ -1,25 +1,30 @@
-"""Live Telemetry Adapter - FREE SignalR connection to official F1 feed.
+"""Live timing adapter: SignalR Core feed -> merged state and bounded buffers.
 
 Message flow
 ------------
-LiveF1's RealF1Client runs each incoming SignalR message through its own
-``function_map`` parser BEFORE invoking registered callbacks. Therefore the
-records buffered by :class:`SignalRLiveAdapter` are already flat dicts whose
-key names follow LiveF1's conventions:
+:class:`data.signalr_core.SignalRCoreClient` connects to
+``wss://livetiming.formula1.com/signalrcore`` and hands every message to
+:meth:`SignalRLiveAdapter.handle_message` as the raw wire triple
+``(topic, data, timestamp)``; the subscription snapshot goes to
+:meth:`SignalRLiveAdapter.seed_state`. The recorder and the fixture replay use
+exactly the same entry points, so recorded and live data share one path.
 
-* ``CarData.z``   -> DriverNo, Utc, rpm, speed, n_gear, throttle, brake, drs
-* ``Position.z``  -> DriverNo, Utc, X, Y, Z
-* ``TimingData``  -> DriverNo, Position, BestLapTimeValue, Sectors_1_Value, ...
-* ``TyreStintSeries`` -> DriverNo, PitCount, Compound, ...
-* ``WeatherData`` -> AirTemp, TrackTemp, Humidity, WindSpeed, Rainfall, ...
-* ``DriverList``  -> RacingNumber, Tla, TeamColour, FirstName, LastName, ...
+* Keyframe + delta topics (``TimingData``, ``DriverList``, ``SessionInfo``,
+  ``TrackStatus``, ``RaceControlMessages`` ...) are deep-merged into
+  :class:`data.live_state.LiveState` (``STATE_TOPICS``).
+* True time series are normalised into flat records and kept in bounded
+  buffers: ``CarData.z`` -> ``DriverNo, Utc, rpm, speed, n_gear, throttle,
+  brake, drs``; ``Position.z`` -> ``DriverNo, Utc, X, Y, Z, Status``;
+  ``WeatherData`` -> the sample plus its ``timestamp``.
 
-The compressed payload format (base64 of raw-DEFLATE JSON) is handled by
-:func:`decode_zipped` / :func:`decode_topic_payload` for replaying
-FastF1-style raw recordings.
+Compressed topics (``CarData.z``, ``Position.z``) are base64 of **raw**
+DEFLATE JSON, decoded by :func:`decode_zipped`.
+
+LiveF1's ``RealF1Client`` is no longer used: it targets the classic
+``/signalr/`` hub, whose negotiate answers 401 since F1's 2025 move to
+SignalR Core.
 """
 
-import asyncio
 import base64
 import contextlib
 import json
@@ -154,54 +159,63 @@ TOKEN_ENV_VAR = "F1TV_SUBSCRIPTION_TOKEN"  # noqa: S105 - the variable name, not
 
 
 def subscription_token() -> str | None:
-    """The configured F1TV subscription token, or None."""
-    token = os.getenv(TOKEN_ENV_VAR, "").strip()
-    return token or None
+    """The configured F1TV subscription token (the JWT), or None.
+
+    Accepts the JWT or the F1 website's ``login-session`` cookie value; see
+    :func:`data.signalr_core.token_from_env_value`.
+    """
+    from data.signalr_core import token_from_env_value
+
+    return token_from_env_value(os.getenv(TOKEN_ENV_VAR, ""))
 
 
 class SignalRLiveAdapter:
-    """
-    FREE live telemetry via SignalR - connects directly to F1 official feed.
-    Two implementations available:
-    1. LiveF1 package: livef1.adapters.RealF1Client (async callbacks)
-    2. FastF1 built-in: fastf1.livetiming.SignalRClient (saves raw stream to file)
-    NOTE: LiveF1 connects to the legacy /signalr/ hub, not the
-    wss://livetiming.formula1.com/signalrcore endpoint FastF1 uses (LIVE-01).
+    """The live feed for this process: one SignalR Core connection, merged
+    state for delta topics and bounded buffers for time series.
 
-    NOTE: all topics below have dedicated parsers inside LiveF1's function_map;
-    subscribing to unknown topics would raise ParsingError on every message.
+    Created once per process (``data.live_service``); browser sessions only
+    read from it.
     """
 
-    # Topics to subscribe for telemetry dashboard
+    # Topics subscribed on /signalrcore. The first group is what FastF1's own
+    # client and the community clients that work against the 2026 feed
+    # subscribe; the rest feed the tyre panels. An unknown topic simply never
+    # delivers anything (SignalR Core does not reject the whole Subscribe).
     TELEMETRY_TOPICS: ClassVar = [
-        "CarData.z",  # Speed/Throttle/Brake/RPM/Gear/DRS (~50Hz? ~3.7Hz aggregated)
-        "Position.z",  # GPS position X,Y,Z
-        "TimingData",  # Lap times, sectors, gaps
-        "WeatherData",  # Track temp, air temp, humidity, wind, rain
-        "RaceControlMessages",  # Flags, SC, incidents
-        "TrackStatus",  # Track conditions (yellow, green, red)
-        "SessionInfo",  # Session metadata
-        "SessionStatus",  # Session state (racing, stopped, etc.)
-        "DriverList",  # Driver info (numbers, names, teams)
-        "TimingAppData",  # Per-driver stints: compound, age, new/used
-        "CurrentTyres",  # Current tyre compounds
-        "PitLaneTimeCollection",  # Pit lane timing
-        "TyreStintSeries",  # Tyre stint data
+        "Heartbeat",
+        "CarData.z",  # speed/throttle/brake/RPM/gear/DRS - needs a token
+        "Position.z",  # GPS X/Y/Z - needs a token
+        "ExtrapolatedClock",
+        "TimingData",
+        "TimingAppData",  # per-driver stints: compound, age, new/used
+        "TimingStats",
+        "TopThree",
+        "WeatherData",
+        "TrackStatus",
+        "SessionInfo",
+        "SessionStatus",
+        "SessionData",
+        "DriverList",
+        "RaceControlMessages",
+        "LapCount",
+        "TyreStintSeries",
+        "PitLaneTimeCollection",
     ]
 
-    def __init__(self, use_livef1: bool = True, buffer_limit: int = 20000):
+    def __init__(
+        self, buffer_limit: int = 20000, client_factory: Callable | None = None, **_legacy
+    ):
         """
         Args:
-            use_livef1: If True, use LiveF1 RealF1Client (async callbacks).
-                       If False, use FastF1 SignalRClient (file-based).
             buffer_limit: Max records kept per topic. Oldest records are
                 dropped first, bounding memory during long sessions
                 (~20k CarData messages ≈ several minutes of full-grid data;
                 parsers only ever need the tail).
         """
-        self.use_livef1 = use_livef1
+        # Builds the SignalR Core client; injectable so tests run offline.
+        self._client_factory = client_factory
         self.buffer_limit = max(int(buffer_limit), 100)
-        self.client = None
+        self.client: Any = None
         # Merged per-topic state for keyframe+delta topics (LIVE-05). Time
         # series still go to _data_buffer.
         self.state = LiveState()
@@ -220,10 +234,10 @@ class SignalRLiveAdapter:
         self._ingested = 0
         # Optional raw-stream recorder; see data/live_recorder.py (LIVE-12).
         self.recorder: LiveRecorder | None = None
-        self._callbacks: dict[str, list[Callable]] = defaultdict(list)
         self._running = False
-        self._thread: threading.Thread | None = None
         self._thread_error: BaseException | None = None
+        # Wall-clock time of the last Heartbeat, for the "last update" caption.
+        self.last_heartbeat: str | None = None
 
     def handle_message(self, topic: str, payload: Any, timestamp: str | None = None) -> None:
         """Ingest one raw feed message.
@@ -237,12 +251,41 @@ class SignalRLiveAdapter:
         if self.recorder is not None:
             self.recorder.record(topic, payload, timestamp)
 
+        if topic == "Heartbeat":
+            if isinstance(payload, dict):
+                self.last_heartbeat = payload.get("Utc") or timestamp
+            return
         if topic in STATE_TOPICS:
             if topic == "TimingData":
                 self._record_lap_progress(payload, timestamp)
             self.state.update(topic, payload)
             return
-        self._buffer_topic(topic, payload)
+        records = self.normalise_series(topic, payload, timestamp)
+        if records is not None:
+            self._buffer_topic(topic, records)
+
+    @staticmethod
+    def normalise_series(topic: str, payload: Any, timestamp: str | None) -> Any:
+        """Raw time-series payload -> the flat records the parsers read.
+
+        ``CarData.z``/``Position.z`` arrive as a base64 string (raw DEFLATE
+        JSON) and become one record per car per sample. ``WeatherData`` is a
+        full sample each time and keeps the message timestamp. Anything
+        already in record form (lists of dicts) passes through unchanged.
+        Undecodable payloads are dropped with a log line, never raised: one
+        bad message must not stop the feed.
+        """
+        if topic in ("CarData.z", "Position.z"):
+            if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+                return payload  # already flat records
+            try:
+                return decode_topic_payload(topic, [(timestamp, payload)])
+            except (ValueError, TypeError, zlib.error, json.JSONDecodeError) as exc:
+                logger.warning("Could not decode %s payload: %s", topic, exc)
+                return None
+        if topic == "WeatherData" and isinstance(payload, dict):
+            return {**payload, "timestamp": timestamp}
+        return payload
 
     def _record_lap_progress(self, payload: Any, timestamp: str | None = None) -> None:
         """Note completed laps as TimingData messages arrive.
@@ -290,7 +333,16 @@ class SignalRLiveAdapter:
         """Apply a subscription snapshot: ``{topic: full_state}``."""
         if self.recorder is not None:
             self.recorder.record_snapshot(snapshot)
-        self.state.seed(snapshot)
+        snapshot = snapshot or {}
+        self.state.seed({k: v for k, v in snapshot.items() if k in STATE_TOPICS})
+        # The snapshot also carries the latest sample of each time series
+        # (car data, positions, weather): keep it rather than wait for the
+        # next update.
+        for topic, payload in snapshot.items():
+            if topic not in STATE_TOPICS and payload not in (None, {}, [], ""):
+                records = self.normalise_series(topic, payload, None)
+                if records is not None and topic != "Heartbeat":
+                    self._buffer_topic(topic, records)
 
     def start_recording(self, directory) -> "LiveRecorder":
         """Record every message from here on, for later replay."""
@@ -338,67 +390,57 @@ class SignalRLiveAdapter:
             if overflow > 0:
                 del buf[:overflow]
 
-    def start_livef1_client(self, topics: list[str] | None = None, log_file: str | None = None):
-        """Start LiveF1 RealF1Client with async callbacks.
+    def _make_client(self, topics: list[str]):
+        from data.signalr_core import SignalRCoreClient
 
-        NOTE: RealF1Client.run() manages its own event loop (asyncio.run)
-        and blocks until interrupted, so this must NOT be called from
-        within a running event loop. Use start_async() to run it in a
-        background thread.
-        """
-        from livef1.adapters import RealF1Client
+        factory = self._client_factory or SignalRCoreClient
+        return factory(
+            topics=topics,
+            on_message=self._on_feed_message,
+            on_snapshot=self.seed_state,
+            token_provider=subscription_token,
+        )
 
-        topics = topics or self.subscribed_topics()
-        client = RealF1Client(topics=topics, log_file_name=log_file)
-        self.client = client
-        self._running = True
-
-        # Register callback for all topics.
-        # records is a dict of {topic: [parsed_record, ...]}
-        @client.callback("telemetry_handler")
-        async def handle_data(records):
-            for topic, data in records.items():
-                self._buffer_topic(topic, data)
-
-                # Call registered callbacks
-                for cb in self._callbacks.get(topic, []):
-                    if asyncio.iscoroutinefunction(cb):
-                        await cb(data)
-                    else:
-                        cb(data)
-
-        # Blocks; RealF1Client creates and owns its own event loop.
-        client.run()
-        self._running = False
+    def _on_feed_message(self, topic: str, payload: Any, timestamp: str | None) -> None:
+        self.handle_message(topic, payload, timestamp)
 
     def start_async(self, topics: list[str] | None = None, log_file: str | None = None):
-        """Start live client in background thread.
+        """Connect to /signalrcore on a background thread (no-op if running).
 
-        RealF1Client.run() creates its own event loop internally, so the
-        background thread must run it directly (no outer asyncio loop).
+        ``log_file`` is accepted for compatibility with older callers and
+        ignored: raw recording is :meth:`start_recording`.
         """
-        if self._running:
+        if self.is_running():
             return
-
-        self._running = True
         self._thread_error = None
+        try:
+            self.client = self._make_client(topics or self.subscribed_topics())
+            self.client.start()
+            self._running = True
+        except Exception as exc:
+            self._running = False
+            self._thread_error = exc
+            logger.error("Could not start the live client: %s", exc, exc_info=exc)
 
-        def run_client():
-            try:
-                self.start_livef1_client(topics, log_file)
-            except Exception as exc:
-                self._running = False
-                # Keep a reference for the UI; Streamlit threads are daemonic
-                # and an exception here would otherwise vanish silently.
-                self._thread_error = exc
-                logger.error("Live client thread stopped: %s", exc, exc_info=exc)
+    def status(self):
+        """The connection state (:class:`data.signalr_core.FeedStatus`)."""
+        from data.signalr_core import FeedStatus
 
-        self._thread = threading.Thread(target=run_client, daemon=True)
-        self._thread.start()
+        if self.client is None:
+            return FeedStatus.IDLE
+        return self.client.status
 
-    def register_callback(self, topic: str, callback: Callable):
-        """Register callback for a topic."""
-        self._callbacks[topic].append(callback)
+    def status_text(self) -> str:
+        """One line for the UI: the state and, when relevant, why."""
+        from data.signalr_core import STATUS_TEXT, FeedStatus
+
+        status = self.status()
+        text = STATUS_TEXT[status]
+        stats = getattr(self.client, "stats", None)
+        problem = status in (FeedStatus.RECONNECTING, FeedStatus.BLOCKED, FeedStatus.AUTH_REQUIRED)
+        if problem and stats is not None and stats.last_error:
+            text += f" - {stats.last_error}"
+        return text
 
     def change_token(self) -> tuple:
         """A cheap value that changes whenever ingested data changes.
@@ -445,19 +487,24 @@ class SignalRLiveAdapter:
                 self._ingested += 1  # a clear is a change like any other
 
     def is_running(self) -> bool:
-        """Check if client is running."""
-        return self._running
+        """Whether the client thread is alive (connected or reconnecting)."""
+        client = self.client
+        running = bool(client is not None and client.is_running())
+        self._running = running
+        return running
 
-    def last_error(self) -> BaseException | None:
-        return self._thread_error
+    def last_error(self) -> BaseException | str | None:
+        if self._thread_error is not None:
+            return self._thread_error
+        stats = getattr(self.client, "stats", None)
+        return getattr(stats, "last_error", None)
 
     def stop(self):
-        """Stop the client."""
+        """Close the connection and join the client thread (within 5 s)."""
+        client = self.client
+        if client is not None:
+            client.stop()
         self._running = False
-        if self.client and hasattr(self.client, "stop"):
-            self.client.stop()
-        if self._thread:
-            self._thread.join(timeout=5)
 
 
 class LiveDataProcessor:
@@ -658,6 +705,117 @@ class LiveDataProcessor:
                     row[key] = value
             rows.append(row)
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def standings_from_state(
+        timing_state: dict, acronyms: dict[str, str], race: bool
+    ) -> pd.DataFrame:
+        """``TimingData`` state -> the ``standings`` table the tower orders by.
+
+        Same columns the replay model produces (``Driver, Position, Gap,
+        GapSeconds, LapsDown, Interval, IntervalSeconds, BestLap, BestSeconds,
+        LastLap, LastSeconds, LastFlag, S1..S3, Status, Pits``), so
+        ``processing.timing.build_timing_rows`` has one "ordered by the timing
+        screen" path for live and replay. Races read ``GapToLeader`` /
+        ``IntervalToPositionAhead``; practice and qualifying read
+        ``TimeDiffToFastest`` / ``TimeDiffToPositionAhead``.
+        """
+        from processing.time_utils import parse_gap, to_seconds
+        from processing.timing import LEADER, MISSING, format_delta, format_lap_gap
+
+        def cell(raw: Any, is_first: bool) -> tuple[str, float | None, int]:
+            seconds, laps_down = parse_gap(raw)
+            if is_first:
+                return LEADER, 0.0, 0
+            if laps_down:
+                return format_lap_gap(laps_down), None, int(laps_down)
+            if seconds is None:
+                return MISSING, None, 0
+            return format_delta(seconds), seconds, 0
+
+        def value_of(entry: Any) -> Any:
+            return entry.get("Value") if isinstance(entry, dict) else entry
+
+        rows = []
+        for number, line in (timing_state or {}).get("Lines", {}).items():
+            if not isinstance(line, dict):
+                continue
+            raw_position = line.get("Position") or line.get("Line")
+            try:
+                position = int(str(raw_position))
+            except (TypeError, ValueError):
+                continue
+            first = position == 1
+            if race:
+                gap_raw = line.get("GapToLeader")
+                interval_raw = value_of(line.get("IntervalToPositionAhead"))
+            else:
+                gap_raw = line.get("TimeDiffToFastest")
+                interval_raw = line.get("TimeDiffToPositionAhead")
+            gap, gap_seconds, laps_down = cell(gap_raw, first)
+            interval, interval_seconds, _ = cell(interval_raw, first)
+
+            best = value_of(line.get("BestLapTime"))
+            last_entry = line.get("LastLapTime")
+            last = value_of(last_entry)
+            flag = None
+            if isinstance(last_entry, dict):
+                if _as_bool(last_entry.get("OverallFastest")):
+                    flag = "sb"
+                elif _as_bool(last_entry.get("PersonalFastest")):
+                    flag = "pb"
+            sectors = [value_of(entry) for entry in as_list(line.get("Sectors"))]
+
+            if _as_bool(line.get("Retired")) or _as_bool(line.get("Stopped")):
+                status = "OUT"
+            elif _as_bool(line.get("KnockedOut")):
+                status = "KO"
+            elif _as_bool(line.get("InPit")):
+                status = "IN PIT"
+            else:
+                status = "ON TRACK"
+            pits = line.get("NumberOfPitStops")
+
+            row: dict[str, Any] = {
+                "Driver": acronyms.get(str(number), f"#{number}"),
+                "Position": position,
+                "Gap": gap,
+                "GapSeconds": gap_seconds,
+                "LapsDown": laps_down,
+                "Interval": interval,
+                "IntervalSeconds": interval_seconds,
+                "BestLap": best or MISSING,
+                "BestSeconds": to_seconds(best) if best else None,
+                "LastLap": last or MISSING,
+                "LastSeconds": to_seconds(last) if last else None,
+                "LastFlag": flag,
+                "Status": status,
+                "Pits": int(str(pits)) if pits is not None and str(pits).isdigit() else None,
+            }
+            for index in range(3):
+                raw = sectors[index] if index < len(sectors) else None
+                row[f"S{index + 1}"] = to_seconds(raw) if raw else None
+            rows.append(row)
+        if not rows:
+            return pd.DataFrame()
+        frame = pd.DataFrame(rows).sort_values("Position", kind="stable").reset_index(drop=True)
+        # The feed briefly repeats a position during overtakes; rank instead.
+        frame["Position"] = range(1, len(frame) + 1)
+        return frame
+
+    @staticmethod
+    def stints_from_timing_app(timing_app_state: dict) -> dict:
+        """``TimingAppData`` state reshaped as ``TyreStintSeries`` state.
+
+        Both carry ``Stints`` per driver with the same fields (``Compound``,
+        ``New``, ``TotalLaps``, ``StartLaps``), keyed differently: this lets
+        the stints builder run on whichever topic the feed delivers.
+        """
+        stints = {}
+        for number, line in (timing_app_state or {}).get("Lines", {}).items():
+            if isinstance(line, dict) and line.get("Stints") is not None:
+                stints[str(number)] = line["Stints"]
+        return {"Stints": stints} if stints else {}
 
     @staticmethod
     def stints_from_state(

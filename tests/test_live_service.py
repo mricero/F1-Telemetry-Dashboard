@@ -24,10 +24,14 @@ def _prime_script():
     import streamlit as st
 
     from data.live_service import get_live_adapter
+    from tests import live_fixtures
 
     adapter = get_live_adapter()
-    adapter.handle_message("CarData.z", {"n": 1})
+    # A real recorded CarData.z message: base64 of raw-DEFLATE JSON.
+    timestamp, payload = live_fixtures.messages("CarData.z")[0]
+    adapter.handle_message("CarData.z", payload, timestamp)
     st.session_state["adapter_id"] = id(adapter)
+    st.session_state["buffered"] = len(adapter.get_buffered_data("CarData.z"))
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +60,8 @@ class TestProcessWideAdapter:
         consumer = AppTest.from_function(_adapter_id_script, default_timeout=30)
         consumer.run()
 
-        assert consumer.session_state["buffered"] == 1
+        assert producer.session_state["buffered"] > 0
+        assert consumer.session_state["buffered"] == producer.session_state["buffered"]
 
     def test_repeated_calls_in_one_session_return_the_same_object(self):
         from data.live_service import get_live_adapter
