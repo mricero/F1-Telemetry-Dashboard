@@ -244,7 +244,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     9. Network: 2023 Bahrain R, `t` = leader's lap-10 `Time` + 1 s → tower top 3 equals FastF1 `laps[LapNumber == 10]` top 3 by `Position`; VER–PER gap within 0.5 s of the difference of their lap-10 `Time`.
   - Depends on: REPLAY-02.
 
-- [ ] **REPLAY-04** · P0 · M — **Make the replay the main view (server-rendered, scrub/step driven)**
+- [x] **REPLAY-04** · P0 · M — **Make the replay the main view (server-rendered, scrub/step driven)** — done in 3133d62
   - Files: `app.py`, `ui/replay_view.py` (rewrite), `ui/dashboard.py`, `tests/test_replay_view.py`, `tests/test_app_sources.py`.
   - Problem: D3 — the replay is a secondary tab and the prominent dashboard shows the end result.
   - Fix:
@@ -258,7 +258,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     - "Jump to… Pit stop — C" puts C's status at `IN PIT`.
   - Depends on: REPLAY-03, UI-03.
 
-- [ ] **REPLAY-05** · P1 · L — **Browser-side replay player (`st.components.v2`) — smooth playback without reruns**
+- [x] **REPLAY-05** · P1 · L — **Browser-side replay player (`st.components.v2`) — smooth playback without reruns** — done in 08460bb
   - Files: new `processing/replay_payload.py`; new `ui/components/replay_player/{__init__.py, player.html, player.css, player.js}`; `ui/replay_view.py`; new `scripts/preview_replay_player.py`; new `tests/test_replay_payload.py`; optional `tests/e2e/test_replay_player.py`.
   - Problem: D5 — Python-side frame rendering caps playback at ~2 fps with flicker and server load per viewer.
   - Fix:
@@ -317,19 +317,19 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     - Manual (record in `tasks.md`): 2023 Bahrain R at 16× plays without flicker; the Streamlit process performs no script reruns between pause/seek events (log a line at the top of `main()` at DEBUG and watch it).
   - Depends on: REPLAY-03, REPLAY-04, UI-04.
 
-- [ ] **REPLAY-06** · P1 · M — **Qualifying & practice replays**
+- [x] **REPLAY-06** · P1 · M — **Qualifying & practice replays** — done in 2ad392f
   - Files: `processing/replay_model.py`, `processing/replay_payload.py`, player JS, `tests/test_replay_model.py`.
   - Fix: header shows the running segment (`Q1`/`Q2`/`Q3` from `segment_starts`) and time elapsed in it; tower ordered by best valid lap **in the current segment** (Q) or in the session (FP/SQ as applicable); "on a flying lap" marker for a driver whose lap started after `PitOutTime` and hasn't completed; purple/green flash when a lap completes as session best / personal best (`last_flag`); eliminated drivers move to the partition only when their segment ends.
   - Acceptance: synthetic qualifying fixture — at a time inside Q2, Q1-eliminated drivers sit under "Eliminated in Q1" and the rest are ordered by Q2 best; a driver who completes a faster lap mid-Q2 moves up at that lap's `Time`, not before.
   - Depends on: REPLAY-03 (and REPLAY-05 for the player side).
 
-- [ ] **REPLAY-07** · P2 · S — **Track state on the map**
+- [x] **REPLAY-07** · P2 · S — **Track state on the map** — done in d109287
   - Fix: track ribbon tinted with the flag colour at 30 % under SC/VSC and red under a red flag (from `flags`); an `SC` / `VSC` / `RED` chip on the map — no invented SC marker (no SC position in the data). Optional: marshal-sector yellows from race-control messages with `Scope == "Sector"` using `session.get_circuit_info().marshal_sectors` (X/Y/Distance) to colour the nearest stretch — add `marshal_sectors` to `circuit_info` if you do this.
   - Files: `processing/replay_payload.py`, `ui/components/replay_player/player.js`, `player.css`, optionally `data/fastf1_adapter.py` (`get_circuit_info`).
   - Acceptance: payload `flags` for a synthetic SC period produces a `SAFETY CAR` state between its start and end; unit test for the sector → track-slice mapping if implemented.
   - Depends on: REPLAY-05.
 
-- [ ] **REPLAY-08** · P2 · S — **Old replays and missing streams degrade honestly**
+- [x] **REPLAY-08** · P2 · S — **Old replays and missing streams degrade honestly** — done in 1c0489c
   - Fix: when `timing_stream` is empty (schema ≤ 6 bundle, or FastF1 failed), the model uses the timing-line fallback (REPLAY-03 table) and the header shows a small "gaps estimated at timing lines" note; when `positions` (the existing position-timeline key, schema 6) is empty the player shows the tower and timeline without the map rather than refusing to open.
   - Files: `processing/replay_model.py`, `processing/replay_payload.py`, `ui/replay_view.py`, player JS, `tests/test_replay_model.py`, `tests/test_replay_format.py`.
   - Acceptance: a schema-6 replay fixture opens the Replay page without errors and shows the note; a fixture without positions renders the tower.
@@ -341,7 +341,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
   - Idea: `scripts/capture_fixture.py` already knows the archive URLs (`https://livetiming.formula1.com/static/<year>/<meeting>/<session>/<Topic>.jsonStream`). Feed `TimingData`, `TimingAppData`, `TrackStatus`, `RaceControlMessages`, `WeatherData`, `LapCount` through `SignalRLiveAdapter.handle_message` on a virtual clock (the same path `data/live_recorder.replay_recording` uses) and sample `poll_live_data()` every second into keyframes. Gains: official mini-sector segment colours (`Segments[].Status`), exact broadcast tower. Cost: one download per session, more CPU. Only worth it once the live snapshot builder is proven (LIVE-01).
   - Acceptance: for 2023 Bahrain R, keyframe order at the end of lap 10 matches REPLAY-03's.
 
-- [ ] **REPLAY-10** · P3 · M — **Focused-driver card in the player**
+- [x] **REPLAY-10** · P3 · M — **Focused-driver card in the player** — done in 3f4396a
   - Files: `processing/replay_payload.py`, player JS/CSS, `ui/replay_view.py`.
   - Fix: when a driver is focused, a card shows last 5 lap times (from the tower series), current tyre + age, pits, gap-to-car-ahead trend sparkline (last 5 min), and an "Analyse this lap" text button that sets `st.session_state` for the Analysis page (UI-07).
   - Depends on: REPLAY-05, UI-07.
@@ -404,7 +404,7 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
   - Acceptance: AppTest — default page for a historical stub session is Replay; Analysis → Telemetry renders one telemetry chart group (count `plotly_chart` elements); the records panel is not on the Replay page; page names match §5.9 exactly.
   - Depends on: UI-02.
 
-- [ ] **UI-04** · P1 · M — **Replay screen specification** (the contract REPLAY-05 implements; copy it into `layout.md` as its section 9, "Replay screen")
+- [x] **UI-04** · P1 · M — **Replay screen specification** (the contract REPLAY-05 implements; copy it into `layout.md` as its section 9, "Replay screen") — done in b26f145
   - Files: `layout.md` (new section 9), `ui/theme.py` (shared tokens, `FLAG_STATES` labels).
   - Spec (desktop ≥ 1200 px; sizes in CSS px; colours are §5.4 tokens):
     ```
@@ -432,17 +432,17 @@ Verified by reading `app.py`, `ui/dashboard.py`, `processing/timing.py`, `proces
     - Motion and accessibility exactly as §5.10 and §5.11.
   - Acceptance: section 9 of `layout.md` lists every value above; `ui/theme.FLAG_STATES` labels are the chip words; (the `player.css` tokens/breakpoints and the 1440×900 / 390×844 screenshots are checked in REPLAY-05's acceptance).and 390×844 show tower and map with no horizontal scroll.
 
-- [ ] **UI-05** · P2 · S — **Results page polish**
+- [x] **UI-05** · P2 · S — **Results page polish** — done in 06beccc
   - Files: `ui/dashboard.py`, `ui/track_map.py`, `ui/theme.py`, `ui/layout.py` (Plotly template), `tests/test_track_map.py`, `tests/test_ui_guideline.py`.
   - Fix: apply §5 to `tower_html` and the header: tokens instead of literals, sticky header row and sticky first two columns, hide `Speed`, `Diff`, `Tyre history` under 1200 px, KO rows tinted `--surface-2` with the `KO` chip instead of 55 % opacity, `title` tooltips on micro-sector cells ("Sector 2 · mini 3 · personal best"), `role="img"` and `<title>` on the SVG, the Plotly template from §5.6 on every chart.
   - Acceptance: CSS contains `position: sticky` for `th` and the first two `td`s; `tests/test_track_map.py` asserts the SVG has a `<title>`; `test_ui_guideline` has no remaining xfails.
 
-- [ ] **UI-06** · P2 · S — **Loading and empty states**
+- [x] **UI-06** · P2 · S — **Loading and empty states** — done in 273eff6
   - Files: `app.py`, `data/source_manager.py` (`_load_fastf1_session` gains `progress=None`), new `ui/status.py` (`DataStatus`), `ui/layout.py`.
   - Fix: `st.status("Loading 2023 Bahrain Grand Prix – Race", expanded=False)` with steps ("Timing and laps", "Positions, 20 drivers", "Telemetry 7/20", "Building replay") updated from `_load_fastf1_session` through an optional `progress` callback; each panel shows why it is empty through a `DataStatus` (`ok | empty | unavailable(reason) | auth_required | error(msg)`), worded per §5.9.
   - Acceptance: AppTest with a stub manager that calls `progress` shows the status element; a panel given `DataStatus.unavailable("FastF1 has no weather data for this session")` renders that sentence.
 
-- [ ] **UI-07** · P2 · S — **Analysis follows the replay cursor**
+- [x] **UI-07** · P2 · S — **Analysis follows the replay cursor** — done in 1d5089f
   - Files: `ui/layout.py` (`render_lap_times`, `render_position_changes`, `render_driver_comparison`), `ui/pages.py`.
   - Fix: Lap-times and Positions charts draw a 1 px `--accent` vertical line at the replay's current lap (`st.session_state[f"replay_cursor:{session_key}"]` → lap); Head-to-head preselects the focused driver and the car ahead at the cursor; a text link "Back to replay at lap n" on the Analysis page.
   - Acceptance: AppTest — with a cursor at lap 3 of the fixture, the lap-time figure's `layout.shapes` contains a line at x = 3.
