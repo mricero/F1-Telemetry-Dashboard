@@ -22,6 +22,7 @@ from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
 from ui.status import DataStatus, show
 from ui.theme import (
+    ACCENT,
     APP_CSS,
     CHART_COOL,
     CHART_WARM,
@@ -55,6 +56,12 @@ def _plot(fig: go.Figure, *args, **kwargs):
     """Draw a chart in the shared style (guideline 5.6)."""
     fig.update_layout(**chart_layout(len(fig.data)))
     return st.plotly_chart(fig, *args, **kwargs)
+
+
+def _mark_lap(fig: go.Figure, lap: int | None) -> None:
+    """A 1 px accent line at the replay's current lap (UI-07)."""
+    if lap is not None:
+        fig.add_vline(x=lap, line={"color": ACCENT, "width": 1})
 
 
 def compound_palette(compound_colors: dict[str, str] | None = None) -> dict[str, str]:
@@ -397,7 +404,9 @@ def render_telemetry_charts(telemetry_data: dict[str, pd.DataFrame], color_map: 
                 st.info(f"No {cfg['col']} data available")
 
 
-def render_lap_times(laps_df: pd.DataFrame, color_map: dict[str, str]):
+def render_lap_times(
+    laps_df: pd.DataFrame, color_map: dict[str, str], marker_lap: int | None = None
+):
     """Render lap time chart with pit stop indicators.
 
     Handles both FastF1 Timedelta lap times and the string values of the
@@ -455,6 +464,7 @@ def render_lap_times(laps_df: pd.DataFrame, color_map: dict[str, str]):
         hovermode="x unified",
         height=500,
     )
+    _mark_lap(fig, marker_lap)
     _plot(fig, width="stretch")
 
 
@@ -634,7 +644,9 @@ def render_live_dashboard(data_manager, processor):
         render_weather(snapshot.get("weather"))
 
 
-def render_position_changes(laps_df: pd.DataFrame, color_map: dict[str, str]):
+def render_position_changes(
+    laps_df: pd.DataFrame, color_map: dict[str, str], marker_lap: int | None = None
+):
     """Lap-by-lap running order - who gained and lost places, and when."""
     if laps_df.empty or "Position" not in laps_df.columns:
         st.info("No position data available for this session")
@@ -676,6 +688,7 @@ def render_position_changes(laps_df: pd.DataFrame, color_map: dict[str, str]):
         height=560,
         legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01),
     )
+    _mark_lap(fig, marker_lap)
     _plot(fig, width="stretch")
 
 
@@ -798,7 +811,10 @@ def render_race_control(
 
 
 def render_driver_comparison(
-    telemetry_data: dict[str, pd.DataFrame], color_map: dict[str, str], key_prefix: str = "cmp"
+    telemetry_data: dict[str, pd.DataFrame],
+    color_map: dict[str, str],
+    key_prefix: str = "cmp",
+    preselect: tuple = (),
 ):
     """Head-to-head speed trace plus cumulative time delta between two drivers.
 
@@ -817,10 +833,13 @@ def render_driver_comparison(
 
     col1, col2 = st.columns(2)
     with col1:
-        reference = st.selectbox("Reference driver", usable, index=0, key=f"{key_prefix}_ref")
+        preferred = preselect or ()
+        first = usable.index(preferred[0]) if preferred and preferred[0] in usable else 0
+        reference = st.selectbox("Reference driver", usable, index=first, key=f"{key_prefix}_ref")
     with col2:
         others = [d for d in usable if d != reference]
-        compare = st.selectbox("Compared with", others, index=0, key=f"{key_prefix}_cmp")
+        second = others.index(preferred[1]) if len(preferred) > 1 and preferred[1] in others else 0
+        compare = st.selectbox("Compared with", others, index=second, key=f"{key_prefix}_cmp")
 
     ref_df, cmp_df = telemetry_data[reference], telemetry_data[compare]
     delta_distance, delta_seconds = _time_delta(ref_df, cmp_df)

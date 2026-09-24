@@ -383,3 +383,54 @@ class TestOldReplaysDegradeHonestly:
         assert data["estimated"] is True
         assert data["pos"] is None
         assert data["tower"], "the tower must still be there"
+
+
+# --- Analysis follows the replay (UI-07) --------------------------------------
+
+
+def _open_page(app: AppTest, url_path: str, **state) -> AppTest:
+    from streamlit.util import calc_hash
+
+    for key, value in state.items():
+        app.session_state[key] = value
+    app._page_hash = calc_hash(url_path)
+    app.run()
+    return app
+
+
+class TestAnalysisFollowsTheReplay:
+    def test_the_lap_time_chart_marks_the_cursor_lap(self, race_app):
+        import json
+
+        app = _open_page(race_app, "analysis", analysis_section="Lap times", **{CURSOR: 1185.0})
+
+        assert not app.exception, app.exception
+        (chart,) = app.get("plotly_chart")
+        shapes = json.loads(chart.proto.spec)["layout"]["shapes"]
+        assert any(shape["x0"] == 3 and shape["x1"] == 3 for shape in shapes)
+
+    def test_it_offers_the_way_back_to_the_replay(self, race_app):
+        app = _open_page(race_app, "analysis", analysis_section="Lap times", **{CURSOR: 1185.0})
+
+        links = [element.proto.label for element in app.get("page_link")]
+        assert "Back to replay at lap 3" in links
+
+    def test_head_to_head_starts_with_the_focused_driver_and_the_car_ahead(self):
+        def script():
+            import streamlit as st
+
+            from ui.pages import replay_moment
+
+            session_key = "fastf1:2026:Test Grand Prix:R"
+            from tests import replay_fixtures
+
+            st.session_state[f"replay_cursor:{session_key}"] = 1300.0
+            st.session_state[f"replay_focus:{session_key}"] = "A"
+            context = {"session_key": session_key, "session_data": replay_fixtures.race_session()}
+            st.session_state["moment"] = replay_moment(context)
+
+        app = AppTest.from_function(script, default_timeout=60)
+        app.run()
+
+        moment = app.session_state["moment"]
+        assert (moment["lap"], moment["focus"], moment["ahead"]) == (4, "A", "B")

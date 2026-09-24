@@ -22,7 +22,7 @@ from ui.layout import (
     render_tire_strategy,
     render_weather,
 )
-from ui.replay_view import render_session_replay
+from ui.replay_view import FOCUS_PREFIX, cursor_key, render_session_replay, replay_model
 
 # What app.main() stores for the pages to draw from.
 CONTEXT_KEY = "page_context"
@@ -79,10 +79,36 @@ def results_page() -> None:
     )
 
 
+def replay_moment(context: dict) -> dict:
+    """Where the replay cursor stands, for the Analysis page (UI-07).
+
+    ``lap`` is the leader's lap at the cursor (races), ``focus`` the driver
+    focused in the player, ``ahead`` the car in front of them at that moment.
+    Empty before the replay has been opened.
+    """
+    key = context["session_key"]
+    cursor = st.session_state.get(cursor_key(key))
+    if cursor is None or context["session_data"].get("is_live"):
+        return {}
+    series, _ = replay_model(context["session_data"], key)
+    lap = series.leader_lap.at(cursor) if len(series.leader_lap) else None
+    focus = st.session_state.get(f"{FOCUS_PREFIX}:{key}")
+    ahead = None
+    if focus:
+        order = list(series.standings_at(cursor)["Driver"])
+        if focus in order and order.index(focus) > 0:
+            ahead = order[order.index(focus) - 1]
+    return {"cursor": cursor, "lap": lap, "focus": focus, "ahead": ahead}
+
+
 def analysis_page() -> None:
     """One analysis panel at a time: only the chosen one is computed."""
     context = _context()
     session_data = context["session_data"]
+    moment = replay_moment(context)
+    replay = (context.get("pages") or {}).get(PAGE_REPLAY)
+    if moment.get("lap") and replay is not None:
+        st.page_link(replay, label=f"Back to replay at lap {moment['lap']}")
     section = (
         st.segmented_control(
             "Section",
@@ -100,11 +126,12 @@ def analysis_page() -> None:
             st.caption(note)
         render_telemetry_charts(context["telemetry"](), context["color_map"])
     elif section == "Head-to-head":
-        render_driver_comparison(context["telemetry"](), context["color_map"])
+        pair = tuple(code for code in (moment.get("focus"), moment.get("ahead")) if code)
+        render_driver_comparison(context["telemetry"](), context["color_map"], preselect=pair)
     elif section == "Lap times":
-        render_lap_times(context["laps"], context["color_map"])
+        render_lap_times(context["laps"], context["color_map"], marker_lap=moment.get("lap"))
     elif section == "Positions":
-        render_position_changes(context["laps"], context["color_map"])
+        render_position_changes(context["laps"], context["color_map"], marker_lap=moment.get("lap"))
     elif section == "Weather":
         render_weather(session_data.get("weather"))
     elif section == "Race control":
