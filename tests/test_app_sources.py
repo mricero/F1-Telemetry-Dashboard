@@ -405,7 +405,7 @@ class TestLoadingAndEmptyStates:
         statuses = [
             block for block in app_test.main.children.values() if type(block).__name__ == "Status"
         ]
-        assert [block.label for block in statuses] == ["Loaded 2026 Italian – Race"]
+        assert [block.label for block in statuses] == ["Loaded 2026 Italian \N{EN DASH} Race"]
 
     def test_a_panel_says_why_it_is_empty(self):
         def script():
