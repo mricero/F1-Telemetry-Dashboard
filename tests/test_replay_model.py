@@ -560,3 +560,34 @@ class TestQualifyingReplay:
 
     def test_races_have_no_flying_marker(self, race_series):
         assert "flying" not in race_series.fields["A"]
+
+
+class TestNoFinalOrderBeforeTiming:
+    """The drivers table follows session.results (finishing order); nothing
+    in the opening order may depend on it."""
+
+    @staticmethod
+    def _order(session: dict, moment: float) -> list[str]:
+        rows = build_timing_rows(snapshot_at(session, moment, tower_series(session)))
+        return [row["code"] for row in rows]
+
+    @pytest.mark.parametrize("builder", ["race", "qualifying", "practice"])
+    def test_reversing_the_drivers_table_changes_nothing(self, builder):
+        session = {
+            "race": lambda: fx.race_session(with_stream=False),
+            "qualifying": fx.qualifying_session,
+            "practice": fx.practice_session,
+        }[builder]()
+        moment = float(session["session_info"].get("session_start") or 0.0) + 1.0
+        before = self._order(session, moment)
+
+        flipped = dict(session)
+        flipped["drivers"] = session["drivers"].iloc[::-1].reset_index(drop=True)
+
+        assert self._order(flipped, moment) == before
+
+    def test_a_race_starts_in_grid_order(self):
+        session = fx.race_session(with_stream=False)
+        session["results"] = session["results"].assign(GridPosition=[3.0, 1.0, 2.0])  # B, C, A
+
+        assert self._order(session, fx.LIGHTS_OUT + 1.0) == ["C", "A", "B"]

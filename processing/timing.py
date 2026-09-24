@@ -151,11 +151,9 @@ def _tyre_history(laps: pd.DataFrame, stints: pd.DataFrame | None = None) -> lis
     if laps.empty or "Compound" not in laps.columns:
         return _tyre_history_from_stints(stints)
 
-    work = laps.copy()
-    if "Stint" not in work.columns:
-        work["Stint"] = 1
+    work = laps if "Stint" in laps.columns else laps.assign(Stint=1)
     history = []
-    for _, stint in work.dropna(subset=["Compound"]).groupby("Stint", sort=True):
+    for _, stint in work[work["Compound"].notna()].groupby("Stint", sort=True):
         compound = str(stint["Compound"].iloc[0]).upper()
         stint_laps = len(stint)
         age = stint_laps
@@ -259,7 +257,13 @@ def _best_sectors(laps: pd.DataFrame) -> list[float | None]:
         if column not in valid.columns:
             bests.append(None)
             continue
-        seconds = valid[column].map(to_seconds).dropna()
+        values = valid[column]
+        # Timedelta columns (FastF1) convert in one call; anything else (live
+        # strings, objects) goes through to_seconds value by value.
+        if pd.api.types.is_timedelta64_dtype(values):
+            seconds = values.dt.total_seconds().dropna()
+        else:
+            seconds = values.map(to_seconds).dropna()
         bests.append(float(seconds.min()) if not seconds.empty else None)
     return bests
 

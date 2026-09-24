@@ -505,7 +505,18 @@ def _session_kind(info: dict) -> str:
     return "practice"
 
 
-def _driver_codes(session_data: dict, table: pd.DataFrame, stream: pd.DataFrame) -> list[str]:
+def _driver_codes(
+    session_data: dict, table: pd.DataFrame, stream: pd.DataFrame, kind: str = "practice"
+) -> list[str]:
+    """Every driver, in the order the tower shows them before anyone is timed.
+
+    The drivers table comes from ``session.results``, which FastF1 sorts by
+    **finishing** position - using its order as the tie-break leaked the
+    final classification into the opening moments of every replay. Races
+    start in grid order (``GridPosition`` is known before lights out; a pit
+    lane start, grid 0, goes last); every other session starts in car-number
+    order, which says nothing about the result.
+    """
     codes: list[str] = []
     drivers = session_data.get("drivers")
     if drivers is not None and not drivers.empty and "name_acronym" in drivers.columns:
@@ -517,7 +528,36 @@ def _driver_codes(session_data: dict, table: pd.DataFrame, stream: pd.DataFrame)
         for code in extra.dropna().astype(str):
             if code not in codes:
                 codes.append(code)
-    return codes
+
+    numbers: dict[str, float] = {}
+    if drivers is not None and not drivers.empty and "name_acronym" in drivers.columns:
+        for code, number in zip(
+            drivers["name_acronym"].astype(str),
+            pd.to_numeric(drivers.get("driver_number"), errors="coerce"),
+            strict=False,
+        ):
+            if pd.notna(number):
+                numbers[code] = float(number)
+    grid: dict[str, float] = {}
+    results = session_data.get("results")
+    if (
+        kind == "race"
+        and results is not None
+        and not results.empty
+        and {"Abbreviation", "GridPosition"} <= set(results.columns)
+    ):
+        for code, slot in zip(
+            results["Abbreviation"].astype(str),
+            pd.to_numeric(results["GridPosition"], errors="coerce"),
+            strict=False,
+        ):
+            if pd.notna(slot):
+                grid[code] = float(slot) if slot > 0 else 999.0  # pit lane start
+
+    def start_order(code: str) -> tuple:
+        return (grid.get(code, 1000.0), numbers.get(code, 10_000.0), code)
+
+    return sorted(codes, key=start_order)
 
 
 def _sample_times(positions: pd.DataFrame | None) -> dict[str, np.ndarray]:
@@ -983,7 +1023,7 @@ def tower_series(session_data: dict) -> TowerSeries:
             Time=pd.to_numeric(stream["Time"], errors="coerce"),
             Driver=stream["Driver"].astype(str),
         )
-    codes = _driver_codes(session_data, table, stream)
+    codes = _driver_codes(session_data, table, stream, kind)
     total_laps = info.get("total_laps")
     if not total_laps and kind == "race" and table["LapNumber"].notna().any():
         total_laps = int(table["LapNumber"].max())
@@ -1119,9 +1159,16 @@ def _snapshot_laps(
 
     snapshot = work.loc[done + [index for _, index in in_progress]].copy()
     snapshot["IsInProgress"] = False
+    if not in_progress:
+        return snapshot.reset_index(drop=True)
+
+    # Collect every cell to blank or overwrite first, then write each column
+    # once: a .loc write per cell cost ~90 ms for a full grid (REPLAY-03's
+    # 150 ms snapshot budget).
+    hidden_rows: dict[str, list[int]] = {}
+    tyre_values: dict[str, dict[int, object]] = {}
     for code, index in in_progress:
         lap = by_row.loc[index]
-        snapshot.loc[index, "IsInProgress"] = True
         hidden = [column for column in HIDDEN_WHILE_RUNNING if column in snapshot.columns]
         for number in (1, 2, 3):
             if not lap[f"s{number}_at"] <= moment:
@@ -1131,12 +1178,20 @@ def _snapshot_laps(
                 hidden.append(column)
         for column in hidden:
             if column in snapshot.columns:
-                _set(snapshot, index, column, None)
+                hidden_rows.setdefault(column, []).append(index)
         # The tyre as the model has it: unchanged until the car leaves the box.
         for column, name in TYRE_COLUMNS:
             value = series.value(code, name, moment)
             if column in snapshot.columns and value is not None:
-                _set(snapshot, index, column, value)
+                tyre_values.setdefault(column, {})[index] = value
+
+    snapshot.loc[[index for _, index in in_progress], "IsInProgress"] = True
+    for column, rows in hidden_rows.items():
+        _set(snapshot, rows, column, None)
+    for column, values in tyre_values.items():
+        for value in set(map(repr, values.values())):
+            rows = [i for i, v in values.items() if repr(v) == value]
+            _set(snapshot, rows, column, values[rows[0]])
     return snapshot.reset_index(drop=True)
 
 
