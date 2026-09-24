@@ -131,6 +131,14 @@
 .rp-status .rp-chip.pit { border-color: var(--text); color: var(--text); }
 .rp-toggle { display: flex; gap: 4px; padding: 8px; border-top: 1px solid var(--line); }
 
+/* ---------- focused driver card (REPLAY-10) ---------- */
+.rp-card { border-top: 1px solid var(--line); padding: 8px 12px; display: grid; gap: 6px; }
+.rp-card-title { font-family: var(--font-label); font-weight: 600; }
+.rp-card-facts { color: var(--text-dim); }
+.rp-card-laps { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 2px 12px; }
+.rp-card-trend svg { display: block; }
+.rp-card button { justify-self: start; }
+
 /* ---------- race control ---------- */
 .rp-rc { border-top: 1px solid var(--line); padding: 6px 12px; min-height: 64px; }
 .rp-rc-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }

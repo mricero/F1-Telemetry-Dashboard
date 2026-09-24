@@ -22,7 +22,13 @@ from ui.layout import (
     render_tire_strategy,
     render_weather,
 )
-from ui.replay_view import FOCUS_PREFIX, cursor_key, render_session_replay, replay_model
+from ui.replay_view import (
+    FOCUS_PREFIX,
+    cursor_key,
+    render_session_replay,
+    replay_model,
+    wants_analysis,
+)
 
 # What app.main() stores for the pages to draw from.
 CONTEXT_KEY = "page_context"
@@ -61,12 +67,16 @@ def replay_page() -> None:
     no official classification by design (REPLAY-03).
     """
     context = _context()
-    results = (context.get("pages") or {}).get(PAGE_RESULTS)
+    pages = context.get("pages") or {}
+    results = pages.get(PAGE_RESULTS)
     render_session_replay(
         context["session_data"],
         context["session_key"],
         on_final=(lambda: st.switch_page(results)) if results is not None else None,
     )
+    # "Analyse this lap" in the player's driver card (REPLAY-10).
+    if wants_analysis(context["session_key"]) is not None and pages.get(PAGE_ANALYSIS):
+        st.switch_page(pages[PAGE_ANALYSIS])
 
 
 def results_page() -> None:

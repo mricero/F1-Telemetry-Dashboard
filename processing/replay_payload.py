@@ -65,6 +65,10 @@ MS_TO_KMH = 3.6
 # An interval under this is overtaking range: the tower shows it brighter.
 CLOSE_INTERVAL_SECONDS = 1.0
 
+# The focused-driver card's gap trend: the interval to the car ahead,
+# sampled this often (REPLAY-10).
+TREND_STEP_SECONDS = 5.0
+
 
 def _json(value):
     """A value JSON can carry: NaN/NA -> None, numpy -> Python, floats rounded."""
@@ -212,6 +216,38 @@ def _drivers(session_data: dict, series: TowerSeries) -> list[dict]:
     return drivers
 
 
+def _driver_laps(session_data: dict, series: TowerSeries) -> dict[str, list[list]]:
+    """Every completed lap per driver: ``[time, lap, display, flag]``."""
+    from processing.replay_model import format_laptime, lap_table
+
+    table = lap_table(session_data.get("laps"))
+    found: dict[str, list[list]] = {code: [] for code in series.drivers}
+    completed = table[table["end"].notna()].sort_values("end", kind="stable")
+    for lap in completed.itertuples():
+        if lap.Driver not in found:
+            continue
+        flag = series.value(lap.Driver, "last_flag", float(lap.end))
+        number = None if pd.isna(lap.LapNumber) else int(lap.LapNumber)
+        found[lap.Driver].append(
+            [round(float(lap.end), 3), number, format_laptime(lap.lap_s), flag]
+        )
+    return found
+
+
+def _interval_trend(series: TowerSeries, clock: ReplayClock) -> dict:
+    """The interval to the car ahead every few seconds, for the card's sparkline."""
+    moments = np.arange(clock.start, clock.end + TREND_STEP_SECONDS, TREND_STEP_SECONDS)
+    values = {}
+    for code in series.drivers:
+        field = series.fields.get(code, {}).get("interval_s")
+        if field is None or len(field) == 0:
+            continue
+        index = np.searchsorted(field.t, moments, side="right") - 1
+        picked = [field.v[i] if i >= 0 else None for i in index.tolist()]
+        values[code] = [_json(value) for value in picked]
+    return {"t0": round(float(clock.start), 3), "step": TREND_STEP_SECONDS, "values": values}
+
+
 def _close_series(interval):
     """Whether the car is within a second of the one ahead, as a series."""
     from processing.replay_model import _series
@@ -278,6 +314,8 @@ def build_replay_payload(
             for index, start in enumerate(series.segment_starts[: len(SEGMENT_NAMES)])
         ],
         "estimated": bool(series.estimated),
+        "laps": _driver_laps(session_data, series),
+        "trend": _interval_trend(series, clock),
     }
 
 

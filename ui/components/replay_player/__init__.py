@@ -93,6 +93,7 @@ def render_replay_player(
     seek: int,
     on_cursor_change,
     on_focus_change,
+    on_analyse_change=None,
 ):
     """Mount the player.
 
@@ -108,4 +109,5 @@ def render_replay_player(
         default={"cursor": payload["clock"]["lights_out"], "focus": None},
         on_cursor_change=on_cursor_change,
         on_focus_change=on_focus_change,
+        on_analyse_change=on_analyse_change or (lambda: None),
     )

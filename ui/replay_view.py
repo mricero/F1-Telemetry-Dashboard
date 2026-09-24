@@ -163,6 +163,23 @@ def _from_player(key: str, clock: ReplayClock) -> None:
         st.session_state[cursor_key(key)] = clock.clamp(float(value))
 
 
+ANALYSE_PREFIX = "replay_analyse"
+
+
+def _analyse_from_player(key: str) -> None:
+    """ "Analyse this lap" in the player: open Analysis on the lap chart there."""
+    lap = _player_state(key, "analyse")
+    if lap is None:
+        return
+    st.session_state["analysis_section"] = "Lap times"
+    st.session_state[f"{ANALYSE_PREFIX}:{key}"] = int(lap)
+
+
+def wants_analysis(key: str) -> int | None:
+    """The lap "Analyse this lap" asked for, once (then forgotten)."""
+    return st.session_state.pop(f"{ANALYSE_PREFIX}:{key}", None)
+
+
 def _focus_from_player(key: str) -> None:
     st.session_state[f"{FOCUS_PREFIX}:{key}"] = _player_state(key, "focus")
 
@@ -326,6 +343,7 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
         seek=st.session_state[seek],
         on_cursor_change=lambda: _from_player(key, clock),
         on_focus_change=lambda: _focus_from_player(key),
+        on_analyse_change=lambda: _analyse_from_player(key),
     )
 
     moment = st.session_state[cursor_key(key)]

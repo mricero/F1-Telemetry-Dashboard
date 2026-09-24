@@ -242,6 +242,18 @@ class Player {
     this.mapNode = el("div", "rp-map");
     side.append(this.mapNode);
     this.buildMap();
+    this.card = el("div", "rp-card");
+    this.card.hidden = true;
+    this.card.setAttribute("aria-label", "Focused driver");
+    this.cardTitle = el("div", "rp-card-title");
+    this.cardFacts = el("div", "rp-card-facts rp-num");
+    this.cardLaps = el("div", "rp-card-laps rp-num");
+    this.cardTrend = el("div", "rp-card-trend");
+    this.cardTrend.title = "Gap to the car ahead, last five minutes";
+    this.analyseButton = el("button", "", "Analyse this lap");
+    this.on(this.analyseButton, "click", () => this.report("analyse", this.cardLap));
+    this.card.append(this.cardTitle, this.cardFacts, this.cardLaps, this.cardTrend, this.analyseButton);
+    side.append(this.card);
     this.rcNode = el("div", "rp-rc");
     this.rcNode.setAttribute("aria-label", "Race control");
     this.rcLines = [0, 1, 2].map(() => el("div", "rp-rc-line"));
@@ -536,6 +548,7 @@ class Player {
     this.drawTower(t, force);
     this.drawMap(t);
     this.drawRaceControl(t);
+    this.drawCard(t);
     this.drawPlayhead();
     setText(this.readout, clockText(t - this.clock.lights_out));
     this.lastDrawn = t;
@@ -683,6 +696,54 @@ class Player {
     const lap = valueAt(this.data.leader_laps, t, null);
     const lapText = lap ? `lap ${lap}, ` : "";
     this.mapTitle.textContent = `${this.data.session.event} ${this.data.session.name}, ${lapText}${clockText(t - this.clock.lights_out)}`;
+  }
+
+  drawCard(t) {
+    const code = this.focus;
+    this.card.hidden = !code;
+    if (!code) return;
+    const driver = this.data.drivers.find((entry) => entry.code === code) || { code, name: code };
+    setText(this.cardTitle, driver.team ? `${driver.code} ${DOT} ${driver.name} ${DOT} ${driver.team}` : driver.code);
+    const fields = this.data.tower[code] || {};
+    const defaults = this.data.defaults;
+    const tyre = valueAt(fields.tyre, t, null);
+    const age = valueAt(fields.age, t, null);
+    const fresh = valueAt(fields.new, t, null);
+    const pits = valueAt(fields.pits, t, defaults.pits);
+    const tyreText = tyre ? `${tyre.toLowerCase()}${age === null ? "" : `, ${age} laps`}${fresh === false ? ", used" : ""}` : DASH;
+    setText(this.cardFacts, `Tyre ${tyreText}   Pits ${pits ?? DASH}`);
+    const laps = (this.data.laps[code] || []).filter((lap) => lap[0] <= t).slice(-5);
+    this.cardLaps.textContent = "";
+    for (const [, number, text, flag] of laps) {
+      const line = el("div", flag === "sb" ? "rp-last sb" : flag === "pb" ? "rp-last pb" : "");
+      line.textContent = `L${number ?? DASH}  ${text}`;
+      this.cardLaps.append(line);
+    }
+    this.cardLap = laps.length ? laps[laps.length - 1][1] : null;
+    this.analyseButton.disabled = this.cardLap === null;
+    // Sparkline of the interval to the car ahead over the last five minutes.
+    const trend = this.data.trend;
+    const values = (trend.values || {})[code] || [];
+    const last = Math.floor((t - trend.t0) / trend.step);
+    const first = Math.max(0, last - Math.round(300 / trend.step));
+    const points = [];
+    for (let i = first; i <= last && i < values.length; i += 1) {
+      if (values[i] !== null && values[i] !== undefined) points.push([i - first, values[i]]);
+    }
+    this.cardTrend.textContent = "";
+    if (points.length > 1) {
+      const width = 240;
+      const height = 32;
+      const span = Math.max(last - first, 1);
+      const top = Math.max(...points.map((p) => p[1]), 1);
+      const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "img" });
+      const title = svgEl("title");
+      title.textContent = `Interval to the car ahead: ${points[points.length - 1][1].toFixed(3)} s`;
+      svg.append(title);
+      const path = points.map(([x, y], index) => `${index ? "L" : "M"} ${(x / span) * width} ${height - 2 - (y / top) * (height - 4)}`).join(" ");
+      svg.append(svgEl("path", { d: path, fill: "none", stroke: "var(--text-dim)", "stroke-width": 1.5 }));
+      this.cardTrend.append(svg);
+    }
   }
 
   drawRaceControl(t) {

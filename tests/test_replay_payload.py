@@ -236,3 +236,54 @@ class TestTrackState:
         markup = map_panel_html(snapshot, build_timing_rows(snapshot))
 
         assert ">SC</span>" in markup
+
+
+class TestFocusedDriverCard:
+    """REPLAY-10: what the player's driver card reads."""
+
+    def test_every_completed_lap_is_listed_with_its_flag(self, built):
+        payload, _ = built
+        laps = payload["laps"]["B"]
+
+        assert [lap[1] for lap in laps] == [1, 2, 3, 4, 5]
+        assert laps[0][2] == "1:31.000"
+        assert all(lap[3] in (None, "sb", "pb") for lap in laps)
+
+    def test_the_interval_trend_is_sampled_every_five_seconds(self, built, race):
+        payload, series = built
+        trend = payload["trend"]
+        values = trend["values"]["C"]
+        index = int((1200.0 - trend["t0"]) // trend["step"])
+
+        assert trend["step"] == 5.0
+        assert values[index] == pytest.approx(
+            series.value("C", "interval_s", trend["t0"] + index * 5.0)
+        )
+
+    def test_the_card_is_in_the_player(self):
+        from ui.components.replay_player import component_source
+
+        js = component_source()["js"]
+
+        assert "drawCard" in js and "Analyse this lap" in js
+
+
+def test_analyse_this_lap_opens_the_lap_chart():
+    from streamlit.testing.v1 import AppTest
+
+    def script():
+        import streamlit as st
+
+        from ui.replay_view import _analyse_from_player, wants_analysis
+
+        st.session_state["replay_player:k"] = {"cursor": 1.0, "focus": "A", "analyse": 3}
+        _analyse_from_player("k")
+        st.session_state["asked"] = wants_analysis("k")
+        st.session_state["again"] = wants_analysis("k")
+
+    app = AppTest.from_function(script, default_timeout=30)
+    app.run()
+
+    assert app.session_state["asked"] == 3
+    assert app.session_state["again"] is None  # asked once, then forgotten
+    assert app.session_state["analysis_section"] == "Lap times"
