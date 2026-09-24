@@ -20,6 +20,7 @@ from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
+from ui.status import DataStatus, show
 from ui.theme import (
     APP_CSS,
     CHART_COOL,
@@ -678,10 +679,10 @@ def render_position_changes(laps_df: pd.DataFrame, color_map: dict[str, str]):
     _plot(fig, width="stretch")
 
 
-def render_weather(weather_df: pd.DataFrame):
+def render_weather(weather_df: pd.DataFrame, status: DataStatus | None = None):
     """Track/air temperature, humidity, wind and rainfall over the session."""
     if weather_df is None or weather_df.empty:
-        st.info("No weather data available for this session")
+        show(status or DataStatus.empty("weather data"))
         return
 
     latest = weather_df.iloc[-1]
@@ -756,10 +757,12 @@ def _elapsed_minutes(df: pd.DataFrame) -> pd.Series:
     return pd.Series(range(len(df)), index=df.index, dtype="float64")
 
 
-def render_race_control(race_control_df: pd.DataFrame, limit: int = 60):
+def render_race_control(
+    race_control_df: pd.DataFrame, limit: int = 60, status: DataStatus | None = None
+):
     """Race control feed: flags, safety cars, investigations, penalties."""
     if race_control_df is None or race_control_df.empty:
-        st.info("No race control messages for this session")
+        show(status or DataStatus.empty("race control messages"))
         return
 
     df = race_control_df.copy()

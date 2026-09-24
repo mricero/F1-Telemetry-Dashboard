@@ -232,7 +232,7 @@ class TestSourcesRenderEndToEnd:
         app_test = _run_for("fastf1")
 
         for section, notice in (
-            ("Weather", "No weather data available"),
+            ("Weather", "No weather data"),
             ("Race control", "No race control messages"),
         ):
             _open(app_test, "analysis", analysis_section=section)
@@ -366,3 +366,67 @@ class TestReplayEndToEndWithARealManager:
         _open(app_test, "records")
         markdown = " ".join(block.value for block in app_test.markdown)
         assert "Italian Grand Prix" in markdown
+
+
+class ProgressManager(StubManager):
+    """A loader that reports its steps, as DataSourceManager does."""
+
+    def get_session_data(self, progress=None, **selection):
+        for step in ("Timing and laps", "Telemetry 1/2", "Positions, 2 drivers", "Building replay"):
+            if progress is not None:
+                progress(step)
+        CALLS.append({**selection, "progress_given": progress is not None})
+        return session_dict(selection.get("source", "fastf1"))
+
+
+def _progress_script():
+    import app
+    from data.runtime_cache import runtime_cache
+    from tests.test_app_sources import ProgressManager
+
+    app.DataSourceManager = ProgressManager
+    runtime_cache.begin_session()
+    app.main()
+
+
+class TestLoadingAndEmptyStates:
+    """UI-06: a load says what it is doing; an empty panel says why."""
+
+    def test_the_load_is_shown_as_a_status_with_its_steps(self):
+        import tests.test_app_sources as module
+
+        module.CALLS.clear()
+        app_test = AppTest.from_function(_progress_script, default_timeout=60)
+        app_test.run()
+        _press_load(app_test)
+
+        assert not app_test.exception, app_test.exception
+        assert CALLS[-1]["progress_given"] is True
+        statuses = [
+            block for block in app_test.main.children.values() if type(block).__name__ == "Status"
+        ]
+        assert [block.label for block in statuses] == ["Loaded 2026 Italian – Race"]
+
+    def test_a_panel_says_why_it_is_empty(self):
+        def script():
+            from ui.layout import render_weather
+            from ui.status import DataStatus
+
+            render_weather(
+                None, DataStatus.unavailable("FastF1 has no weather data for this session")
+            )
+
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+
+        assert [info.value for info in app_test.info] == [
+            "FastF1 has no weather data for this session."
+        ]
+
+    def test_the_default_wording_is_literal(self):
+        from ui.status import DataStatus
+
+        assert DataStatus.empty("weather data").message == "No weather data for this session."
+        assert DataStatus.auth_required("Car positions").message == (
+            "Car positions need an F1TV subscription token."
+        )

@@ -74,7 +74,7 @@ from data.runtime_cache import runtime_cache  # noqa: E402
 from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
-from ui.layout import render_header, render_session_selector  # noqa: E402
+from ui.layout import render_header, render_session_selector, selection_label  # noqa: E402
 from ui.pages import CONTEXT_KEY, pages_for  # noqa: E402
 from ui.replay_view import session_key  # noqa: E402
 from ui.theme import NEUTRAL_GREY  # noqa: E402
@@ -91,17 +91,25 @@ def load_session_data(data_manager, selection: dict) -> dict:
     if session_data is not None:
         return session_data
 
-    with st.spinner("Loading session data..."):
+    name = selection_label(selection)
+    with st.status(f"Loading {name}", expanded=False) as status:
+
+        def progress(step: str) -> None:
+            status.update(label=f"Loading {name}: {step}")
+
         try:
-            session_data = data_manager.get_session_data(**selection)
+            session_data = data_manager.get_session_data(**selection, progress=progress)
         except Exception as exc:
-            st.error(f"Failed to load session: {exc}")
+            status.update(label=f"Could not load {name}", state="error")
+            st.error(f"Could not load {name}: {exc}. Try again, or pick another session.")
             with st.expander("Details"):
                 st.exception(exc)
             st.stop()
             # st.stop() raises under `streamlit run`; the explicit raise keeps
             # any other execution context from continuing without data.
             raise
+
+        status.update(label=f"Loaded {name}", state="complete")
 
     if session_data is None:
         st.error("The data source returned no session data.")

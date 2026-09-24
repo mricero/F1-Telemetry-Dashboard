@@ -62,6 +62,7 @@ class DataSourceManager:
         session_type: str | None = None,
         replay_file: str | None = None,
         telemetry_scope: str = SCOPE_FASTEST,
+        progress=None,
     ) -> dict:
         """
         Returns unified data dict:
@@ -113,7 +114,7 @@ class DataSourceManager:
                     "livef1 raises building a Session for some seasons. Use "
                     "source='fastf1', which covers the same sessions."
                 )
-            return self._load_fastf1_session(year, gp, session_type, telemetry_scope)
+            return self._load_fastf1_session(year, gp, session_type, telemetry_scope, progress)
 
         if source == "live":
             return self._load_live_session()
@@ -138,8 +139,21 @@ class DataSourceManager:
         return self.live_session() is not None
 
     def _load_fastf1_session(
-        self, year: int, gp: str, session_type: str, telemetry_scope: str = SCOPE_FASTEST
+        self,
+        year: int,
+        gp: str,
+        session_type: str,
+        telemetry_scope: str = SCOPE_FASTEST,
+        progress=None,
     ) -> dict:
+        """Load one FastF1 session into the unified dict.
+
+        ``progress``, when given, is called with a short description of each
+        step ("Timing and laps", "Telemetry 7/20", ...) so the UI can say what
+        a slow load is doing (UI-06).
+        """
+        report = progress or (lambda step: None)
+        report("Timing and laps")
         session = self.fastf1.load_session(year, gp, session_type)
         drivers = session.results["Abbreviation"].tolist()
 
@@ -147,7 +161,8 @@ class DataSourceManager:
         # the track map. Drivers who never set a lap (DNS/withdrawn) come back
         # empty and are dropped so downstream renderers see only real data.
         telemetry, location = {}, {}
-        for driver in drivers:
+        for index, driver in enumerate(drivers, start=1):
+            report(f"Telemetry {index}/{len(drivers)}")
             channels, trail = self.fastf1.get_driver_frames(session, driver, telemetry_scope)
             if not channels.empty:
                 telemetry[driver] = channels
@@ -170,7 +185,9 @@ class DataSourceManager:
 
         laps = self.fastf1.get_laps(session)
         # Positions over the whole session, for the replay scrubber.
+        report(f"Positions, {len(drivers)} drivers")
         positions = self.fastf1.get_position_timeline(session, drivers)
+        report("Building replay")
         session_start = self.fastf1.session_start(session)
         clock = replay_clock(laps, positions, session_type, session_start)
 
