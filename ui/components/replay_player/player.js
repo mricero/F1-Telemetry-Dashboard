@@ -596,6 +596,8 @@ class Player {
       setClass(row, "odd", rank % 2 === 1);
       setClass(row, "focused", this.focus === data.code);
       setClass(row, "out", data.status === "OUT" || data.status === "KO");
+      setClass(cells.code, "flying", Boolean(data.flying));
+      cells.code.title = data.flying ? "On a flying lap" : "";
       // Numbered by rank, as the server tower is: the stream can briefly
       // give two cars the same position.
       setText(cells.pos, rank + 1);

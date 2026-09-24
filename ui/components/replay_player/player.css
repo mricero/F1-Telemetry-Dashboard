@@ -98,6 +98,12 @@
 .rp-pos.top { font-weight: 700; }
 .rp-bar { width: 4px; height: 18px; }
 .rp-code { font-family: var(--font-label); font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
+/* On a flying lap: a small solid triangle after the code (a shape, with a
+   title on the cell - not colour alone). */
+.rp-code.flying::after {
+  content: ""; display: inline-block; margin-left: 6px; vertical-align: middle;
+  border-left: 6px solid var(--text); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+}
 .rp-code small { margin-left: 4px; color: var(--text-dim); font-weight: 400; font-size: 11px; }
 .rp-right { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rp-gap { color: var(--text-dim); }

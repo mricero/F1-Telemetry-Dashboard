@@ -89,6 +89,7 @@ TOWER_FIELDS = (
     "pits",
     "status",
     "partition",
+    "flying",
 )
 
 FIELD_DEFAULTS: dict = {
@@ -114,9 +115,11 @@ FIELD_DEFAULTS: dict = {
     "pits": 0,
     "status": ON_TRACK,
     "partition": None,
+    "flying": False,
 }
 
 STANDINGS_COLUMNS = [
+    "Flying",
     "Driver",
     "Position",
     "Gap",
@@ -165,6 +168,7 @@ STANDINGS_FIELDS = {
     "TyreNew": "new",
     "Stint": "stint",
     "Partition": "partition",
+    "Flying": "flying",
 }
 
 
@@ -654,11 +658,38 @@ def _lap_fields(kind: str, own: pd.DataFrame, total_laps: int | None) -> dict[st
         previous_pit_in = pd.notna(lap.pit_in)
     fields.update(tyre=_series(tyre), age=_series(age), new=_series(fresh), stint=_series(stint))
 
+    if kind != "race":
+        fields["flying"] = _flying_series(own)
+
     if kind == "race":
         entries = sorted(own["pit_in"].dropna().tolist())
         pit_points = [(BEFORE_EVERYTHING, 0), *((m, n) for n, m in enumerate(entries, start=1))]
         fields["pits"] = _series(pit_points)
     return fields
+
+
+def _flying_series(own: pd.DataFrame) -> FieldSeries:
+    """On a timed lap: from the start of a lap that is not an out-lap until
+    it is completed, or until the car turns into the pit lane.
+
+    Known at every moment from what has happened: the lap has started and
+    the car is not in the pits; whether it ends as an in-lap is only
+    decided when (and if) it enters the pit lane.
+    """
+    points: list[tuple[float, object]] = [(BEFORE_EVERYTHING, False)]
+    previous_pit_in = False
+    for lap in own.itertuples():
+        out_lap = previous_pit_in or pd.notna(lap.pit_out)
+        previous_pit_in = pd.notna(lap.pit_in)
+        if out_lap or pd.isna(lap.start):
+            continue
+        stop = lap.pit_in if pd.notna(lap.pit_in) else lap.end
+        if pd.notna(stop) and stop <= lap.start:
+            continue
+        points.append((lap.start, True))
+        if pd.notna(stop):
+            points.append((stop, False))
+    return _series(points)
 
 
 def _last_flags(table: pd.DataFrame) -> dict[str, FieldSeries]:

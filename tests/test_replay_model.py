@@ -531,3 +531,32 @@ class TestTheDashboardDrawsAMoment:
 
         assert svg.count('r="9"') == 3  # one marker per car
         assert "Fastest per mini-sector" not in markup
+
+
+class TestQualifyingReplay:
+    """REPLAY-06: segments, partitions and the flying-lap marker."""
+
+    def test_inside_q2_the_q1_eliminated_sit_below_under_their_heading(self, qualifying, q_series):
+        rows = build_timing_rows(snapshot_at(qualifying, 2000.0, q_series))
+
+        assert [row["code"] for row in rows[16:]] == fx.Q_CODES[16:]
+        assert rows[16]["partition"] == "Eliminated in Q1"
+        assert rows[0]["partition"] == "Q2"
+
+    def test_a_lap_after_the_out_lap_is_marked_flying(self, q_series):
+        # D00's Q1 run: out-lap 100-200, timed lap 200-290, then a lap that
+        # turns out to be the in-lap only when the car enters the pits (390).
+        assert q_series.value("D00", "flying", 150.0) is False
+        assert q_series.value("D00", "flying", 250.0) is True
+        # Nothing yet says the next lap is an in-lap, so it reads as flying...
+        assert q_series.value("D00", "flying", 295.0) is True
+        # ...until the pit entry decides it.
+        assert q_series.value("D00", "flying", 391.0) is False
+
+    def test_practice_marks_flying_laps_too(self):
+        series = tower_series(fx.practice_session())
+
+        assert series.value("A", "flying", 250.0) is True
+
+    def test_races_have_no_flying_marker(self, race_series):
+        assert "flying" not in race_series.fields["A"]

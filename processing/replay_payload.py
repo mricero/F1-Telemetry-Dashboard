@@ -57,6 +57,7 @@ TOWER_FIELDS = {
     "s2": "s2",
     "s3": "s3",
     "partition": "partition",
+    "flying": "flying",
 }
 
 MS_TO_KMH = 3.6
