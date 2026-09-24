@@ -28,6 +28,7 @@ from ui.replay_view import (
     cursor_key,
     render_session_replay,
     replay_model,
+    sync_seek_cursor,
     wants_analysis,
 )
 
@@ -39,6 +40,10 @@ PAGE_RESULTS = "Results"
 PAGE_ANALYSIS = "Analysis"
 PAGE_RECORDS = "Records"
 PAGE_LIVE = "Live"
+# Which page ran last, so the replay can tell it is being re-entered.
+LAST_PAGE_KEY = "last_page"
+# The lap "Analyse this lap" picked in the player, per session.
+ANALYSIS_LAP_PREFIX = "analysis_lap"
 
 ANALYSIS_SECTIONS = (
     "Telemetry",
@@ -70,18 +75,30 @@ def replay_page() -> None:
     context = _context()
     pages = context.get("pages") or {}
     results = pages.get(PAGE_RESULTS)
+    # Back on the replay: a lap picked earlier no longer overrides the cursor.
+    st.session_state.pop(f"{ANALYSIS_LAP_PREFIX}:{context['session_key']}", None)
+    if st.session_state.get(LAST_PAGE_KEY) != PAGE_REPLAY:
+        # The player was unmounted while away; it remounts at the moment it
+        # last reported, not at the last Python seek.
+        sync_seek_cursor(context["session_key"])
+    st.session_state[LAST_PAGE_KEY] = PAGE_REPLAY
     render_session_replay(
         context["session_data"],
         context["session_key"],
         on_final=(lambda: st.switch_page(results)) if results is not None else None,
     )
     # "Analyse this lap" in the player's driver card (REPLAY-10).
-    if wants_analysis(context["session_key"]) is not None and pages.get(PAGE_ANALYSIS):
+    picked = wants_analysis(context["session_key"])
+    if picked is not None and pages.get(PAGE_ANALYSIS):
+        # Keep the lap the user picked: the leader's lap at the last paused
+        # cursor is a different lap (and there is none outside races).
+        st.session_state[f"{ANALYSIS_LAP_PREFIX}:{context['session_key']}"] = int(picked)
         st.switch_page(pages[PAGE_ANALYSIS])
 
 
 def results_page() -> None:
     """How the session ended: classification, sectors, dominance, strategy."""
+    st.session_state[LAST_PAGE_KEY] = "other"
     context = _context()
     render_dashboard(context["session_data"])
     st.subheader("Tyre strategy")
@@ -114,9 +131,13 @@ def replay_moment(context: dict) -> dict:
 
 def analysis_page() -> None:
     """One analysis panel at a time: only the chosen one is computed."""
+    st.session_state[LAST_PAGE_KEY] = "other"
     context = _context()
     session_data = context["session_data"]
     moment = replay_moment(context)
+    picked = st.session_state.get(f"{ANALYSIS_LAP_PREFIX}:{context['session_key']}")
+    if picked is not None:
+        moment = {**moment, "lap": picked}
     replay = (context.get("pages") or {}).get(PAGE_REPLAY)
     if moment.get("lap") and replay is not None:
         st.page_link(replay, label=f"Back to replay at lap {moment['lap']}")

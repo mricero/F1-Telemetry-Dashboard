@@ -1,5 +1,7 @@
 # Dark theme matching ui/theme.py (IMPROVEMENTS.md UI-01, guideline 5.4).
 [theme]
+# Guideline 5.6: radius <= 4 px, Streamlit widgets included (default 0.5rem).
+baseRadius = "4px"
 base = "dark"
 primaryColor = "#e10600"
 backgroundColor = "#0b0c0f"

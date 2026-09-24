@@ -82,6 +82,9 @@ class Player {
     this.style = data.style || { teams: {}, flags: {}, compounds: {} };
     this.cursor = this.clamp(data.cursor ?? this.clock.lights_out);
     this.seekSeen = data.seek ?? 0;
+    // The last cursor sent to Python; nothing is sent until it changes.
+    this.reported = this.cursor;
+    this.keyTimer = null;
     this.playing = false;
     this.speed = 1;
     this.focus = data.focus || null;
@@ -251,7 +254,10 @@ class Player {
     this.cardTrend = el("div", "rp-card-trend");
     this.cardTrend.title = "Gap to the car ahead, last five minutes";
     this.analyseButton = el("button", "", "Analyse this lap");
-    this.on(this.analyseButton, "click", () => this.report("analyse", this.cardLap));
+    this.on(this.analyseButton, "click", () => {
+      this.reportCursor();
+      this.report("analyse", this.cardLap);
+    });
     this.card.append(this.cardTitle, this.cardFacts, this.cardLaps, this.cardTrend, this.analyseButton);
     side.append(this.card);
     this.rcNode = el("div", "rp-rc");
@@ -328,17 +334,23 @@ class Player {
     };
     this.on(this.timelineNode, "pointerdown", (event) => {
       dragging = true;
-      this.seek(momentAt(event));
+      this.seek(momentAt(event), { report: false });
     });
     this.on(this.timelineNode, "pointermove", (event) => {
       const t = momentAt(event);
       const lap = valueAt(this.data.leader_laps, t, null);
       const lapText = lap ? `Lap ${lap} ${DOT} ` : "";
       this.timelineNode.title = `${lapText}${clockText(t - this.clock.lights_out)}`;
-      if (dragging) this.seek(t);
+      // While dragging only redraw; every report reruns the Python script.
+      if (dragging) this.seek(t, { report: false });
     });
     this.on(window, "pointerup", () => {
+      if (dragging && !this.playing) this.report("cursor", this.cursor);
       dragging = false;
+    });
+    // Leaving the page (switching pages, closing the tab) keeps the moment.
+    this.on(document, "visibilitychange", () => {
+      if (document.visibilityState === "hidden") this.reportCursor();
     });
 
     this.on(this.root, "keydown", (event) => this.onKey(event));
@@ -783,11 +795,17 @@ class Player {
 
   setFocus(code) {
     this.focus = this.focus === code ? null : code;
+    this.reportCursor();
     this.report("focus", this.focus);
     this.draw(true);
   }
 
+  reportCursor() {
+    if (this.reported !== this.cursor) this.report("cursor", this.cursor);
+  }
+
   report(name, value) {
+    if (name === "cursor") this.reported = value;
     try {
       this.setStateValue(name, value);
     } catch (error) {
@@ -795,14 +813,27 @@ class Player {
     }
   }
 
-  seek(t) {
+  // Keyboard seeks arrive in bursts (a held arrow key); report once they stop.
+  seekSoon(t) {
+    this.seek(t, { report: false });
+    if (this.keyTimer) clearTimeout(this.keyTimer);
+    this.keyTimer = setTimeout(() => {
+      this.keyTimer = null;
+      if (!this.playing) this.reportCursor();
+    }, 400);
+  }
+
+  seek(t, options = {}) {
     this.cursor = this.clamp(t);
     this.draw(true);
-    if (!this.playing) this.report("cursor", this.cursor);
+    if (options.report !== false && !this.playing) this.reportCursor();
   }
 
   lap(direction) {
-    const times = this.data.leader_laps[0].filter((t) => t > this.clock.start);
+    // Lap completions: the leader's in a race, anyone's in qualifying and
+    // practice (which have no leader laps; stepping those jumped to the end).
+    const marks = this.data.lap_marks || this.data.leader_laps[0];
+    const times = marks.filter((t) => t > this.clock.start);
     const landing = 1;
     if (direction > 0) {
       const next = times.find((t) => t + landing > this.cursor + 1e-6);
@@ -860,10 +891,10 @@ class Player {
       this.toggle();
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
-      this.seek(this.cursor + (event.shiftKey ? 30 : 5));
+      this.seekSoon(this.cursor + (event.shiftKey ? 30 : 5));
     } else if (event.key === "ArrowLeft") {
       event.preventDefault();
-      this.seek(this.cursor - (event.shiftKey ? 30 : 5));
+      this.seekSoon(this.cursor - (event.shiftKey ? 30 : 5));
     } else if (event.key === "]") {
       this.lap(1);
     } else if (event.key === "[") {
@@ -889,13 +920,18 @@ class Player {
         if (this.frame !== null) cancelAnimationFrame(this.frame);
         this.frame = null;
         this.playUse.setAttribute("href", "#rp-icon-play");
+        this.playButton.setAttribute("aria-label", "Play");
+        this.playButton.title = "Play (Space)";
       }
       this.cursor = this.clamp(data.cursor ?? this.cursor);
+      this.reported = this.cursor;
       this.draw(true);
     }
   }
 
   destroy() {
+    this.reportCursor();
+    if (this.keyTimer) clearTimeout(this.keyTimer);
     this.playing = false;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     if (this.resize) this.resize.disconnect();

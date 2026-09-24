@@ -94,6 +94,7 @@ def render_replay_player(
     on_cursor_change,
     on_focus_change,
     on_analyse_change=None,
+    focus: str | None = None,
 ):
     """Mount the player.
 
@@ -102,7 +103,7 @@ def render_replay_player(
     player follows. The player's own moves come back through
     ``on_cursor_change``.
     """
-    data = {**payload, "cursor": cursor, "seek": seek}
+    data = {**payload, "cursor": cursor, "seek": seek, "focus": focus}
     return _player()(
         key=key,
         data=data,

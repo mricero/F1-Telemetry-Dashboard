@@ -126,13 +126,42 @@ def replay_model(session_data: dict, key: str) -> tuple[TowerSeries, list]:
         return cached[1], cached[2]
     series = tower_series(session_data)
     found = events(session_data, series)
+    _evict_other_sessions(MODEL_PREFIX, key)
     st.session_state[state_key] = (session_data, series, found)
     return series, found
 
 
+def _evict_other_sessions(prefix: str, key: str) -> None:
+    """Drop another session's cached model/payload from this browser session.
+
+    Each entry holds the whole session dict plus derived tables; keeping one
+    per session ever opened in a tab grew memory without bound and defeated
+    the runtime cache's byte budget.
+    """
+    for name in [k for k in st.session_state if isinstance(k, str)]:
+        if name.startswith(f"{prefix}:") and name != f"{prefix}:{key}":
+            del st.session_state[name]
+
+
+SEEK_CURSOR_PREFIX = "replay_seek_cursor"
+
+
+def sync_seek_cursor(key: str) -> None:
+    """Send the latest reported cursor to a freshly mounted player."""
+    cursor = st.session_state.get(cursor_key(key))
+    if cursor is not None:
+        st.session_state[f"{SEEK_CURSOR_PREFIX}:{key}"] = cursor
+
+
 def _move(key: str, moment: float, clock: ReplayClock) -> None:
-    """Move the cursor from Python; the browser player follows the seek token."""
+    """Move the cursor from Python; the browser player follows the seek token.
+
+    The moment is also kept as the *seek* cursor, the only cursor sent to the
+    player: sending the live cursor changed the component's data on every
+    report, so Streamlit re-sent the whole multi-MB payload each time.
+    """
     st.session_state[cursor_key(key)] = clock.clamp(moment)
+    st.session_state[f"{SEEK_CURSOR_PREFIX}:{key}"] = clock.clamp(moment)
     seek = f"{SEEK_PREFIX}:{key}"
     st.session_state[seek] = st.session_state.get(seek, 0) + 1
 
@@ -145,6 +174,10 @@ def replay_payload(session_data: dict, key: str, series: TowerSeries, clock: Rep
         return cached[1]
     payload = build_replay_payload(session_data, series, clock, key)
     payload["style"] = player_style(payload, session_data.get("compound_colors"))
+    # Lap completions the lap buttons step through: the leader's in a race,
+    # anyone's otherwise (qualifying and practice have no leader laps).
+    payload["lap_marks"] = lap_marks(session_data, series)
+    _evict_other_sessions(PAYLOAD_PREFIX, key)
     st.session_state[state_key] = (session_data, payload)
     return payload
 
@@ -336,11 +369,14 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
     payload = replay_payload(session_data, key, series, clock)
     seek = f"{SEEK_PREFIX}:{key}"
     st.session_state.setdefault(seek, 0)
+    seek_cursor = f"{SEEK_CURSOR_PREFIX}:{key}"
+    st.session_state.setdefault(seek_cursor, st.session_state[cursor_key(key)])
     render_replay_player(
         payload,
         key=f"{PLAYER_PREFIX}:{key}",
-        cursor=st.session_state[cursor_key(key)],
+        cursor=st.session_state[seek_cursor],
         seek=st.session_state[seek],
+        focus=st.session_state.get(f"{FOCUS_PREFIX}:{key}"),
         on_cursor_change=lambda: _from_player(key, clock),
         on_focus_change=lambda: _focus_from_player(key),
         on_analyse_change=lambda: _analyse_from_player(key),
@@ -362,6 +398,25 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
     if on_final is not None and final.button("Final result", width="stretch"):
         on_final()
     readout.caption(f"Sector leaders at {format_clock(moment - clock.lights_out)} (paused)")
-    rows = build_timing_rows(snapshot_at(session_data, moment, series))
     st.html(DASHBOARD_CSS)
-    st.html(f'<div class="f1-dash">{sector_cards_html(sector_leaders(rows))}</div>')
+    st.html(f'<div class="f1-dash">{_sector_cards(session_data, key, series, moment)}</div>')
+
+
+def _sector_cards(session_data: dict, key: str, series: TowerSeries, moment: float) -> str:
+    """Sector leaders at ``moment``, memoised per session and moment.
+
+    A player report (focus, analyse) reruns the script without moving the
+    cursor; rebuilding the snapshot and the tower each time cost ~170 ms.
+    """
+    memo_key = f"{SECTOR_MEMO_PREFIX}:{key}"
+    memo = st.session_state.get(memo_key)
+    rounded = round(float(moment), 1)
+    if memo is not None and memo[0] == rounded:
+        return memo[1]
+    rows = build_timing_rows(snapshot_at(session_data, moment, series))
+    markup = sector_cards_html(sector_leaders(rows))
+    st.session_state[memo_key] = (rounded, markup)
+    return markup
+
+
+SECTOR_MEMO_PREFIX = "replay_sector_cards"
