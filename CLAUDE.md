@@ -128,15 +128,34 @@ probe) must be wrapped in `@st.cache_data` with a TTL.
 
 ### Live SignalR feed
 
-- LiveF1's `RealF1Client` runs messages through its own `function_map` **before** invoking
-  callbacks, so buffered records are already flat dicts using LiveF1's key names
-  (`DriverNo`, `speed`, `n_gear`, `Tla`, …) — not the raw wire names.
-- Only subscribe to topics LiveF1 can parse; an unknown topic raises `ParsingError` on
-  *every* message. The vetted list is `SignalRLiveAdapter.TELEMETRY_TOPICS`.
-- `RealF1Client.run()` creates and owns its own event loop, so it must run on a bare
-  background thread — never inside an existing asyncio loop.
+- **The endpoint is SignalR Core: `wss://livetiming.formula1.com/signalrcore`.** The client is
+  `data/signalr_core.py`. The classic `/signalr/` hub (LiveF1's `RealF1Client`) answers **401**
+  since F1's 2025 move; LiveF1 is no longer used for live. Handshake: `OPTIONS
+  /signalrcore/negotiate` (collect the `AWSALBCORS` cookie; the status is irrelevant) → `POST
+  /signalrcore/negotiate?negotiateVersion=1` → `connectionToken` → socket `?id=<token>` →
+  `{"protocol":"json","version":1}` + `0x1E` → `Subscribe` invocation.
+- The `Subscribe` **completion** (type 3) carries `{topic: full_state}` → `seed_state()`; feed
+  messages (type 1, target `feed`) carry `[topic, data, timestamp]` → `handle_message()`. The
+  recorder and fixture replay use the same two entry points - keep it that way.
+- Frames hold several JSON messages separated by `0x1E`. Type 6 = ping (~15 s, the only traffic
+  between sessions), type 7 = close. The client pings every 10 s, treats 60 s of silence as a
+  dead socket, reconnects with backoff (1 → 60 s; 120 s after 401/403) and F1 drops long
+  connections (~2 h), so reconnecting is normal.
+- An F1TV subscription token (`F1TV_SUBSCRIPTION_TOKEN`: the JWT or the `login-session` cookie
+  value) is sent as `Authorization: Bearer`. Without it `CarData.z`/`Position.z` never arrive;
+  they are not subscribed (`AUTH_TOPICS`). Never call `fastf1.internals.f1auth` in the server.
+- `handle_message` normalises raw payloads: state topics (`STATE_TOPICS`, including
+  `RaceControlMessages`, `TrackStatus`, `TimingData`) are deep-merged; `CarData.z`/`Position.z`
+  are decoded into flat records; `WeatherData` keeps the message timestamp. Parsers read those
+  records - never raw payloads.
 - Compressed topics (`CarData.z`, `Position.z`) are base64 + **raw DEFLATE**
   (`zlib.decompress(..., -zlib.MAX_WBITS)`), not zlib-wrapped.
+- The live tower is ordered by the timing screen via a `standings` table built from
+  `TimingData` (`LiveDataProcessor.standings_from_state`) - the same columns a replay snapshot
+  has. Races read `GapToLeader`/`IntervalToPositionAhead`, other sessions `TimeDiffToFastest`.
+- One adapter per process (`data/live_service.get_live_adapter()`); browser tabs only read.
+- Neither the cloud sandbox nor the linked VM can reach `livetiming.formula1.com`; verify live
+  behaviour with `scripts/live_smoke.py` on the maintainer's machine.
 
 ### Time parsing
 
@@ -188,3 +207,4 @@ the values are in place when they read them. `DataSourceManager` takes `cache_di
 
 `tasks.md` is the standing audit register — findings and their fixes across four review
 rounds, plus open follow-ups. Check it before re-investigating something that looks broken.
+`IMPROVEMENTS.md` is the agent-loop plan: rules, the UI guideline and the open items.
