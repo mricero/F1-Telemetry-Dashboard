@@ -1,321 +1,260 @@
-# 🏎️ F1 Telemetry Dashboard
+# F1 Telemetry Dashboard
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.35+-FF4B4B.svg)](https://streamlit.io/)
-[![Plotly](https://img.shields.io/badge/Plotly-5.22+-3F4F75.svg)](https://plotly.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.55+-FF4B4B.svg)](https://streamlit.io/)
 [![FastF1](https://img.shields.io/badge/FastF1-3.8+-black.svg)](https://docs.fastf1.dev/)
-[![LiveF1](https://img.shields.io/badge/LiveF1-1.2+-red.svg)](https://pypi.org/project/livef1/)
+[![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
-Welcome to the **F1 Telemetry Dashboard**, a professional-grade visualization tool for Formula 1 data. This dashboard is built with **Streamlit** and **Plotly**, designed to provide comprehensive, high-frequency telemetry insights—whether for historical races or real-time live timing.
+A local dashboard for Formula 1 sessions: a replay of the session with the
+timing tower and track map, results and tyre strategy, telemetry analysis,
+and records that persist between runs. Historical sessions come from FastF1;
+live timing comes from F1's SignalR Core feed while a session is on air.
 
-Unlike many other platforms that require paid subscriptions for real-time F1 data (such as OpenF1's live tier), this project successfully leverages completely **FREE alternatives** to stream live telemetry directly from the official F1 feeds. It also utilizes comprehensive historical APIs to ensure the app never feels "empty" when no live race is happening.
+This is an **unofficial** project. It reads undocumented F1 endpoints and is
+not associated with the Formula 1 companies. Read
+[Data sources & terms](#data-sources--terms) before running it.
 
----
+## Install
 
-## 🌟 Key Features
+The installers set up [uv](https://docs.astral.sh/uv/) if it is missing, then
+install the app as a uv tool. uv downloads a matching Python itself, so you do
+not need Python installed, and your own Python is not touched. No admin
+rights are needed.
 
-### 1. **Historical Race Playback**
-Dive deep into the archives using the powerful `FastF1` library. 
-- Fully cached telemetry data ensures rapid load times on subsequent requests.
-- View detailed car data (speed, throttle, brake, RPM, gear, DRS) aligned by track distance for pixel-perfect accuracy.
-- Includes historical session metadata, lap times, tire stints, and track conditions.
+Windows (PowerShell; also adds a Start-menu shortcut "F1 Replay"):
 
-### 2. **Real-Time Live Telemetry**
-This is an **unofficial** project reading undocumented endpoints; F1 does not support this use.
-
-- **Which endpoint:** live mode connects to F1's SignalR Core hub, `wss://livetiming.formula1.com/signalrcore`, with the app's own client (`data/signalr_core.py`). The classic `/signalr/` hub that LiveF1's `RealF1Client` targets answers 401 since F1's 2025 move, so LiveF1 is no longer used for live. The client reconnects on its own (F1 drops long connections) and shows its state: connecting, waiting for a session, live, reconnecting, or refused (HTTP 401/403).
-- **What needs a subscription token:** since the 2025 Dutch GP, car telemetry (`CarData.z`), positions (`Position.z`), pit-stop times, championship prediction and team radio require a valid F1TV token. Set your own in `F1TV_SUBSCRIPTION_TOKEN` - it stays on your machine, and those topics are simply not subscribed without it.
-- **What works without one:** timing, tyres, race control, weather, track status and the driver list. The live view renders all of them and tells you what is missing.
-- **Running it publicly is a risk:** F1 has IP-blocked heavy and hosted consumers (f1-dash sunset citing "increasing IP restrictions"; matteocelani/f1-telemetry's hosted instance is down "due to IP blocking by Formula 1"). Run it locally, with one connection, on your own token.
-- Subscribes to topics such as `TimingData`, `TimingAppData`, `TrackStatus`, `RaceControlMessages`, `WeatherData`, `DriverList`, `ExtrapolatedClock`, `LapCount` and, with a token, `CarData.z` and `Position.z`.
-- The live view auto-refreshes every 3 seconds: telemetry channels, GPS track map with driver trails, tyre stints and timing all update while the session runs.
-
-### 3. **Intelligent Fallback Architecture**
-F1 live timing data is only broadcasted during active race weekends (Friday-Sunday). Our application handles the remaining 90% of the time gracefully:
-- **Auto-Detection**: Instantly determines if an F1 live session is active based on real-time endpoint probing.
-- **Graceful Degradation**: If no live session is detected, it falls back to the most recently completed Grand Prix.
-- **Always Active**: You always land on a rich, data-filled dashboard rather than a blank screen.
-
-### 4. **Session Recording & Offline Replay**
-Catching a race live but want to analyze it later? 
-- Our built-in local storage allows you to save live SignalR sessions as pickle (`.pkl`) files in `./replay_sessions/` (with a schema header so old files keep loading across app versions).
-- Replay mode reloads these pre-recorded sessions, perfect for development or offline analysis without needing internet access.
-- To verify SignalR connectivity during a race weekend, run `python scripts/live_smoke.py 30`.
-
-### 5. **Two-Tier Caching: Hot Session Cache + Persistent Records**
-- **Runtime cache (memory only)**: every session you load during a visit stays hot in memory, so switching between sessions or re-selecting one is instant. When you close the app the cache is discarded - the next launch always starts completely fresh. No stale data ever survives a restart.
-- **Persistent metrics store** (`./metrics_store.json`): derived records - fastest lap, fastest sector per sector (S1/S2/S3) and top speed per driver - are written to disk and kept across restarts. Reopen the app and your benchmark times are still there, ready to beat.
-- The 🏆 panel in the app shows both *this session's* records and *all-time* bests across every session you have ever viewed.
-
-### 5. **Advanced Interactive Visualizations**
-We use Plotly for deep interactivity and responsive charts:
-- **Telemetry Channels**: Multi-driver line and step charts comparing Speed (km/h), Throttle (%), Brake (%), RPM, Gear, and DRS.
-- **Distance Resampling**: Telemetry is interpolated onto a uniform 5-meter grid, ensuring accurate multi-driver comparison at the exact same track position.
-- **Lap Analysis**: Detailed lap time progression charts with pit-stop indicators.
-- **Tire Strategy**: Stacked horizontal bar charts displaying compound usage and stint lengths per driver.
-- **GPS Track Map**: Renders the circuit outline with real-time or historical driver positional markers (`X`, `Y` coordinates) for a spatial understanding of the race.
-
----
-
-## 🏗️ System Architecture
-
-The application is structured into a modern layered architecture, separating UI, processing, and data ingestion.
-
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           STREAMLIT UI LAYER                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │ Session      │  │ Speed/       │  │ Throttle/    │  │ Track Map    │   │
-│  │ Selector     │  │ RPM/Gear/DRS │  │ Brake Charts │  │ (GPS)        │   │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │     DATA PROCESSING LAYER    │
-                    │  ┌────────────────────────┐  │
-                    │  │ Telemetry Processor    │  │
-                    │  │ - Distance resampling  │  │
-                    │  │ - Driver alignment     │  │
-                    │  │ - Unit normalization   │  │
-                    │  │ - Color mapping        │  │
-                    │  └────────────────────────┘  │
-                    └──────────────┬──────────────┘
-                                   │
-        ┌──────────────────────────┼──────────────────────────┐
-        ▼                          ▼                          ▼
-┌───────────────┐         ┌───────────────┐         ┌───────────────┐
-│  FASTF1       │         │   LIVEF1      │         │   LOCAL       │
-│  (Historical) │         │   (SignalR)   │         │   REPLAY      │
-└───────────────┘         └───────────────┘         └───────────────┘
+```powershell
+irm https://raw.githubusercontent.com/mricero/F1-Telemetry-Dashboard/main/install.ps1 | iex
 ```
 
-### Data Sources breakdown:
-- **Primary Historical**: `FastF1` (Pickle caching to avoid rate limiting).
-- **Secondary Historical**: `Jolpica F1 API` (Ergast-compatible REST) used as a fallback for schedule and calendar data.
-- **Live**: F1's SignalR Core hub (`/signalrcore`) through `data/signalr_core.py`. One connection per process, shared by every browser tab; reconnects with backoff.
+macOS and Linux:
 
----
-
-## 📁 Repository Structure
-
-Below is an overview of the key directories and files in this repository:
-
-```text
-.
-├── app.py                     # Main Streamlit application entry point (UI setup)
-├── config.py                  # Global runtime configuration and environments
-├── requirements.txt           # Core Python dependencies
-├── requirements-dev.txt       # Development and testing dependencies
-├── pytest.ini                 # Pytest configuration (tests live in tests/)
-├── ARCHITECTURE.md            # In-depth architectural breakdown & data flows
-├── docs/history/              # Superseded research notes (Free vs Paid APIs)
-├── LICENSE                    # MIT license
-├── data/                      # Data Ingestion Layer
-│   ├── __init__.py
-│   ├── source_manager.py      # Unified interface (Auto/Live/FastF1/LiveF1/Replay)
-│   ├── fastf1_adapter.py      # Historical loading & caching via FastF1
-│   ├── jolpica_adapter.py     # Free Ergast-compatible REST API fallback (Jolpica)
-│   ├── live_adapter.py        # SignalR implementation for Live Timing (LiveF1 / FastF1)
-│   └── runtime_cache.py       # Ephemeral hot cache - cleared on every app restart
-├── processing/                # Data Processing Layer
-│   ├── __init__.py
-│   ├── telemetry_processor.py # Distance alignment, unit fixing, formatting
-│   └── metrics_store.py       # Persistent fastest lap/sector/top-speed records
-├── ui/                        # UI Components (Custom Plotly wrappers)
-│   ├── __init__.py
-│   └── layout.py              # Canonical Streamlit UI layout components
-├── scripts/                   # Manual inspection utilities (not run by pytest)
-│   ├── inspect_fastf1.py      # Explore FastF1 session data structures
-│   └── inspect_livef1.py      # Explore LiveF1 session data structures
-├── tests/                     # Test suites (adapters, cache, metrics, live parsing)
-├── ff1_cache/                 # [Auto-generated] FastF1 persistent cache
-├── replay_sessions/           # [Auto-generated] Directory for saved replays (.pkl)
-└── metrics_store.json         # [Auto-generated] Persistent performance records
+```sh
+curl -LsSf https://raw.githubusercontent.com/mricero/F1-Telemetry-Dashboard/main/install.sh | sh
 ```
 
----
+Both install the latest GitHub release (or `main` when there is no release
+yet). Running one again updates the app.
 
-## 🚀 Setup & Installation
+By hand, on any OS, after [installing uv](https://docs.astral.sh/uv/getting-started/installation/):
 
-Follow these steps to get the dashboard running on your local machine.
-
-### 1. Prerequisites
-- **Python 3.11+** is required. We rely on recent Python features to ensure compatibility with recent Pandas and FastF1 versions.
-- Git.
-
-### 2. Clone the Repository
-```bash
-git clone https://github.com/your-username/f1-telemetry-dashboard.git
-cd f1-telemetry-dashboard
+```sh
+uv tool install git+https://github.com/mricero/F1-Telemetry-Dashboard
 ```
 
-### 3. Setup Virtual Environment
-It is highly recommended to isolate dependencies using a virtual environment to prevent conflicts with global packages.
+If the shell then cannot find `f1dash`, run `uv tool update-shell` and open a
+new terminal.
 
-```bash
-# Create the virtual environment named .venv
-python -m venv .venv
+## Run
 
-# Activate on Windows
-.venv\Scripts\activate
-
-# Activate on macOS/Linux
-source .venv/bin/activate
+```sh
+f1dash                  # opens the dashboard in the browser
+f1dash --port 8600      # a specific port (default 8501, or the next free one)
+f1dash --no-browser     # serve without opening a browser window
+f1dash --version
 ```
 
-### 4. Install Dependencies
-Install all required packages from `requirements.txt`.
+To try it without installing:
 
-```bash
-pip install -r requirements.txt
-```
-*(Dependencies include `streamlit`, `plotly`, `pandas`, `fastf1`, `livef1`, and `requests`.)*
-
-If you plan to run the test suite, also install the development dependencies:
-```bash
-pip install -r requirements-dev.txt
+```sh
+uvx --from git+https://github.com/mricero/F1-Telemetry-Dashboard f1dash
 ```
 
-Run the tests with:
-```bash
-pytest
+Pick a season, Grand Prix and session in the sidebar and select
+**Load session**. Nothing is fetched until you do; the first load of a
+session downloads it through FastF1 and takes a while, later loads read the
+cache. A loaded session has these pages:
+
+- **Replay** - the session as it stood at the cursor: timing tower, track map,
+  flags, race control and weather, with playback, lap steps and a timeline.
+- **Results** - the final classification, sector bests, track dominance and
+  tyre strategy.
+- **Analysis** - telemetry, head-to-head (speed traces and an integrated time
+  delta, accurate to roughly 0.1-0.3 s), lap times, positions, weather and
+  race control.
+- **Records** - fastest lap, sector bests and top speed, for this session and
+  across every session you have loaded.
+- **Settings** - clear cached schedules and loaded sessions, data locations,
+  the version.
+
+While a session is on air the sidebar offers **Go live**; the Live page then
+replaces Replay, Results and Analysis.
+
+## Update
+
+```sh
+f1dash update
 ```
-(Pytest is configured via `pytest.ini` to collect only from `tests/`, so the network-dependent inspection scripts in `scripts/` are never executed automatically.)
 
-To reproduce CI exactly, install the pinned versions instead of the floors:
-```bash
-pip install -r requirements.lock
+This installs the newest GitHub release with
+`uv tool install --reinstall git+https://github.com/mricero/F1-Telemetry-Dashboard@<tag>`.
+The sidebar footer shows `Update available` when a newer release exists; the
+app checks GitHub at most once a day, and `F1_UPDATE_CHECK=0` turns the check
+off.
+
+## Uninstall
+
+```sh
+uv tool uninstall f1dash
 ```
 
-And run the same gates before each commit:
-```bash
-pre-commit install
+This removes the app. Your cache, replays, records and `.env` stay where
+`f1dash paths` says they are; delete those folders to remove them as well.
+On Windows, delete the "F1 Replay" Start-menu shortcut too.
+
+## Where your data lives
+
+```sh
+f1dash paths
 ```
-This runs `ruff`, `black`, `mypy` (on `processing/`) and a large-file guard on staged files.
 
-### 5. Setup Cache Directories
-The application will automatically create `./ff1_cache` and `./replay_sessions` if they do not exist. Ensure your user has write permissions to the repository folder.
+prints four locations:
 
----
+| What | Installed copy | Git checkout |
+|---|---|---|
+| FastF1 cache | user cache directory, `fastf1/` | `ff1_cache/` |
+| Replays and live recordings | user data directory, `replays/` | `replay_sessions/` |
+| Records | user data directory, `metrics_store.sqlite` | `metrics_store.sqlite` |
+| `.env` | user config directory, `.env` | `.env` next to `app.py` |
 
-## 🖥️ Running the Application
+The user directories come from `platformdirs` (on Windows under
+`%LOCALAPPDATA%\f1dash`, on Linux under `~/.cache/f1dash`,
+`~/.local/share/f1dash` and `~/.config/f1dash`). `FASTF1_CACHE_DIR`,
+`REPLAY_DIR` and `F1_METRICS_STORE` override them.
 
-To launch the dashboard, run the Streamlit command from the root directory:
+A replay is a folder holding `meta.json` and Parquet tables. Replays saved by
+older versions as legacy `.pkl` pickles are not loaded, because unpickling a
+file runs code from it; convert ones you created yourself with
+`python scripts/convert_legacy_replay.py <file> --trust` from a checkout.
 
-```bash
+## Live timing token
+
+Live timing, tyres, race control, weather and track status work without an
+account. Car telemetry and positions (`CarData.z`, `Position.z`) have needed an
+F1TV subscription since the 2025 Dutch Grand Prix. To get them, put your own
+token in the `.env` file that `f1dash paths` shows:
+
+```env
+F1TV_SUBSCRIPTION_TOKEN=<the JWT, or the value of the formula1.com login-session cookie>
+```
+
+or paste it into **Subscription token** on the Live page and select
+**Save token**. The token is read from your environment or `.env`, sent only
+to `livetiming.formula1.com` as `Authorization: Bearer`, and never logged. It
+expires after a few days; the Live page shows when.
+
+Live mode connects to `wss://livetiming.formula1.com/signalrcore` with the
+app's own SignalR Core client (`data/signalr_core.py`). F1 closes long
+connections, so the client reconnects by itself and shows its state:
+connecting, waiting for a session, live, reconnecting, or refused (HTTP 401
+for a missing or expired token, 403 when F1 refuses the client). A refusal waits two minutes before the next attempt. To check the
+connection during a race weekend, run `python scripts/live_smoke.py 30` from
+a checkout.
+
+## Configuration
+
+Every variable is optional. Set it in the environment or in `.env`;
+[`.env.example`](.env.example) lists them all with comments.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `F1TV_SUBSCRIPTION_TOKEN` | unset | Your F1TV token, for car telemetry and positions. |
+| `F1_LIVE_CONTROLS` | `0` | `1` shows the Connect/Stop/Clear live controls to every viewer, not only on localhost. |
+| `F1_LIVE_AUTORECORD` | `1` | Record the raw live feed into the replay folder when a session starts; `0` turns it off. |
+| `FASTF1_CACHE_DIR` | see above | FastF1's HTTP and session cache. |
+| `REPLAY_DIR` | see above | Saved and recorded replays. |
+| `F1_METRICS_STORE` | see above | The records database. |
+| `DEFAULT_YEAR` | `2024` | Fallback season when the schedule cannot be read. |
+| `DEFAULT_GP` | `Abu Dhabi` | Fallback Grand Prix. |
+| `DEFAULT_SESSION` | `R` | Fallback session (`R` = race). |
+| `LOG_LEVEL` | `WARNING` | Logging for the adapters: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+| `F1_REPLAY_PLAYER` | `browser` | `server` uses the Python-rendered replay instead of the browser player. |
+| `F1_CACHE_MAX_ENTRIES` | `8` | Loaded sessions kept in memory. |
+| `F1_CACHE_MAX_BYTES` | `1073741824` | Memory budget for loaded sessions, in bytes. |
+| `F1_UPDATE_CHECK` | `1` | `0` stops the daily check for a newer release. |
+| `F1_NETWORK_TESTS` | unset | `1` enables the tests that reach FastF1, Jolpica and F1 (development). |
+
+## Data sources & terms
+
+- **Unofficial endpoints.** Live timing comes from F1's undocumented
+  `livetiming.formula1.com` feed, and FastF1 reads F1's timing archive. F1
+  does not support this use and can change or close the endpoints at any time.
+- **Subscription data is yours alone.** Car telemetry and positions need your
+  own F1TV account and token. Use them for your own viewing; do not
+  redistribute that data, recordings of it or replays built from it.
+- **Hosting it publicly risks IP blocks.** F1 has blocked heavy and hosted
+  consumers of the feed (f1-dash closed citing "increasing IP restrictions";
+  a hosted f1-telemetry instance went down "due to IP blocking by Formula 1").
+  Run the app locally, with one connection, on your own token. The app keeps a
+  single upstream connection per process and backs off after a refusal.
+- **Jolpica fair use.** FastF1 reads results from
+  [Jolpica](https://github.com/jolpica/jolpica-f1), a free, volunteer-run
+  Ergast-compatible API. Unauthenticated use is limited to 4 requests per
+  second and 500 per hour; FastF1's cache keeps repeat loads off the API.
+- **OpenF1** offers historical data for free and real-time data as a paid
+  tier. This app does not use OpenF1.
+- **Bundled third-party content.** The Titillium Web font (SIL Open Font
+  License 1.1) and the recorded F1 timing excerpt in `tests/fixtures/live/`
+  are not covered by the MIT License; see [NOTICE](NOTICE).
+
+F1, FORMULA ONE, FORMULA 1, FIA FORMULA ONE WORLD CHAMPIONSHIP, GRAND PRIX
+and related marks are trade marks of Formula One Licensing B.V.
+
+## Development
+
+Requires Python 3.11+ (CI tests 3.11 to 3.14) and uv.
+
+```sh
+git clone https://github.com/mricero/F1-Telemetry-Dashboard.git
+cd F1-Telemetry-Dashboard
+uv venv
+uv pip install -r requirements-dev.lock    # or requirements.lock for the app only
 streamlit run app.py
 ```
 
-This will spin up a local web server and automatically open the dashboard in your default browser at `http://localhost:8501`.
+Activate the virtualenv first (`.venv\Scripts\activate` on Windows,
+`source .venv/bin/activate` elsewhere), or call its interpreter directly
+(`.venv/Scripts/python` or `.venv/bin/python`). `python app.py` works too: it
+re-enters through `streamlit run`, because a plain interpreter would start
+Streamlit in bare mode, where widgets return defaults and `st.stop()` does
+nothing.
 
-**`python app.py` works too.** The plain interpreter would otherwise leave Streamlit in "bare mode" — widgets return defaults, session state is unavailable and `st.stop()` does nothing, which turns a failed data load into a confusing crash further down. Rather than refusing, `app.py` detects this and re-enters through Streamlit's own CLI, so hitting **Run** in an IDE starts the dashboard normally. Extra flags pass straight through:
+A checkout keeps its data in the project folder (`ff1_cache/`,
+`replay_sessions/`, `metrics_store.sqlite`, `.env`), all git-ignored.
 
-```bash
-python app.py --server.port 8600
+Tests and checks, the same ones CI runs:
+
+```sh
+python -m pytest                       # offline and deterministic
+python -m ruff check .
+python -m black --check .
+python -m mypy --ignore-missing-imports app.py data processing ui
+F1_NETWORK_TESTS=1 python -m pytest -m network    # optional, reaches the real APIs
+pre-commit install                     # runs ruff, black, mypy and file checks on commit
 ```
 
-### Navigating the App
+`pytest.ini` collects from `tests/` only, so the manual scripts in `scripts/`
+never run as tests. After editing `requirements.txt` or
+`requirements-dev.txt`, re-lock with `python scripts/lock_requirements.py`.
 
-1. **Session Selection Panel (Top)**:
-   - Choose your **Data Source**: Auto, FastF1 (Historical), LiveF1, Live (SignalR), or Replay.
-   - If a live session is active, a red `🔴 LIVE SESSION DETECTED` badge will appear automatically.
-   - If in Historical mode, select the **Season**, **Grand Prix**, and **Session** (FP1, FP2, FP3, Q, S, R).
-   - Pick a **Telemetry scope**: *Fastest lap* (default — every driver's quickest lap on a shared `0 → lap length` axis, so the charts are directly comparable) or *Full session* (every lap, distance accumulating across the whole run).
+How the code fits together is in [ARCHITECTURE.md](ARCHITECTURE.md); the
+rules for changing it are in [CLAUDE.md](CLAUDE.md); open work is in
+[IMPROVEMENTS.md](IMPROVEMENTS.md); releases are in
+[CHANGELOG.md](CHANGELOG.md).
 
-2. **Telemetry Tabs**:
-   - Flip through `Speed`, `Throttle`, `Brake`, `RPM`, `Gear`, and `DRS` tabs. 
-   - Hover over the charts to see precise values. 
-   - You can **double-click a driver in the legend** to isolate their data and hide everyone else.
-   - You can **click and drag** on the charts to zoom into specific corners or straights.
+### Troubleshooting
 
-3. **Driver Comparison**:
-   - Pick any two drivers for a head-to-head speed trace plus a cumulative time delta along the lap, so you can see exactly where one gains or loses.
-   - The delta is integrated from the speed traces (`ds / v` per step). `fastf1.utils.delta_time` is deprecated since FastF1 3.0 and emits a `FutureWarning`, so it is not used. Expect the result to land within roughly 0.1–0.3 s of the true lap-time gap — read exact gaps off the lap times themselves.
+- **A session will not load.** FastF1 or its upstream timed out, or the
+  session is too recent to be complete in F1's archive. Try again later, or
+  clear the FastF1 cache folder (`f1dash paths`) and load it again.
+- **The live view says "F1 asked for a subscription token (HTTP 401)".** The
+  token is missing or has expired; paste a new one. "F1 refused the connection
+  (HTTP 403)" means F1 refused this client or address.
+- **Memory.** Keep the telemetry scope on *Fastest lap* (Advanced in the
+  sidebar); *Full session* carries every lap. `F1_CACHE_MAX_ENTRIES` and
+  `F1_CACHE_MAX_BYTES` bound how many loaded sessions stay in memory.
 
-4. **Lap Times & Strategy**:
-   - The lap time progression chart marks pit-out laps with red diamonds.
-   - **Position Changes** plots the running order lap by lap (P1 at the top) — the clearest view of who actually made progress.
-   - The tire strategy chart uses FastF1's official per-season compound colours rather than a hardcoded table.
+## License
 
-5. **Track Map**:
-   - The interactive track map plots `X` and `Y` telemetry data to draw the circuit and overlays driver positions. The axes are locked to a 1:1 aspect ratio so circuits are not distorted by the container's shape. Useful for spotting traffic during qualifying or visualizing gaps on track during a race.
-
-6. **Weather & Race Control**:
-   - Current air/track temperature, humidity, wind and pressure, plus a temperature trace across the session and a rainfall warning.
-   - The full race control feed — flags, safety cars, investigations and penalties — filterable by category, newest first. In live mode the current track status (green / yellow / SC / VSC / red) is shown as a banner.
-
----
-
-## ⚙️ Configuration
-
-The dashboard behavior can be tailored using `config.py` or environment variables. This makes it easy to deploy the app via Docker or Streamlit Cloud.
-
-| Environment Variable | Default Value | Description |
-|----------------------|---------------|-------------|
-| `FASTF1_CACHE_DIR`   | `./ff1_cache` | Path where FastF1 saves API payloads. |
-| `REPLAY_DIR`         | `./replay_sessions` | Path where live session recordings are saved. |
-| `DEFAULT_YEAR`       | `2024` | Fallback year when the app first loads. |
-| `DEFAULT_GP`         | `Abu Dhabi` | Fallback race location. |
-| `DEFAULT_SESSION`    | `R` | Fallback session type (`R` = Race). |
-| `F1_METRICS_STORE`   | `./metrics_store.json` | Where fastest lap/sector/top-speed records are persisted. |
-
-You can also adjust `distance_step` in `config.py` (default: 5 meters). Lowering this number (e.g. to 1 or 2 meters) increases chart resolution but uses significantly more memory. Increasing it improves performance on slower devices or low-bandwidth connections.
-
----
-
-## 🛠️ Technical Deep Dive
-
-### Distance Resampling (`processing/telemetry_processor.py`)
-F1 cars cross the start/finish line at different times. If we plot Speed against Time, the data won't align. For example, if we want to compare Verstappen and Hamilton braking into Turn 1, we must convert Time to Track Distance. 
-We generate a uniform mathematical grid (e.g., every 5 meters) and use `numpy.interp` to resample the telemetry for every driver onto this exact grid. This enables perfectly aligned X-axes on all Plotly charts, ensuring an apples-to-apples comparison.
-
-Two details matter for that comparison to mean anything:
-
-- **Telemetry scope.** FastF1's `Distance` channel accumulates over whatever laps you ask for. Across a full race that reaches ~300 km, so "the same X value" is not the same corner for two drivers — and 20 drivers × 60,000 points is far more than a browser will happily draw. The **Telemetry scope** control therefore defaults to *Fastest lap*, where distance runs `0 → lap length` and drivers genuinely line up at the same track position. *Full session* is still available when you want the whole run.
-- **Discrete channels are not interpolated.** Gear, DRS and Brake are coded values — gear 4.7 does not exist. Those channels take the nearest sample; only Speed, Throttle and RPM are linearly interpolated.
-
-### Pit-out laps
-FastF1 has no `IsPitOutLap` column; it exposes pit activity as the `PitOutTime` / `PitInTime` timestamps. The adapter derives the boolean flag from `PitOutTime`, which is what the lap-time chart's diamond markers key off.
-
-### A note on 2026 data
-DRS was removed under the 2026 technical regulations (replaced by active-aero X/Z modes plus a manual-override power boost), so the DRS channel reads `0` throughout for 2026 sessions. That is the source data, not a parsing fault.
-
-### The SignalR WebSocket
-Formula 1's live timing uses Microsoft's SignalR protocol.
-- **Endpoint**: `wss://livetiming.formula1.com/signalrcore` (SignalR Core, JSON protocol). Handshake: `OPTIONS /signalrcore/negotiate` for the `AWSALBCORS` cookie, `POST /signalrcore/negotiate?negotiateVersion=1` for a connection token (a token is sent as `Authorization: Bearer` when configured), open the socket with `?id=<token>`, send `{"protocol":"json","version":1}`, then invoke `Subscribe`.
-- The `Subscribe` completion carries the full state of every topic; after that the server calls `feed` with `[topic, data, timestamp]`. Messages are separated by the `0x1E` record separator; type 6 is a ping.
-- **Critical topics**: `CarData.z` (compressed telemetry), `Position.z` (compressed GPS), and `SessionInfo`.
-- The data comes base64 encoded and zlib compressed, which our adapters automatically decompress and decode into Pandas DataFrames.
-
-### Medallion Data Architecture
-The data ingestion follows a Bronze → Silver → Gold ETL pattern:
-- **Bronze**: Raw JSON/Zlib data direct from the SignalR websocket.
-- **Silver**: Decoded, unnested dictionaries separated into topics.
-- **Gold**: Resampled, aligned Pandas DataFrames merged with driver metadata, ready for Plotly.
-
----
-
-## 🛑 Troubleshooting
-
-- **`fastf1.core.DataNotLoadedError`**: This means the session data hasn't fully downloaded or cached. Try clearing your `./ff1_cache` directory and running again.
-- **SignalR Connection Timeouts**: The official F1 servers can sometimes drop connections. If Live mode gets stuck, refresh the Streamlit app.
-- **Memory Errors**: If plotting all 20 drivers causes Streamlit to crash, try increasing `distance_step` in `config.py` to `10` or `15`.
-
----
-
-## 🤝 Contributing
-
-Contributions are highly welcome! If you'd like to improve the dashboard:
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/amazing-feature`).
-3. Commit your changes (`git commit -m 'Add some amazing feature'`).
-4. Push to the branch (`git push origin feature/amazing-feature`).
-5. Open a Pull Request.
-
-Please ensure you run tests (`pytest tests/`) before submitting your PR.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-*Disclaimer: This project is unofficial and is not associated in any way with the Formula 1 companies. F1, FORMULA ONE, FORMULA 1, FIA FORMULA ONE WORLD CHAMPIONSHIP, GRAND PRIX and related marks are trade marks of Formula One Licensing B.V.*
+MIT for the project's own code; see [LICENSE](LICENSE). Third-party content is
+listed in [NOTICE](NOTICE).
