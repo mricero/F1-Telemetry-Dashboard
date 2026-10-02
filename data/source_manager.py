@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from config import config
+from config import __version__, config
 from data.fastf1_adapter import (
     SCOPE_FASTEST,
     FastF1Adapter,
@@ -782,6 +782,8 @@ class DataSourceManager:
         meta: dict = {
             "schema": self.REPLAY_SCHEMA_VERSION,
             "app": "f1-telemetry-dashboard",
+            # Which build wrote it, for a replay shared with someone (REPO-23).
+            "app_version": __version__,
             "saved_at": datetime.now(UTC).isoformat(),
             "values": {},
             "frames": [],

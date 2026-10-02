@@ -71,6 +71,18 @@ class TestRoundTrip:
         assert (saved / "meta.json").is_file()
         assert list(saved.glob("*.parquet")), "tables should be Parquet"
 
+    def test_the_meta_names_the_app_version(self, manager):
+        """REPO-23: a shared replay says which build wrote it."""
+        import json
+        from pathlib import Path
+
+        from config import __version__
+
+        meta = json.loads(
+            (Path(manager.save_replay(_session(), "Monza_R")) / "meta.json").read_text()
+        )
+        assert meta["app_version"] == __version__
+
     def test_nothing_is_pickled(self, manager):
         from pathlib import Path
 
