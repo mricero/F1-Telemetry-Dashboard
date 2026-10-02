@@ -40,12 +40,14 @@ def _instance_memo(maxsize: int = 64):
 
     def decorator(fn):
         @wraps(fn)
-        def wrapper(self, *args):
-            key = (fn.__name__, args)
+        def wrapper(self, *args, **kwargs):
+            # Keyword arguments are part of the key (HIST-11): the memo used
+            # to accept only positional ones and raised TypeError otherwise.
+            key = (fn.__name__, args, frozenset(kwargs.items()))
             cache = self._memo
             if key in cache:
                 return cache[key]
-            value = fn(self, *args)
+            value = fn(self, *args, **kwargs)
             if len(cache) >= maxsize:
                 cache.clear()  # simple reset policy for a UI-lifetime cache
             cache[key] = value
@@ -67,12 +69,22 @@ class JolpicaAdapter:
     BURST_WINDOW = 1.0  # seconds
     MAX_RETRIES = 3  # attempts after a 429 before giving up
     BACKOFF_BASE = 1.0  # seconds, doubled per retry when Retry-After is absent
+    # The longest Retry-After worth waiting for. The wait blocks the Streamlit
+    # script thread, so an hour-long one (the 500/h cap) fails fast instead.
+    MAX_RETRY_AFTER = 10.0
 
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "F1-Telemetry-Dashboard/1.0"})
+        self._session: requests.Session | None = None
         self._memo: dict = {}
         self._request_times: deque[float] = deque(maxlen=self.BURST_REQUESTS)
+
+    @property
+    def session(self) -> requests.Session:
+        """The HTTP session, built on first use (HIST-10): most tabs never call Jolpica."""
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.headers.update({"User-Agent": "F1-Telemetry-Dashboard/1.0"})
+        return self._session
 
     def _throttle(self) -> None:
         """Token bucket: never exceed BURST_REQUESTS per BURST_WINDOW."""
@@ -98,7 +110,13 @@ class JolpicaAdapter:
                     raise ConnectionError(f"Failed to fetch {endpoint}: {e}") from e
                 if attempt == self.MAX_RETRIES - 1:
                     break
-                time.sleep(_retry_after_seconds(response, delay))
+                wait = _retry_after_seconds(response, delay)
+                if wait > self.MAX_RETRY_AFTER:
+                    raise ConnectionError(
+                        f"Failed to fetch {endpoint}: Jolpica asks to wait {wait:.0f} s "
+                        "(rate limit); try again later"
+                    ) from e
+                time.sleep(wait)
                 delay *= 2
         raise ConnectionError(
             f"Failed to fetch {endpoint}: Jolpica rate limit not cleared after "

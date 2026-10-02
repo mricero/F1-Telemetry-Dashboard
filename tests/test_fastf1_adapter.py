@@ -83,10 +83,19 @@ class TestFastF1Adapter:
         assert cache_dir.exists()
 
     @patch("data.fastf1_adapter.fastf1.Cache.enable_cache")
-    def test_init_enables_cache(self, mock_enable_cache):
+    def test_init_enables_cache(self, mock_enable_cache, tmp_path):
         """Test that FastF1 cache is enabled"""
-        FastF1Adapter(cache_dir="./test_cache")
-        mock_enable_cache.assert_called_once_with("./test_cache")
+        cache_dir = str(tmp_path / "test_cache")
+        FastF1Adapter(cache_dir=cache_dir)
+        mock_enable_cache.assert_called_once_with(cache_dir)
+
+    @patch("data.fastf1_adapter.fastf1.Cache.enable_cache")
+    def test_the_cache_is_enabled_once_per_process(self, mock_enable_cache, tmp_path):
+        """HIST-10: every tab's manager used to rebuild FastF1's HTTP session."""
+        cache_dir = str(tmp_path / "shared")
+        FastF1Adapter(cache_dir=cache_dir)
+        FastF1Adapter(cache_dir=cache_dir)
+        mock_enable_cache.assert_called_once_with(cache_dir)
 
     @patch("data.fastf1_adapter.fastf1.get_event_schedule")
     def test_get_available_sessions(self, mock_get_schedule):

@@ -26,6 +26,9 @@ def _schedule_payload(races):
 
 @pytest.fixture
 def adapter(monkeypatch):
+    # The throttle really sleeps otherwise (TEST-06); tests that count the
+    # waits patch it again with a recorder.
+    monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda seconds: None)
     a = JolpicaAdapter()
     calls = []
 
@@ -291,3 +294,48 @@ class TestRateLimiting:
             adapter.get_seasons()
 
         assert sleeps == sorted(sleeps) and len(sleeps) >= 2  # exponential backoff
+
+
+class TestMemoAndRetryAfter:
+    """HIST-11: keyword calls are memoised; an hour-long Retry-After fails fast."""
+
+    def test_a_keyword_call_is_memoised(self, adapter):
+        from data.jolpica_adapter import _instance_memo
+
+        calls = []
+
+        class Probe:
+            def __init__(self):
+                self._memo = {}
+
+            @_instance_memo()
+            def fetch(self, year, round_, session="1"):
+                calls.append((year, round_, session))
+                return len(calls)
+
+        probe = Probe()
+        assert probe.fetch(2024, 1, session="2") == 1
+        assert probe.fetch(2024, 1, session="2") == 1
+        assert probe.fetch(2024, 1, session="3") == 2
+        assert calls == [(2024, 1, "2"), (2024, 1, "3")]
+
+    def test_an_hour_long_retry_after_raises_at_once(self, adapter, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+
+        def limited(url, params=None, timeout=None):
+            response = FakeResponse({}, status_error=requests.exceptions.HTTPError("429"))
+            response.status_code = 429
+            response.headers = {"Retry-After": "3600"}
+            return response
+
+        monkeypatch.setattr(adapter.session, "get", limited)
+
+        with pytest.raises(ConnectionError, match="wait 3600 s"):
+            adapter.get_seasons()
+        assert 3600 not in sleeps
+
+    def test_the_http_session_is_built_on_first_use(self):
+        adapter = JolpicaAdapter()
+        assert adapter._session is None
+        assert adapter.session is adapter.session
