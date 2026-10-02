@@ -98,10 +98,6 @@ class TestRaceOrder:
 class TestRaceOrderWithoutAStream:
     """REPLAY-08 groundwork: timing-line estimates when the stream is empty."""
 
-    @pytest.fixture(scope="class")
-    def estimated(self):
-        return fx.race_session(with_stream=False)
-
     def test_the_order_still_follows_the_laps(self, estimated):
         assert _order(estimated, 1230.0) == ["A", "B", "C"]
         assert _order(estimated, 1274.0) == ["B", "A", "C"]
@@ -213,7 +209,7 @@ class TestStreamsInTheSnapshot:
     def test_the_weather_is_the_last_reading_before_t(self, race, race_series):
         weather = snapshot_at(race, 1125.0, race_series)["weather"]
 
-        assert weather["Time"].iloc[-1] == pd.Timedelta(seconds=1120.0)
+        assert weather["Time"].iloc[-1] == pd.Timedelta(1120.0, unit="s")
 
     def test_the_flag_timeline(self, race):
         states = [state for _, state in flag_timeline(race)]
@@ -253,7 +249,7 @@ def _garbled(session: dict, moment: float, seed: int) -> dict:
     stamps = ["Time", "PitInTime", "PitOutTime"] + [f"Sector{n}SessionTime" for n in (1, 2, 3)]
     for column in stamps:
         after = (laps[column].dt.total_seconds() > moment).to_numpy()
-        laps.loc[after, column] = pd.Timedelta(seconds=moment) + later_by[:count][after]
+        laps.loc[after, column] = pd.Timedelta(moment, unit="s") + later_by[:count][after]
     # An out-lap whose car has not left the box yet: its new tyre is not known.
     waiting = laps["PitOutTime"].dt.total_seconds() > moment
     laps.loc[waiting.to_numpy() & touched, "Compound"] = "WET"
@@ -427,12 +423,12 @@ def _big_race() -> dict:
                     "Driver": code,
                     "DriverNumber": str(number),
                     "LapNumber": float(lap),
-                    "LapTime": pd.Timedelta(seconds=lap_time),
-                    "Time": pd.Timedelta(seconds=end),
-                    "LapStartTime": pd.Timedelta(seconds=start),
-                    "Sector1Time": pd.Timedelta(seconds=lap_time / 3),
-                    "Sector2Time": pd.Timedelta(seconds=lap_time / 3),
-                    "Sector3Time": pd.Timedelta(seconds=lap_time / 3),
+                    "LapTime": pd.Timedelta(lap_time, unit="s"),
+                    "Time": pd.Timedelta(end, unit="s"),
+                    "LapStartTime": pd.Timedelta(start, unit="s"),
+                    "Sector1Time": pd.Timedelta(lap_time / 3, unit="s"),
+                    "Sector2Time": pd.Timedelta(lap_time / 3, unit="s"),
+                    "Sector3Time": pd.Timedelta(lap_time / 3, unit="s"),
                     "PitInTime": end - 5 if lap == 20 else np.nan,
                     "PitOutTime": start + 20 if lap == 21 else np.nan,
                     "Compound": "HARD" if lap > 20 else "MEDIUM",
@@ -482,10 +478,6 @@ def _big_race() -> dict:
 
 class TestPerformance:
     """Budgets from REPLAY-03: snapshot < 150 ms, series < 2 s."""
-
-    @pytest.fixture(scope="class")
-    def big_race(self):
-        return _big_race()
 
     def test_tower_series_is_under_two_seconds(self, big_race):
         start = time.perf_counter()
@@ -971,3 +963,17 @@ class TestPitLaneStart:
 
     def test_grid_starters_are_on_track(self, race, race_series):
         assert race_series.value("A", "status", fx.LIGHTS_OUT + 5.0) == ON_TRACK
+
+
+# Module-scoped: a class-scoped fixture written as an instance method is
+# deprecated in pytest (TEST-06).
+@pytest.fixture(scope="module")
+def estimated():
+    return fx.race_session(with_stream=False)
+
+
+# Module-scoped: a class-scoped fixture written as an instance method is
+# deprecated in pytest (TEST-06).
+@pytest.fixture(scope="module")
+def big_race():
+    return _big_race()

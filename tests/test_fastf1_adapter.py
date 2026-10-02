@@ -668,8 +668,8 @@ class TestSegmentStarts:
     @staticmethod
     def _session(splits, start=1000.0):
         session = Mock()
-        session._session_split_times = [pd.Timedelta(seconds=s) for s in splits]
-        session.session_start_time = pd.Timedelta(seconds=start)
+        session._session_split_times = [pd.Timedelta(s, unit="s") for s in splits]
+        session.session_start_time = pd.Timedelta(start, unit="s")
         return session
 
     def test_a_race_has_no_segments(self):
@@ -719,7 +719,9 @@ class TestRaceControlClock:
 
         messages = FastF1Adapter.get_race_control(session)
 
-        assert messages["SessionTime"].iloc[0] == pd.Timedelta("2:36:29.151")
+        assert messages["SessionTime"].iloc[0] == pd.Timedelta(
+            2 * 3600 + 36 * 60 + 29.151, unit="s"
+        )
 
 
 class TestSessionNotArchived:
