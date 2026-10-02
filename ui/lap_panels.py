@@ -7,7 +7,9 @@ numbers come from :mod:`processing.lap_review` and :mod:`processing.deleted_laps
 import pandas as pd
 import streamlit as st
 
+from processing.deleted_laps import deleted_laps, track_limit_counts
 from processing.lap_review import SPEED_TRAPS, sector_ranking, speed_ranking
+from processing.replay import format_clock
 from processing.timing import MISSING, SECTORS, format_lap
 
 RANKING_LIMIT = 10
@@ -72,4 +74,49 @@ def render_rankings(laps: pd.DataFrame | None) -> None:
         "Best valid lap per driver: deleted and inaccurate laps are left out, so a "
         "track-limits lap never sets a ranking."
         + (f" No data for {', '.join(missing)}." if missing else "")
+    )
+
+
+def deleted_table(deleted: pd.DataFrame) -> pd.DataFrame:
+    """Deleted laps as display strings; the announcement is a session clock."""
+    return pd.DataFrame(
+        {
+            "Driver": deleted["Driver"].to_numpy(),
+            "Lap": [_lap_cell(v) for v in deleted["LapNumber"]],
+            "LAP TIME": [format_lap(v) for v in deleted["LapTime"]],
+            "Reason": [MISSING if pd.isna(v) or not v else str(v) for v in deleted["Reason"]],
+            "ANNOUNCED": [MISSING if pd.isna(v) else format_clock(v) for v in deleted["Announced"]],
+        }
+    )
+
+
+def render_deleted_laps(
+    laps: pd.DataFrame | None,
+    race_control: pd.DataFrame | None = None,
+    drivers: pd.DataFrame | None = None,
+) -> None:
+    """Laps the stewards deleted, and track-limit warnings per driver (FEAT-11)."""
+    deleted = deleted_laps(laps, race_control, drivers)
+    counts = track_limit_counts(race_control, drivers)
+    if deleted.empty and counts.empty:
+        st.info("No lap was deleted and race control issued no track-limit message.")
+        return
+    st.markdown(f"**Deleted laps ({len(deleted)})**")
+    if deleted.empty:
+        st.caption("No lap is marked deleted.")
+    else:
+        st.dataframe(deleted_table(deleted), hide_index=True, width="stretch")
+    st.markdown("**Track limits by driver**")
+    if counts.empty:
+        st.caption("Race control named no driver in a track-limits message.")
+    else:
+        st.dataframe(
+            counts.rename(columns={"Warnings": "WARNINGS", "Deletions": "DELETIONS"}),
+            hide_index=True,
+            width="stretch",
+        )
+    st.caption(
+        "Announced is the session time of the race-control message that deleted the lap; "
+        "a dash means no message matched it. Warnings count other track-limit messages "
+        "that name a car, such as black and white flags."
     )

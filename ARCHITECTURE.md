@@ -86,6 +86,7 @@ producing that dict, not touching `ui/`.
 | `processing/timing.py` | The timing-tower model: race order by classification with gap/interval, practice and qualifying by best lap, knock-out cut-offs, sector bests, mini-sector dominance. |
 | `processing/track_geometry.py` | The one circuit transform (FastF1 rotation, fit into a viewBox) shared by the SVG map and the browser player. |
 | `processing/track_periods.py` | Safety car, VSC and red-flag periods on the session clock and per lap, for chart shading and the degradation fit. |
+| `processing/deleted_laps.py` | Deleted laps (FastF1 `Deleted`/`DeletedReason`) with the race-control announcement time, and per-driver track-limit warning and deletion counts. |
 | `processing/lap_review.py` | Per-driver best valid lap per sector and per speed trap (I1, I2, FL, ST), ranked with the gap to the best; deleted and inaccurate laps excluded. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
@@ -283,6 +284,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   └── update_check.py
 ├── processing/
 │   ├── driver_selection.py
+│   ├── deleted_laps.py
 │   ├── lap_review.py
 │   ├── metrics_store.py
 │   ├── pace.py
