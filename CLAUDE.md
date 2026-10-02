@@ -4,31 +4,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-The virtualenv is not activated automatically — call its interpreter directly.
+The virtualenv is not activated automatically — call its interpreter directly. `python`
+below means that interpreter: `.venv/Scripts/python` on Windows, `.venv/bin/python` on
+macOS/Linux (or plain `python` inside an activated venv). The commands are POSIX shell; Git
+Bash runs them on Windows. Set it up with `uv venv` + `uv pip install -r requirements-dev.lock`.
 
 ```bash
-# Run the app (see "Never run app.py directly" below)
-streamlit run app.py
+# Run the app (see "Bare mode is the hazard" below)
+python -m streamlit run app.py
+python f1dash_cli.py --no-browser      # the installed `f1dash` entry point, from a checkout
 
-# Tests (offline, deterministic)
-.venv/Scripts/python -m pytest -q
-.venv/Scripts/python -m pytest tests/test_fastf1_adapter.py -q          # one file
-.venv/Scripts/python -m pytest -k test_get_location -q                  # one test by name
-.venv/Scripts/python -m pytest tests/test_fastf1_adapter.py::TestFastF1Adapter::test_get_location
+# Tests (offline, deterministic). pytest.ini already passes -q; a second -q hides the summary.
+python -m pytest
+python -m pytest tests/test_fastf1_adapter.py           # one file
+python -m pytest -k test_get_location                   # one test by name
+python -m pytest tests/test_fastf1_adapter.py::TestFastF1Adapter::test_get_location
 
 # Opt-in network tests (real FastF1/Jolpica endpoints + full-app smoke test)
-F1_NETWORK_TESTS=1 .venv/Scripts/python -m pytest -m network -q
+F1_NETWORK_TESTS=1 python -m pytest -m network         # PowerShell: $env:F1_NETWORK_TESTS="1"
 
-# Lint / format (CI runs both, plus pytest, on Python 3.12)
-.venv/Scripts/python -m ruff check .
-.venv/Scripts/python -m black --check .
+# Lint / format / types (CI runs all of these, plus pytest, on Ubuntu 3.11-3.14 and
+# Windows 3.11/3.14)
+python -m ruff check .
+python -m black --check .
+python -m mypy --ignore-missing-imports app.py data processing ui
 
 # Live SignalR end-to-end check (only meaningful during a race weekend)
-.venv/Scripts/python scripts/live_smoke.py 30
+python scripts/live_smoke.py 30
 ```
 
 `scripts/inspect_*.py` are manual exploration scripts, not tests — `pytest.ini` pins
-`testpaths = tests` so they are never collected.
+`testpaths = tests` so they are never collected. `pytest.ini` also deselects the `perf`
+budgets and the `smoke` real-server test by default; run them with `-m perf` / `-m smoke`.
 
 ## Bare mode is the hazard; `app.py` self-relaunches
 
@@ -74,15 +81,17 @@ them. This is the single most important thing to preserve:
   'race_control': DataFrame,                # Time (wall clock), SessionTime, Lap, Category, Flag, Scope, Message
   'compound_colors': {compound: hex},       # FastF1's official per-season tyre colours
   'drivers':      DataFrame,                # driver_number, name_acronym, team_colour, team_name, full_name
-  'source':       'fastf1'|'livef1'|'live'|'replay',
+  'source':       'fastf1'|'live'|'replay',
   'is_live':      bool,
   'live_client':  SignalRLiveAdapter,       # live only
 }
 ```
 
-Replay files carry a `schema` version (currently **7**); `_load_replay` accepts older files
-by defaulting the keys they lack, and rejects newer ones with a clear message. Bump
-`REPLAY_SCHEMA_VERSION` whenever this dict gains or changes a persisted key.
+A replay is a directory of Parquet tables plus `meta.json`, which carries a `schema` version
+(currently **7**); `_load_replay` accepts older replays by defaulting the keys they lack, and
+rejects newer ones with a clear message. Bump `REPLAY_SCHEMA_VERSION` whenever this dict
+gains or changes a persisted key. Legacy `.pkl` replays are refused (unpickling runs code);
+`scripts/convert_legacy_replay.py --trust` converts ones the user made.
 
 `DataSourceManager.get_session_data()` returns it for historical/replay sources;
 `poll_live_data()` returns the same shape from the live SignalR buffers. Adding a source
@@ -91,22 +100,41 @@ means producing this dict — not touching the UI.
 ### Layering (keep these boundaries)
 
 - `app.py` — orchestration only: selection → load → process → record. No chart code.
-- `ui/layout.py` — **all** rendering. Single canonical module; earlier `layout_new.py` /
-  `layout.py.backup` variants were deleted deliberately. No data fetching.
-- `processing/` — pure transforms over DataFrames; no Streamlit, no network.
+  `f1dash_cli.py` is the installed `f1dash` command (`paths`, `update`, `--port`); it starts
+  `app.py` through `streamlit run`.
+- `ui/` — **all** rendering, no data fetching. `ui/layout.py` is the single canonical module
+  for the sidebar picker, charts, the live view and the Settings page; earlier
+  `layout_new.py` / `layout.py.backup` variants were deleted deliberately. Around it:
+  `ui/pages.py` (the `st.navigation` pages: Replay, Results, Analysis, Records, Settings;
+  Live while live), `ui/replay_view.py` (the Replay page), `ui/dashboard.py` (header, tower,
+  sector cards and map panel, `layout.md` sections 2-5), `ui/track_map.py` (the SVG map),
+  `ui/theme.py` (the only place colours are written), `ui/fonts.py`, `ui/status.py`, and
+  `ui/components/replay_player/` (the browser player, contract in `layout.md` section 9).
+- `processing/` — pure transforms over DataFrames; no Streamlit, no network. Besides
+  `telemetry_processor.py`, `time_utils.py` and `metrics_store.py`: `processing/timing.py`
+  (the timing-tower model), `processing/replay_model.py` (`snapshot_at(t)`, which never reads
+  rows stamped after `t`), `processing/replay_payload.py` (the JSON the browser player
+  animates; racing semantics stay in Python), `replay.py`, `track_geometry.py` and
+  `track_periods.py`.
 - `data/` — adapters. Each owns one upstream API and normalizes to the dict above.
+  `ARCHITECTURE.md` lists every module; `tests/test_docs_live_claims.py` keeps that list whole.
 
 ### Two-tier caching (deliberately different lifetimes)
 
 - `data/runtime_cache.py` — **ephemeral**, process-lifetime, holds whole session dicts for
-  instant re-selection. `begin_session()` must be called **once per Streamlit session**,
-  guarded by `st.session_state`. Streamlit re-executes the script top-to-bottom on every
-  interaction, so calling it unguarded wipes the cache on every click and defeats it entirely.
-- `processing/metrics_store.py` — **persistent** JSON (`metrics_store.json`, override with
-  `F1_METRICS_STORE`). Fastest lap / sectors / top speed survive restarts by design.
+  instant re-selection, bounded by count and bytes (`F1_CACHE_MAX_ENTRIES`,
+  `F1_CACHE_MAX_BYTES`). It is **process-wide, not per browser session**: `clear()` (the
+  Settings page's "Clear loaded sessions") and `begin_session()` are explicit resets, never
+  wired to a tab opening — every tab has its own `st.session_state`, so a reset there let
+  each new viewer evict everyone else's sessions.
+- `processing/metrics_store.py` — **persistent** SQLite in WAL mode (`metrics_store.sqlite`,
+  override with `F1_METRICS_STORE`), so several tabs can write at once. Fastest lap / sectors
+  / top speed survive restarts by design, and are recomputed from a session's valid laps each
+  time it is recorded rather than kept as running minima.
 
-Anything in `ui/layout.py` that hits the network on a rerun (schedule lookup, race-weekend
-probe) must be wrapped in `@st.cache_data` with a TTL.
+Anything in `ui/` that hits the network on a rerun (schedule lookup, race-weekend probe,
+update check) must be wrapped in `@st.cache_data` with a TTL. The Settings page clears the
+schedule caches and the loaded sessions.
 
 ## Domain gotchas that will re-break if forgotten
 
@@ -205,6 +233,13 @@ the values are in place when they read them. `DataSourceManager` takes `cache_di
 `replay_dir` defaulting to `config.fastf1_cache_dir` / `config.replay_dir`
 (`FASTF1_CACHE_DIR`, `REPLAY_DIR`).
 
-`tasks.md` is the standing audit register — findings and their fixes across four review
-rounds, plus open follow-ups. Check it before re-investigating something that looks broken.
+Where files live depends on how the code runs: a git checkout (a `.git` next to `app.py`)
+keeps `ff1_cache/`, `replay_sessions/`, `metrics_store.sqlite` and `.env` in the project
+folder; an installed copy (`uv tool install`) uses the `platformdirs` user directories.
+`FASTF1_CACHE_DIR`, `REPLAY_DIR` and `F1_METRICS_STORE` override either; `f1dash paths` and
+the Settings page print the result. `.env.example` lists every variable the code reads
+(`tests/test_env_example.py` enforces it). The version is written once, in `pyproject.toml`.
+
+`tasks.md` is the standing audit register — findings and their fixes, one heading per review
+round, plus open follow-ups. Check it before re-investigating something that looks broken.
 `IMPROVEMENTS.md` is the agent-loop plan: rules, the UI guideline and the open items.
