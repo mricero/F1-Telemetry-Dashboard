@@ -4,6 +4,7 @@ import contextlib
 import json
 import logging
 import pickle
+import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +54,54 @@ def extrapolated_remaining(clock: dict, now: pd.Timestamp | None = None) -> str 
 def _safe_name(value) -> str:
     """A filesystem-safe name for a per-driver Parquet file."""
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(value))
+
+
+# Values in a replay's meta.json that are timestamps by contract; they are
+# written as ISO strings and parsed back on load (REPLAY-19).
+_TIMESTAMP_VALUES = (("session_info", "date"),)
+
+
+def _json_value(value: Any, where: str) -> Any:
+    """``value`` as plain JSON, or a ValueError naming the offending key.
+
+    A replay used to write anything with ``default=str``, so a DataFrame
+    came back as its repr and crashed the map. Anything JSON cannot hold
+    now fails the save with a message instead of degrading silently.
+    """
+    if value is None or isinstance(value, bool | str):
+        return value
+    if isinstance(value, np.generic):
+        return _json_value(value.item(), where)
+    if isinstance(value, int | float):
+        return value
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    f"Replay value {where} has a non-string key {key!r}; "
+                    f"a replay stores its plain values as JSON."
+                )
+            out[key] = _json_value(item, f"{where}.{key}")
+        return out
+    if isinstance(value, list | tuple):
+        return [_json_value(item, f"{where}[{index}]") for index, item in enumerate(value)]
+    raise ValueError(
+        f"Replay value {where} is a {type(value).__name__}, which a replay cannot "
+        f"store as JSON. Store tables as DataFrames and plain values as "
+        f"str/int/float/bool/list/dict."
+    )
+
+
+def _timestamp_or_none(value: Any) -> pd.Timestamp | None:
+    """A saved ISO date back as a Timestamp; None when absent or unreadable."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    try:
+        stamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(stamp) else stamp
 
 
 class DataSourceManager:
@@ -673,11 +722,24 @@ class DataSourceManager:
     # only when the charts use a different scope); v7 added 'timing_stream'
     # and 'track_status' plus session_info 'replay_clock', 'segment_starts',
     # 'session_start' and 'total_laps' (REPLAY-02). Older replays simply lack
-    # those keys and load with empty defaults.
-    REPLAY_SCHEMA_VERSION = 7
+    # those keys and load with empty defaults. v8 stores circuit_info.corners
+    # as 'circuit_info.corners.parquet' (v7 wrote its repr string, which
+    # loads as an empty frame) and session_info 'date' as an ISO string that
+    # loads back as a Timestamp (REPLAY-19).
+    REPLAY_SCHEMA_VERSION = 8
 
     # Tables stored as their own Parquet file inside a replay directory.
-    FRAME_KEYS = ("laps", "stints", "results", "weather", "race_control", "drivers")
+    FRAME_KEYS = (
+        "laps",
+        "stints",
+        "results",
+        "weather",
+        "race_control",
+        "drivers",
+        "positions",
+        "timing_stream",
+        "track_status",
+    )
     # Per-driver frames: one Parquet each, under a subdirectory.
     FRAME_DICT_KEYS = (
         "telemetry",
@@ -685,7 +747,15 @@ class DataSourceManager:
         "dashboard_telemetry",
         "dashboard_location",
     )
+    # Plain values stored in meta.json's "values".
+    VALUE_KEYS = ("session_info", "compound_colors", "circuit_info")
+    # Set by the loader, never by a replay file: meta.json is shared data and
+    # must not mark itself live or name its own source (SEC-02).
+    RUNTIME_KEYS = ("source", "is_live", "live_client")
+    # Schema <= 7 wrote these values; they are accepted only as they were.
+    LEGACY_SOURCES = ("fastf1", "livef1", "replay")
     META_FILE = "meta.json"
+    CORNERS_FILE = "circuit_info.corners.parquet"
 
     def save_replay(self, data: dict, name: str) -> str:
         """Save session data for offline replay, as data rather than code.
@@ -698,6 +768,16 @@ class DataSourceManager:
         """
         target = self.replay_dir / f"{name}_{datetime.now(UTC):%Y%m%d_%H%M%S}"
         target.mkdir(parents=True, exist_ok=True)
+        try:
+            self._write_replay_bundle(data, target)
+        except Exception:
+            # A refused value must not leave a half-written replay behind
+            # for the picker to offer.
+            shutil.rmtree(target, ignore_errors=True)
+            raise
+        return str(target)
+
+    def _write_replay_bundle(self, data: dict, target: Path) -> None:
 
         meta: dict = {
             "schema": self.REPLAY_SCHEMA_VERSION,
@@ -709,7 +789,8 @@ class DataSourceManager:
         }
 
         for key, value in data.items():
-            if key == "live_client":
+            # The loader sets these itself; a replay never names them (SEC-02).
+            if key in self.RUNTIME_KEYS:
                 continue
             # Under fastest scope these are the same objects; storing them
             # twice would double the file for nothing.
@@ -718,6 +799,11 @@ class DataSourceManager:
             if key == "dashboard_location" and value is data.get("location"):
                 continue
 
+            if key not in self.FRAME_KEYS + self.FRAME_DICT_KEYS + self.VALUE_KEYS:
+                # The loader accepts only the known keys, so writing this
+                # would make the replay unloadable.
+                logger.warning("Replay save skips unknown session key %r", key)
+                continue
             if isinstance(value, pd.DataFrame):
                 self._write_frame(value, target / f"{key}.parquet")
                 meta["frames"].append(key)
@@ -731,12 +817,26 @@ class DataSourceManager:
                         written.append(driver)
                 meta["frame_dicts"][key] = written
             else:
-                meta["values"][key] = value
+                meta["values"][key] = self._replay_value(key, value, target)
 
         (target / self.META_FILE).write_text(
-            json.dumps(meta, indent=2, default=str), encoding="utf-8"
+            json.dumps(meta, indent=2, allow_nan=True), encoding="utf-8"
         )
-        return str(target)
+
+    def _replay_value(self, key: str, value: Any, target: Path) -> Any:
+        """One plain value for meta.json; tables nested in it go to Parquet."""
+        if isinstance(value, dict):
+            value = dict(value)
+            if key == "circuit_info" and value.get("corners") is not None:
+                corners = value.pop("corners")
+                self._write_frame(
+                    pd.DataFrame(corners).reset_index(drop=True), target / self.CORNERS_FILE
+                )
+            for parent, child in _TIMESTAMP_VALUES:
+                if key == parent and child in value:
+                    stamp = _timestamp_or_none(value[child])
+                    value[child] = None if stamp is None else stamp.isoformat()
+        return _json_value(value, key)
 
     @staticmethod
     def _write_frame(frame: pd.DataFrame, path: Path) -> None:
@@ -776,11 +876,12 @@ class DataSourceManager:
                 f"app supports up to {self.REPLAY_SCHEMA_VERSION}. Please update the app."
             )
 
-        data: dict = dict(meta.get("values", {}))
-        for key in meta.get("frames", []):
+        values, frames_keys, frame_dicts = self._validated_manifest(meta, path.name)
+        data: dict = dict(values)
+        for key in frames_keys:
             frame_path = path / f"{key}.parquet"
             data[key] = pd.read_parquet(frame_path) if frame_path.is_file() else pd.DataFrame()
-        for key, drivers in (meta.get("frame_dicts") or {}).items():
+        for key, drivers in frame_dicts.items():
             folder = path / key
             frames = {}
             for driver in drivers:
@@ -789,7 +890,78 @@ class DataSourceManager:
                     frames[driver] = pd.read_parquet(driver_path)
             data[key] = frames
 
+        self._restore_nested_values(data, path)
         return self._finalise_replay(data)
+
+    def _validated_manifest(self, meta: Any, name: str) -> tuple[dict, list, dict]:
+        """meta.json's values, frames and frame_dicts, or a clear ValueError.
+
+        A replay is the file people share, so its manifest is untrusted:
+        frame names become file paths, and values become top-level session
+        keys. Only the known keys pass; ``source``/``is_live`` are dropped
+        when they hold what schema <= 7 wrote, and refused otherwise.
+        """
+
+        def refuse(why: str) -> ValueError:
+            return ValueError(f"Replay {name} has an invalid meta.json: {why}")
+
+        if not isinstance(meta, dict):
+            raise refuse("it is not a JSON object")
+        values = meta.get("values") or {}
+        frames = meta.get("frames") or []
+        frame_dicts = meta.get("frame_dicts") or {}
+        if not isinstance(values, dict):
+            raise refuse("'values' is not an object")
+        if not isinstance(frames, list):
+            raise refuse("'frames' is not a list")
+        if not isinstance(frame_dicts, dict):
+            raise refuse("'frame_dicts' is not an object")
+
+        def check_name(key: Any, allowed: tuple, kind: str) -> None:
+            text = str(key)
+            if "/" in text or "\\" in text or ".." in text:
+                raise refuse(f"{kind} {text!r} is a path, not a table name")
+            if key not in allowed:
+                raise refuse(f"unknown {kind} {text!r}")
+
+        for key in frames:
+            check_name(key, self.FRAME_KEYS, "table")
+        for key, drivers in frame_dicts.items():
+            check_name(key, self.FRAME_DICT_KEYS, "per-driver table")
+            if not isinstance(drivers, list) or not all(isinstance(d, str) for d in drivers):
+                raise refuse(f"per-driver table {key!r} does not list driver names")
+
+        kept = {}
+        for key, value in values.items():
+            if key == "is_live":
+                if value is not False:
+                    raise refuse("'is_live' must not be set by a replay file")
+                continue
+            if key == "source":
+                if value not in self.LEGACY_SOURCES:
+                    raise refuse(f"'source' {value!r} must not be set by a replay file")
+                continue
+            if key == "live_client":
+                raise refuse("'live_client' must not be set by a replay file")
+            check_name(key, self.VALUE_KEYS, "value")
+            kept[key] = value
+        return kept, frames, frame_dicts
+
+    def _restore_nested_values(self, data: dict, path: Path) -> None:
+        """Corners from their Parquet file and timestamps from ISO strings."""
+        circuit = data.get("circuit_info")
+        if isinstance(circuit, dict):
+            corners_path = path / self.CORNERS_FILE
+            if corners_path.is_file():
+                circuit["corners"] = pd.read_parquet(corners_path)
+            elif isinstance(circuit.get("corners"), str):
+                # Schema <= 7 wrote the DataFrame's repr; it cannot be parsed
+                # back, so the map loses its labels instead of crashing.
+                circuit["corners"] = pd.DataFrame()
+        for parent, child in _TIMESTAMP_VALUES:
+            values = data.get(parent)
+            if isinstance(values, dict) and child in values:
+                values[child] = _timestamp_or_none(values[child])
 
     def _load_legacy_pickle(self, path: Path, allow_pickle: bool = False) -> dict:
         """Read a pre-HIST-02 ``.pkl`` replay.
@@ -857,14 +1029,19 @@ class DataSourceManager:
                 else None
             )
         data["source"] = "replay"
+        data["is_live"] = False
+        data.pop("live_client", None)
         return data
 
     def get_available_replays(self) -> list:
-        """Saved replays, newest first: directories plus legacy pickles."""
+        """Saved replay bundles, newest first.
+
+        Legacy ``.pkl`` replays are not offered (SEC-02): no UI path may pass
+        ``allow_pickle``, so choosing one could only fail.
+        ``scripts/convert_legacy_replay.py`` turns one into a bundle.
+        """
         entries = [p.name for p in self.replay_dir.glob("*") if self._is_replay(p)]
         return sorted(entries, reverse=True)
 
     def _is_replay(self, path: Path) -> bool:
-        if path.is_dir():
-            return (path / self.META_FILE).is_file()
-        return path.suffix == ".pkl"
+        return path.is_dir() and (path / self.META_FILE).is_file()

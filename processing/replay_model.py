@@ -47,6 +47,11 @@ KNOCKED_OUT = "KO"
 
 # A car that has sent no position for this long is out of the session.
 OUT_AFTER_SECONDS = 5.0
+# In a race a dropout is common (tunnels, feed gaps), so a car is OUT only
+# after this long with neither a position sample nor a timing stamp
+# (sector, lap or pit line), and never for a silence begun under a red flag
+# (REPLAY-23).
+RACE_OUT_AFTER_SECONDS = 25.0
 
 # The stream's positions flicker at the start (several updates within a
 # fraction of a second); a value counts once it has held this long.
@@ -736,17 +741,44 @@ def _sample_times(positions: pd.DataFrame | None) -> dict[str, np.ndarray]:
     }
 
 
-def _pit_windows(own: pd.DataFrame, garage_first: bool) -> list[tuple[float, float]]:
+def _pit_lane_start(own: pd.DataFrame, lights_out: float | None) -> float | None:
+    """When a race car that started from the pit lane left the pit exit.
+
+    Lap 1 carries a ``PitOutTime`` after lights out, with no pit entry
+    before it (REPLAY-27). A grid starter's lap 1 may carry the moment it
+    left the garage, long before the start, which does not count.
+    """
+    if lights_out is None or own.empty or "LapNumber" not in own.columns:
+        return None
+    first = own[own["LapNumber"] == 1]
+    if first.empty:
+        return None
+    leave = float(first["pit_out"].iloc[0])
+    if not np.isfinite(leave) or leave <= lights_out:
+        return None
+    if (own["pit_in"].dropna() < leave).any():
+        return None
+    return leave
+
+
+def _pit_windows(
+    own: pd.DataFrame, garage_first: bool, lights_out: float | None = None
+) -> list[tuple[float, float]]:
     """Intervals a driver spent in the pit lane: ``[entry, exit)``.
 
     An entry without a later exit stays open. In qualifying and practice a
-    car starts in the garage, so the time before its first exit counts too.
+    car starts in the garage, so the time before its first exit counts too;
+    in a race, a pit-lane starter waits from lights out to its pit exit.
     """
     entries = sorted(own["pit_in"].dropna().tolist())
     exits = sorted(own["pit_out"].dropna().tolist())
     windows: list[tuple[float, float]] = []
     if garage_first and exits and (not entries or exits[0] <= entries[0]):
         windows.append((-np.inf, exits[0]))
+    if not garage_first:
+        leave = _pit_lane_start(own, lights_out)
+        if leave is not None and lights_out is not None:
+            windows.append((lights_out, leave))
     for entry in entries:
         leave = next((e for e in exits if e > entry), np.inf)
         windows.append((entry, leave))
@@ -757,17 +789,54 @@ def _in_windows(moment: float, windows: list[tuple[float, float]]) -> bool:
     return any(start <= moment < end for start, end in windows)
 
 
-def _silences(samples: np.ndarray | None) -> list[tuple[float, float]]:
-    """``[start, end)`` intervals in which the car had sent no position for
-    :data:`OUT_AFTER_SECONDS` - each starts that long after a sample."""
+_PROGRESS_COLUMNS = ("s1_at", "s2_at", "s3_at", "end", "pit_in", "pit_out")
+
+
+def _progress_times(own: pd.DataFrame) -> np.ndarray:
+    """Session seconds at which the car crossed a timing line (REPLAY-23).
+
+    Sector, lap and pit stamps only happen while the car moves. Timing-stream
+    rows are not used: a car stopped for good keeps receiving them as others
+    pass or lap it, which would cancel a real retirement.
+    """
+    if own.empty:
+        return np.empty(0)
+    values = own[list(_PROGRESS_COLUMNS)].to_numpy(float).ravel()
+    return values[np.isfinite(values)]
+
+
+def _silences(
+    samples: np.ndarray | None,
+    threshold: float = OUT_AFTER_SECONDS,
+    progress: np.ndarray | None = None,
+    suspensions: Iterable[tuple[float, float]] = (),
+) -> list[tuple[float, float]]:
+    """``[start, end)`` intervals in which the car showed no sign of life for
+    ``threshold`` seconds - each starts that long after the last one.
+
+    Signs of life are position samples plus ``progress`` stamps. A silence
+    whose last sign of life falls inside a ``suspensions`` (red-flag) span
+    starts counting only when that span ends. Each window is decided from
+    what was known at its start, so a snapshot never sees the future.
+    """
     if samples is None or len(samples) == 0:
         return []
-    gaps = np.diff(samples)
-    long = gaps > OUT_AFTER_SECONDS
-    starts = samples[:-1][long] + OUT_AFTER_SECONDS
-    ends = samples[1:][long]
-    windows = list(zip(starts.tolist(), ends.tolist(), strict=True))
-    windows.append((float(samples[-1]) + OUT_AFTER_SECONDS, np.inf))
+    life = np.asarray(samples, dtype=float)
+    if progress is not None and len(progress):
+        life = np.union1d(life, progress)
+    nexts = np.append(life[1:], np.inf)
+    onsets = life + threshold
+    candidates = np.flatnonzero(onsets < nexts)
+    spans = list(suspensions)
+    windows: list[tuple[float, float]] = []
+    for index in candidates.tolist():
+        last, onset = float(life[index]), float(onsets[index])
+        for begin, end in spans:
+            if begin <= last < end:
+                onset = end + threshold
+                break
+        if onset < nexts[index]:
+            windows.append((onset, float(nexts[index])))
     return windows
 
 
@@ -777,9 +846,14 @@ def _status_series(
     samples: np.ndarray | None,
     finish: float | None,
     knocked_out: float | None,
+    suspensions: Iterable[tuple[float, float]] = (),
+    lights_out: float | None = None,
 ) -> FieldSeries:
-    pits = _pit_windows(own, garage_first=kind != "race")
-    silences = _silences(samples)
+    pits = _pit_windows(own, garage_first=kind != "race", lights_out=lights_out)
+    if kind == "race":
+        silences = _silences(samples, RACE_OUT_AFTER_SECONDS, _progress_times(own), suspensions)
+    else:
+        silences = _silences(samples)
     candidates = {BEFORE_EVERYTHING}
     for window in pits + silences:
         candidates.update(value for value in window if np.isfinite(value))
@@ -871,7 +945,30 @@ def _running_best(laps: pd.DataFrame) -> list[tuple[float, Any]]:
     return points
 
 
-def _lap_fields(kind: str, own: pd.DataFrame, total_laps: int | None) -> dict[str, FieldSeries]:
+def _pit_stop_entries(
+    own: pd.DataFrame, suspensions: Iterable[tuple[float, float]] = ()
+) -> list[float]:
+    """Pit-lane entries that count as pit stops, in time order (REPLAY-25).
+
+    Under a red flag every car is called into the pit lane; those entries
+    are not stops, so they are neither counted nor offered as events (the
+    red flag event already marks the moment). Whether an entry is under a
+    red flag is known when it happens, so no snapshot sees the future.
+    """
+    spans = list(suspensions)
+    return [
+        moment
+        for moment in sorted(own["pit_in"].dropna().tolist())
+        if not any(begin <= moment < end for begin, end in spans)
+    ]
+
+
+def _lap_fields(
+    kind: str,
+    own: pd.DataFrame,
+    total_laps: int | None,
+    suspensions: Iterable[tuple[float, float]] = (),
+) -> dict[str, FieldSeries]:
     """Fields that change only with the driver's own laps."""
     completed = own[own["end"].notna()].sort_values("end", kind="stable")
     lap_points: list[tuple[float, object]] = [(BEFORE_EVERYTHING, 1 if kind == "race" else 0)]
@@ -947,7 +1044,7 @@ def _lap_fields(kind: str, own: pd.DataFrame, total_laps: int | None) -> dict[st
         fields["flying"] = _flying_series(own)
 
     if kind == "race":
-        entries = sorted(own["pit_in"].dropna().tolist())
+        entries = _pit_stop_entries(own, suspensions)
         pit_points = [(BEFORE_EVERYTHING, 0), *((m, n) for n, m in enumerate(entries, start=1))]
         fields["pits"] = _series(pit_points)
     return fields
@@ -1308,12 +1405,13 @@ def tower_series(session_data: dict) -> TowerSeries:
     segment_starts = [float(s) for s in (info.get("segment_starts") or [])]
     names = segment_names(info)
     samples = _sample_times(session_data.get("positions"))
+    suspensions = red_flag_windows(session_data)
 
     fields: dict[str, dict[str, FieldSeries]] = {code: {} for code in codes}
     by_driver = {str(code): group for code, group in table.groupby("Driver", sort=False)}
     empty = table.iloc[0:0]
     for code in codes:
-        fields[code].update(_lap_fields(kind, by_driver.get(code, empty), total_laps))
+        fields[code].update(_lap_fields(kind, by_driver.get(code, empty), total_laps, suspensions))
     for code, flags in _last_flags(table).items():
         if code in fields:
             fields[code]["last_flag"] = flags
@@ -1334,6 +1432,7 @@ def tower_series(session_data: dict) -> TowerSeries:
             fields[code].update({name: _series(p) for name, p in timed_points.items()})
 
     flags_down = chequered_times(session_data) if kind == "race" else []
+    lights_out = session_clock(session_data).lights_out if kind == "race" else None
     chequered = flags_down[0] if flags_down else None
     for code in codes:
         own = by_driver.get(code, empty)
@@ -1342,7 +1441,7 @@ def tower_series(session_data: dict) -> TowerSeries:
             after = own[own["end"].notna() & (own["end"] >= chequered)]["end"]
             finish = float(after.min()) if not after.empty else None
         fields[code]["status"] = _status_series(
-            kind, own, samples.get(code), finish, knocked_out.get(code)
+            kind, own, samples.get(code), finish, knocked_out.get(code), suspensions, lights_out
         )
 
     # Header lap counter: the leader's lap, in a race.
@@ -1368,7 +1467,7 @@ def tower_series(session_data: dict) -> TowerSeries:
         estimated=estimated,
         order_hint={code: index for index, code in enumerate(codes)},
         segment_names=names,
-        suspensions=tuple(red_flag_windows(session_data)),
+        suspensions=tuple(suspensions),
     )
 
 
@@ -1644,17 +1743,18 @@ def events(session_data: dict, series: TowerSeries | None = None) -> list[tuple[
 
     table = session_lap_table(session_data)
     if series.kind == "race":
-        found.extend(
-            (float(lap.pit_in), "pit", f"Pit stop - {lap.Driver}")
-            for lap in table[table["pit_in"].notna()].itertuples()
-        )
+        for code, own in table.groupby("Driver", sort=False):
+            found.extend(
+                (float(moment), "pit", f"Pit stop - {code}")
+                for moment in _pit_stop_entries(own, series.suspensions)
+            )
 
+    # A retirement is an OUT that never ends; a shorter silence is a feed
+    # dropout, not an event (REPLAY-23).
     for code in series.drivers:
         states = series.fields[code]["status"]
-        for moment, value in zip(states.t.tolist(), states.v, strict=True):
-            if value == OUT:
-                found.append((float(moment), "out", f"Retirement - {code}"))
-                break
+        if len(states) and states.v[-1] == OUT:
+            found.append((float(states.t[-1]), "out", f"Retirement - {code}"))
 
     # A new fastest lap as it happened: one deleted later still was, at the
     # time (REPLAY-20); the deletion itself is in race control.

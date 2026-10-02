@@ -168,14 +168,16 @@ class TestLegacyPickles:
         assert loaded["session_info"]["gp"] == "Old GP"
         assert loaded["source"] == "replay"
 
-    def test_available_replays_lists_both_formats(self, manager):
+    def test_available_replays_hides_legacy_pickles(self, manager):
+        # SEC-02: no UI path passes allow_pickle, so offering one only errors;
+        # scripts/convert_legacy_replay.py turns it into a bundle instead.
         self._write_legacy(manager)
         manager.save_replay(_session(), "Monza_R")
 
         names = manager.get_available_replays()
 
-        assert any(name.endswith(".pkl") for name in names)
-        assert any(not name.endswith(".pkl") for name in names)
+        assert names, "the Parquet bundle is offered"
+        assert not any(name.endswith(".pkl") for name in names)
 
 
 class TestSchemaGuard:
@@ -189,6 +191,80 @@ class TestSchemaGuard:
 
         with pytest.raises(ValueError, match="update the app"):
             manager.get_session_data(source="replay", replay_file=str(path))
+
+
+class TestManifestIsValidated:
+    """SEC-02: meta.json is a shared file; it names only known tables and values."""
+
+    @staticmethod
+    def _tamper(manager, change) -> str:
+        from pathlib import Path
+
+        path = Path(manager.save_replay(_session(), "Monza_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        change(meta)
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return str(path)
+
+    def test_an_untouched_replay_still_loads(self, manager):
+        path = self._tamper(manager, lambda meta: None)
+
+        loaded = manager.get_session_data(source="replay", replay_file=path)
+
+        assert loaded["source"] == "replay"
+        assert loaded["is_live"] is False
+
+    def test_a_traversing_frame_dict_key_is_rejected(self, manager, tmp_path):
+        evil = tmp_path.parent / "evil"
+        evil.mkdir(exist_ok=True)
+        pd.DataFrame({"X": [1.0]}).to_parquet(evil / "VER.parquet")
+        path = self._tamper(manager, lambda meta: meta["frame_dicts"].update({"../evil": ["VER"]}))
+
+        with pytest.raises(ValueError, match=r"\.\./evil"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_a_traversing_frame_key_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["frames"].append("../laps"))
+
+        with pytest.raises(ValueError, match=r"\.\./laps"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_an_unknown_frame_dict_key_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["frame_dicts"].update({"secrets": []}))
+
+        with pytest.raises(ValueError, match="secrets"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_is_live_true_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["values"].update({"is_live": True}))
+
+        with pytest.raises(ValueError, match="is_live"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    @pytest.mark.parametrize("key", ["source", "live_client"])
+    def test_meta_cannot_set_the_source_or_a_live_client(self, manager, key):
+        path = self._tamper(manager, lambda meta: meta["values"].update({key: "live"}))
+
+        with pytest.raises(ValueError, match=key):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_an_unknown_value_key_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["values"].update({"telemetry": "x"}))
+
+        with pytest.raises(ValueError, match="telemetry"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_a_schema_7_replay_with_source_and_is_live_false_still_opens(self, manager):
+        def legacy(meta):
+            meta["schema"] = 7
+            meta["values"].update({"source": "fastf1", "is_live": False})
+
+        loaded = manager.get_session_data(
+            source="replay", replay_file=self._tamper(manager, legacy)
+        )
+
+        assert loaded["source"] == "replay"
+        assert loaded["is_live"] is False
 
 
 class TestReplayStreams:
@@ -241,3 +317,98 @@ class TestReplayStreams:
         assert loaded["track_status"].empty
         assert loaded["session_info"]["segment_starts"] == []
         assert loaded["session_info"]["replay_clock"] is None  # no positions to replay
+
+
+class TestCircuitInfoRoundTrip:
+    """REPLAY-19: corners and the session date survive a save as real values."""
+
+    @staticmethod
+    def _corners() -> pd.DataFrame:
+        # FastF1's CircuitInfo.corners columns (fastf1.mvapi.CircuitInfo).
+        return pd.DataFrame(
+            {
+                "X": [100.0, -250.5, 400.0],
+                "Y": [20.0, 300.0, -80.0],
+                "Number": [1, 2, 2],
+                "Letter": ["", "", "A"],
+                "Angle": [10.0, 95.5, -30.0],
+                "Distance": [250.0, 900.25, 1200.0],
+            }
+        )
+
+    def _race(self) -> dict:
+        from tests import replay_fixtures as fx
+
+        session = fx.race_session()
+        session["circuit_info"] = {"corners": self._corners(), "rotation": 92.0}
+        session["session_info"]["date"] = pd.Timestamp("2026-06-07 13:00:00")
+        return session
+
+    def test_corners_come_back_as_an_equal_frame(self, manager):
+        loaded = manager.get_session_data(
+            source="replay", replay_file=manager.save_replay(self._race(), "Test_R")
+        )
+
+        corners = loaded["circuit_info"]["corners"]
+        assert isinstance(corners, pd.DataFrame)
+        pd.testing.assert_frame_equal(corners, self._corners())
+        assert loaded["circuit_info"]["rotation"] == 92.0
+
+    def test_the_corners_are_a_parquet_file_in_the_bundle(self, manager):
+        from pathlib import Path
+
+        path = Path(manager.save_replay(self._race(), "Test_R"))
+
+        assert (path / "circuit_info.corners.parquet").is_file()
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        assert "corners" not in meta["values"]["circuit_info"]
+
+    def test_the_date_comes_back_as_a_timestamp(self, manager):
+        loaded = manager.get_session_data(
+            source="replay", replay_file=manager.save_replay(self._race(), "Test_R")
+        )
+
+        assert isinstance(loaded["session_info"]["date"], pd.Timestamp)
+        assert loaded["session_info"]["date"] == pd.Timestamp("2026-06-07 13:00:00")
+
+    def test_the_replay_payload_builds_with_corner_labels(self, manager):
+        from processing.replay_model import session_clock, tower_series
+        from processing.replay_payload import build_replay_payload
+
+        loaded = manager.get_session_data(
+            source="replay", replay_file=manager.save_replay(self._race(), "Test_R")
+        )
+        payload = build_replay_payload(loaded, tower_series(loaded), session_clock(loaded), "key")
+
+        assert len(payload["track"]["corners"]) == 3
+
+    def test_a_value_json_cannot_hold_is_refused(self, manager):
+        session = _session()
+        session["session_info"]["oops"] = object()
+
+        with pytest.raises(ValueError, match="session_info"):
+            manager.save_replay(session, "Monza_R")
+
+    def test_a_schema_7_replay_with_string_corners_opens(self, manager):
+        from pathlib import Path
+
+        from processing.replay_model import session_clock, tower_series
+        from processing.replay_payload import build_replay_payload
+
+        session = self._race()
+        session["circuit_info"] = {"rotation": 92.0}
+        path = Path(manager.save_replay(session, "Test_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        meta["schema"] = 7
+        # What json.dumps(default=str) wrote for a corners DataFrame.
+        meta["values"]["circuit_info"]["corners"] = repr(self._corners())
+        meta["values"]["session_info"]["date"] = "2026-06-07 13:00:00"
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        loaded = manager.get_session_data(source="replay", replay_file=str(path))
+
+        corners = loaded["circuit_info"]["corners"]
+        assert isinstance(corners, pd.DataFrame) and corners.empty
+        payload = build_replay_payload(loaded, tower_series(loaded), session_clock(loaded), "key")
+        assert payload["track"] is not None
+        assert loaded["session_info"]["date"] == pd.Timestamp("2026-06-07 13:00:00")
