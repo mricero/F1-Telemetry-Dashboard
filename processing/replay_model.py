@@ -19,7 +19,9 @@ module: no Streamlit, no network.
 """
 
 import bisect
+import functools
 import re
+from collections import namedtuple
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -237,6 +239,37 @@ def _clean(value):
     return value
 
 
+def _clean_column(values) -> list:
+    """:func:`_clean` over a whole column, with one vectorised NA test (REPLAY-28).
+
+    One ``pd.isna`` per value was most of ``tower_series``' time. ``tolist()``
+    already returns Python scalars for a typed column; only an object column
+    can still hold numpy scalars.
+    """
+    if isinstance(values, pd.Series):
+        cleaned, missing = values.tolist(), values.isna().to_numpy()
+        typed = values.dtype != object
+    else:
+        items = values if isinstance(values, (list, tuple)) else list(values)
+        array = np.fromiter(items, dtype=object, count=len(items))
+        cleaned, missing, typed = list(items), pd.isna(array), False
+    if not typed:
+        cleaned = [value.item() if isinstance(value, np.generic) else value for value in cleaned]
+    for index in np.flatnonzero(missing).tolist():
+        cleaned[index] = None
+    return cleaned
+
+
+def _seconds_array(times) -> np.ndarray:
+    """Times as floats, NaN where missing (``None``, NaN, NaT, NA)."""
+    try:
+        return np.asarray(times, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return np.asarray(
+            [np.nan if t is None or pd.isna(t) else float(t) for t in times], dtype=float
+        )
+
+
 # --------------------------------------------------------------------------
 # Change-point series
 # --------------------------------------------------------------------------
@@ -259,24 +292,33 @@ class FieldSeries:
 
 def _series(points: Iterable[tuple[float, object]]) -> FieldSeries:
     """Sorted, with consecutive repeats removed (a point only on a change)."""
-    ordered = sorted(
-        ((float(t), _clean(v)) for t, v in points if t is not None and not pd.isna(t)),
-        key=lambda item: item[0],
-    )
-    times: list[float] = []
-    values: list = []
-    for moment, value in ordered:
-        if times and moment == times[-1]:
-            values[-1] = value  # a later write at the same instant wins
-            if len(values) > 1 and values[-1] == values[-2]:
-                times.pop()
-                values.pop()
-            continue
-        if values and value == values[-1]:
-            continue
-        times.append(moment)
-        values.append(value)
-    return FieldSeries(np.asarray(times, dtype=float), tuple(values))
+    pairs = list(points)
+    if not pairs:
+        return _series_from(np.empty(0), [])
+    times, values = zip(*pairs, strict=True)
+    return _series_from(_seconds_array(times), _clean_column(values))
+
+
+def _series_from(times: np.ndarray, values: list) -> FieldSeries:
+    """:func:`_series` over a time array and already-cleaned values (REPLAY-28).
+
+    Points without a time are dropped; the rest are stably sorted by time.
+    Of several writes at one instant the last wins, and a point is kept only
+    where the value differs from the one before - both by numpy masks.
+    """
+    keep = ~np.isnan(times)
+    order = np.flatnonzero(keep)[np.argsort(times[keep], kind="stable")]
+    count = len(order)
+    if count == 0:
+        return FieldSeries(np.asarray([], dtype=float), ())
+    moments = times[order]
+    ordered = np.fromiter((values[i] for i in order.tolist()), dtype=object, count=count)
+    last = np.ones(count, dtype=bool)
+    last[:-1] = moments[1:] != moments[:-1]  # a later write at the same instant wins
+    moments, ordered = moments[last], ordered[last]
+    change = np.ones(len(ordered), dtype=bool)
+    change[1:] = ~(ordered[1:] == ordered[:-1]).astype(bool)
+    return FieldSeries(np.asarray(moments[change], dtype=float), tuple(ordered[change].tolist()))
 
 
 def _combine(
@@ -286,8 +328,22 @@ def _combine(
     defaults: tuple = (None, None),
 ) -> FieldSeries:
     """A series derived from two others, evaluated at every change of either."""
-    moments = sorted(set(first.t.tolist()) | set(second.t.tolist()))
-    return _series((m, merge(first.at(m, defaults[0]), second.at(m, defaults[1]))) for m in moments)
+    moments = np.union1d(first.t, second.t)
+    merged = [
+        merge(a, b)
+        for a, b in zip(
+            _values_at(first, moments, defaults[0]),
+            _values_at(second, moments, defaults[1]),
+            strict=True,
+        )
+    ]
+    return _series_from(moments, _clean_column(merged))
+
+
+def _values_at(series: FieldSeries, moments: np.ndarray, default=None) -> list:
+    """:meth:`FieldSeries.at` at many moments with one binary search."""
+    index = np.searchsorted(series.t, moments, side="right") - 1
+    return [series.v[i] if i >= 0 else default for i in index.tolist()]
 
 
 @dataclass
@@ -914,7 +970,7 @@ def _validity_events(laps: pd.DataFrame) -> list[tuple[float, int, Any]]:
     announced. Sorted, so a sweep sees the session as it unfolded.
     """
     found: list[tuple[float, int, Any]] = []
-    for lap in laps.itertuples():
+    for lap in _rows(laps, tuple(laps.columns)):
         if not lap.base_valid or pd.isna(lap.end):
             continue
         if valid_at(lap, lap.end):
@@ -963,6 +1019,29 @@ def _pit_stop_entries(
     ]
 
 
+# The lap-table columns each loop of :func:`_lap_fields` reads.
+_LAST_LAP_LOOP_COLUMNS = ("end", "lap_s", "del_at", "reinst_at", "del_reason")
+_TYRE_LOOP_COLUMNS = ("start", "pit_in", "pit_out", "Compound", "TyreLife", "FreshTyre", "Stint")
+
+
+@functools.cache
+def _row_type(columns: tuple[str, ...]):
+    return namedtuple("LapRow", columns)  # type: ignore[misc]
+
+
+def _rows(frame: pd.DataFrame, columns: tuple[str, ...]) -> list:
+    """``frame[columns].itertuples(index=False)``, from one ``tolist()`` per column.
+
+    The same Python values, without itertuples' Series per column per call -
+    which, over a lap table's two dozen columns, was a third of
+    :func:`_lap_fields` (REPLAY-28).
+    """
+    row = _row_type(columns)
+    return [
+        row(*values) for values in zip(*(frame[name].tolist() for name in columns), strict=True)
+    ]
+
+
 def _lap_fields(
     kind: str,
     own: pd.DataFrame,
@@ -976,7 +1055,7 @@ def _lap_fields(
     last_s: list[tuple[float, object]] = []
     deleted: list[tuple[float, object]] = []
     reason: list[tuple[float, object]] = []
-    ordered = list(completed.itertuples())
+    ordered = _rows(completed, _LAST_LAP_LOOP_COLUMNS)
     for count, lap in enumerate(ordered, start=1):
         lap_value = count + 1 if kind == "race" else count
         if kind == "race" and total_laps:
@@ -1018,17 +1097,16 @@ def _lap_fields(
     # progress overwrites the previous lap's value as it goes.
     for index in (1, 2, 3):
         value, stamp = own[f"s{index}"], own[f"s{index}_at"]
-        fields[f"s{index}"] = _series(
-            (at, seconds)
-            for at, seconds in zip(stamp.tolist(), value.tolist(), strict=True)
-            if pd.notna(at) and pd.notna(seconds)
+        known = (stamp.notna() & value.notna()).to_numpy()
+        fields[f"s{index}"] = _series_from(
+            stamp.to_numpy(float)[known], _clean_column(value[known])
         )
 
     # The tyre changes when the car leaves the pits, not when the out-lap
     # started at the pit-lane timing line.
     tyre, age, fresh, stint = [], [], [], []
     previous_pit_in = False
-    for lap in own.itertuples():
+    for lap in _rows(own, _TYRE_LOOP_COLUMNS):
         out_lap = previous_pit_in or pd.notna(lap.pit_out)
         moment = lap.pit_out if out_lap and pd.notna(lap.pit_out) else lap.start
         if pd.notna(moment):
@@ -1110,23 +1188,19 @@ def _last_flags(table: pd.DataFrame) -> dict[str, FieldSeries]:
     return {code: _series(values) for code, values in points.items()}
 
 
-def _settled_positions(rows: pd.DataFrame) -> list[tuple[float, int]]:
+def _settled_positions(rows: pd.DataFrame) -> tuple[np.ndarray, list[int]]:
     """Stream positions that held for :data:`POSITION_SETTLE_SECONDS`.
 
     A value becomes effective that long after it arrived, and only if no
     newer value arrived in between - so the decision at any moment uses
-    only rows stamped before it.
+    only rows stamped before it. Returned as ``(times, positions)``.
     """
     times = rows["Time"].to_numpy(float)
-    values = rows["Position"].tolist()
-    points = []
-    for index, (moment, value) in enumerate(zip(times, values, strict=True)):
-        if value is None or pd.isna(value):
-            continue
-        following = times[index + 1] if index + 1 < len(times) else np.inf
-        if following - moment >= POSITION_SETTLE_SECONDS:
-            points.append((moment + POSITION_SETTLE_SECONDS, int(value)))
-    return points
+    following = np.append(times[1:], np.inf)
+    held = (following - times >= POSITION_SETTLE_SECONDS) & rows["Position"].notna().to_numpy()
+    index = np.flatnonzero(held)
+    values = rows["Position"].to_numpy(dtype=object)[index]
+    return times[index] + POSITION_SETTLE_SECONDS, [int(value) for value in values]
 
 
 def _gap_display(position, seconds, laps_down, lapform) -> str:
@@ -1139,10 +1213,21 @@ def _gap_display(position, seconds, laps_down, lapform) -> str:
     return format_gap(seconds)
 
 
+@functools.lru_cache(maxsize=4096)
+def _is_leader(value) -> bool:
+    return is_leader_cell(value)
+
+
+@functools.lru_cache(maxsize=4096)
+def _is_lap_form(value) -> bool:
+    """A raw gap cell written ``LAP n`` (cached: a race repeats a few thousand texts)."""
+    return str(value or "").upper().startswith("LAP")
+
+
 def _stream_display(position: FieldSeries, times, seconds, laps, raw) -> FieldSeries:
     """Display strings for a gap/interval column, kept in step with position."""
-    lapform = [str(value or "").upper().startswith("LAP") for value in raw]
-    cells = _series(zip(times, zip(seconds, laps, lapform, strict=True), strict=True))
+    lapform = [_is_lap_form(value) for value in raw]
+    cells = _series_from(times, list(zip(seconds, laps, lapform, strict=True)))
 
     def merge(place, cell) -> str:
         seconds_now, laps_now, form = cell if isinstance(cell, tuple) else (None, None, False)
@@ -1153,37 +1238,44 @@ def _stream_display(position: FieldSeries, times, seconds, laps, raw) -> FieldSe
 
 def _race_from_stream(stream: pd.DataFrame, codes: list[str]) -> dict[str, dict[str, FieldSeries]]:
     fields: dict[str, dict[str, FieldSeries]] = {}
+    wanted = set(codes)
+    groups = {
+        str(code): group
+        for code, group in stream.groupby("Driver", sort=False)
+        if str(code) in wanted
+    }
     for code in codes:
-        own = stream[stream["Driver"] == code].sort_values("Time", kind="stable")
-        if own.empty:
+        own = groups.get(code)
+        if own is None or own.empty:
             continue
+        own = own.sort_values("Time", kind="stable")
         times = own["Time"].to_numpy(float)
 
         def column(name: str, own=own) -> list:
+            # One vectorised clean per column, not one pd.isna per value (REPLAY-28).
             if name not in own.columns:
                 return [None] * len(own)
-            return [_clean(value) for value in own[name].tolist()]
+            return _clean_column(own[name])
 
-        position = _series(_settled_positions(own))
+        position = _series_from(*_settled_positions(own))
         gap_s, gap_laps = column("GapSeconds"), column("GapLapsDown")
         int_s, int_laps = column("IntervalSeconds"), column("IntervalLapsDown")
         # The leader's interval cell is "LAP n", which parses to 0.0: as a
         # number that drew the leader as "within a second" and its trend as
         # 0.000 s. Leading means no car ahead, so no interval (REPLAY-21).
         raw_int = column("IntervalToPositionAhead")
+        leading = [place == 1 for place in _values_at(position, times)]
         int_s = [
-            None if is_leader_cell(cell) or position.at(t) == 1 else value
-            for t, value, cell in zip(times.tolist(), int_s, raw_int, strict=True)
+            None if ahead or _is_leader(cell) else value
+            for value, cell, ahead in zip(int_s, raw_int, leading, strict=True)
         ]
         fields[code] = {
             "position": position,
             "gap": _stream_display(position, times, gap_s, gap_laps, column("GapToLeader")),
-            "gap_s": _series(zip(times, gap_s, strict=True)),
-            "laps_down": _series(zip(times, gap_laps, strict=True)),
-            "interval": _stream_display(
-                position, times, int_s, int_laps, column("IntervalToPositionAhead")
-            ),
-            "interval_s": _series(zip(times, int_s, strict=True)),
+            "gap_s": _series_from(times, gap_s),
+            "laps_down": _series_from(times, gap_laps),
+            "interval": _stream_display(position, times, int_s, int_laps, raw_int),
+            "interval_s": _series_from(times, int_s),
         }
     return fields
 
@@ -1266,7 +1358,7 @@ def _timed_fields(
     per-field points and each knocked-out driver's KO time.
     """
     completed = table[table["end"].notna() & table["base_valid"]].sort_values("end", kind="stable")
-    laps = list(completed.itertuples())
+    laps = _rows(completed, tuple(completed.columns))
     # A deletion or reinstatement re-ranks the tower when it is announced.
     windows = [completed["del_at"], completed["reinst_at"]]
     announced = {float(t) for column in windows for t in column.tolist() if np.isfinite(t)}
