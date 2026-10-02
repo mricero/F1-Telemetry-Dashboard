@@ -18,6 +18,7 @@ from ui.layout import (
     clear_schedule_caches,
     directory_size,
     render_delay_input,
+    render_deleted_laps,
     render_driver_comparison,
     render_feed_status,
     render_lap_times,
@@ -25,9 +26,12 @@ from ui.layout import (
     render_live_dashboard,
     render_position_changes,
     render_race_control,
+    render_race_trace,
+    render_speed_traps,
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
+    render_tyre_pace,
     render_weather,
 )
 from ui.replay_view import (
@@ -63,9 +67,59 @@ ANALYSIS_SECTIONS = (
     "Head-to-head",
     "Lap times",
     "Positions",
+    "Race trace",
+    "Tyre pace",
+    "Speed traps",
+    "Deleted laps",
     "Weather",
     "Race control",
 )
+# Sections that only mean something in a race.
+RACE_ONLY_SECTIONS = ("Positions", "Race trace")
+# Sections drawn per driver, which the driver filter applies to (UX-03).
+DRIVER_SECTIONS = ("Lap times", "Positions", "Race trace", "Tyre pace", "Speed traps")
+DRIVERS_PARAM = "drivers"
+
+
+def analysis_sections(session_data: dict) -> tuple[str, ...]:
+    """The sections a session offers: no race trace outside a race."""
+    from processing.timing import is_race_session
+
+    if is_race_session(session_data.get("session_info")):
+        return ANALYSIS_SECTIONS
+    return tuple(s for s in ANALYSIS_SECTIONS if s not in RACE_ONLY_SECTIONS)
+
+
+def driver_filter(context: dict, key: str) -> list[str] | None:
+    """A driver multiselect shared by the per-driver sections (UX-03).
+
+    It starts with the session's top five and is kept in the URL
+    (``?drivers=VER,NOR``), so a shared link shows the same cars.
+    """
+    from processing.analysis import default_drivers
+
+    laps = context["laps"]
+    driver_col = "DriverAcronym" if "DriverAcronym" in laps.columns else "Driver"
+    if laps.empty or driver_col not in laps.columns:
+        return None
+    names = sorted(laps[driver_col].dropna().astype(str).unique())
+    widget_key = f"drivers:{key}"
+    if widget_key not in st.session_state:
+        linked = [
+            code for code in str(st.query_params.get(DRIVERS_PARAM, "")).split(",") if code in names
+        ]
+        session_data = context["session_data"]
+        st.session_state[widget_key] = (
+            linked
+            or [
+                code for code in default_drivers(laps, session_data.get("results")) if code in names
+            ]
+            or names[:5]
+        )
+    chosen = st.multiselect("Drivers", names, key=widget_key)
+    st.query_params[DRIVERS_PARAM] = ",".join(chosen)
+    return chosen or None
+
 
 SCOPE_NOTES = {
     "fastest": "Each driver's fastest lap: distance runs from 0 to the lap length, "
@@ -157,11 +211,14 @@ def analysis_page() -> None:
     replay = (context.get("pages") or {}).get(PAGE_REPLAY)
     if moment.get("lap") and replay is not None:
         st.page_link(replay, label=f"Back to replay at lap {moment['lap']}")
+    sections = analysis_sections(session_data)
+    if st.session_state.get("analysis_section") not in (None, *sections):
+        st.session_state["analysis_section"] = sections[0]
     section = (
         st.segmented_control(
             "Section",
-            ANALYSIS_SECTIONS,
-            default=ANALYSIS_SECTIONS[0],
+            sections,
+            default=sections[0],
             key="analysis_section",
             label_visibility="collapsed",
             # Kept across page switches: Weather -> Replay -> Analysis comes
@@ -179,10 +236,45 @@ def analysis_page() -> None:
     elif section == "Head-to-head":
         pair = tuple(code for code in (moment.get("focus"), moment.get("ahead")) if code)
         render_driver_comparison(context["telemetry"](), context["color_map"], preselect=pair)
-    elif section == "Lap times":
-        render_lap_times(context["laps"], context["color_map"], marker_lap=moment.get("lap"))
-    elif section == "Positions":
-        render_position_changes(context["laps"], context["color_map"], marker_lap=moment.get("lap"))
+    elif section in DRIVER_SECTIONS:
+        drivers = driver_filter(context, context["session_key"])
+        track_status = session_data.get("track_status")
+        if section == "Lap times":
+            render_lap_times(
+                context["laps"],
+                context["color_map"],
+                marker_lap=moment.get("lap"),
+                track_status=track_status,
+                drivers=drivers,
+            )
+        elif section == "Positions":
+            render_position_changes(
+                context["laps"],
+                context["color_map"],
+                marker_lap=moment.get("lap"),
+                track_status=track_status,
+                drivers=drivers,
+            )
+        elif section == "Race trace":
+            render_race_trace(
+                context["laps"],
+                context["color_map"],
+                track_status=track_status,
+                drivers=drivers,
+                marker_lap=moment.get("lap"),
+            )
+        elif section == "Tyre pace":
+            render_tyre_pace(
+                context["laps"],
+                track_status,
+                session_data.get("compound_colors"),
+                drivers=drivers,
+                total_laps=(session_data.get("session_info") or {}).get("total_laps"),
+            )
+        else:
+            render_speed_traps(context["laps"], drivers=drivers)
+    elif section == "Deleted laps":
+        render_deleted_laps(context["laps"])
     elif section == "Weather":
         render_weather(session_data.get("weather"))
     elif section == "Race control":

@@ -1096,6 +1096,7 @@ def render_position_changes(
     marker_lap: int | None = None,
     track_status: pd.DataFrame | None = None,
     uirevision: str | None = None,
+    drivers=None,
 ):
     """Lap-by-lap running order - who gained and lost places, and when."""
     if laps_df.empty or "Position" not in laps_df.columns:
@@ -1117,6 +1118,8 @@ def render_position_changes(
     # Order the legend by final classification rather than alphabetically.
     final = work.dropna(subset=["_pos"]).sort_values("LapNumber").groupby(driver_col)["_pos"].last()
     for driver in final.sort_values().index:
+        if drivers is not None and driver not in drivers:
+            continue
         driver_laps = work[work[driver_col] == driver].sort_values("LapNumber")
         fig.add_trace(
             go.Scatter(
@@ -1437,3 +1440,161 @@ def _speed_on_grid(df: pd.DataFrame, grid: np.ndarray | None = None):
         if grid.size < 10:
             return None, None
     return grid, np.interp(grid, distance, speed)
+
+
+def render_race_trace(
+    laps_df: pd.DataFrame,
+    color_map: dict[str, str],
+    track_status: pd.DataFrame | None = None,
+    drivers=None,
+    marker_lap: int | None = None,
+    key: str = "race_trace",
+):
+    """Gap to the leader, or to a chosen driver, lap by lap (FEAT-01)."""
+    from processing.analysis import race_trace
+
+    driver_col = "DriverAcronym" if "DriverAcronym" in laps_df.columns else "Driver"
+    if laps_df.empty or driver_col not in laps_df.columns:
+        st.info("No lap data for a race trace")
+        return
+    names = sorted(laps_df[driver_col].dropna().astype(str).unique())
+    reference = st.selectbox(
+        "Gap to",
+        ["Leader", *names],
+        key=f"{key}_reference",
+    )
+    trace = race_trace(laps_df, reference=None if reference == "Leader" else reference)
+    if drivers is not None:
+        trace = trace[trace["Driver"].isin(list(drivers))]
+    if trace.empty:
+        st.info("No lap completion times for a race trace")
+        return
+
+    fig = go.Figure()
+    for driver, rows in trace.groupby("Driver", sort=False):
+        fig.add_trace(
+            go.Scattergl(
+                x=rows["LapNumber"],
+                y=rows["Gap"],
+                mode="lines",
+                name=str(driver),
+                line=dict(color=color_map.get(driver, NEUTRAL_GREY), width=2),
+                hovertemplate=f"{driver}: Lap %{{x}}<br>Gap %{{y:.3f}} s<extra></extra>",
+            )
+        )
+    fig.update_layout(
+        xaxis_title="Lap",
+        yaxis_title=f"Gap to {reference.lower() if reference == 'Leader' else reference} (s)",
+        # Behind reads downwards, as on a race trace.
+        yaxis=dict(autorange="reversed"),
+        height=500,
+    )
+    shade_neutral_laps(fig, laps_df, track_status)
+    _mark_lap(fig, marker_lap)
+    _plot(fig, width="stretch")
+    st.caption("Gap at the line: the difference between the moments two cars completed the lap.")
+
+
+def render_tyre_pace(
+    laps_df: pd.DataFrame,
+    track_status: pd.DataFrame | None = None,
+    compound_colors: dict[str, str] | None = None,
+    drivers=None,
+    total_laps: int | None = None,
+):
+    """Fuel-corrected lap time against tyre age, and the slope per stint (FEAT-03)."""
+    from processing.analysis import FUEL_SECONDS_PER_LAP, degradation, stint_pace
+
+    pace = stint_pace(laps_df, track_status, total_laps=total_laps)
+    if drivers is not None:
+        pace = pace[pace["Driver"].isin(list(drivers))]
+    if pace.empty:
+        st.info("No clean racing laps to measure tyre pace")
+        return
+
+    palette = compound_palette(compound_colors)
+    fig = go.Figure()
+    for compound, rows in pace.groupby("Compound", sort=True):
+        fig.add_trace(
+            go.Scattergl(
+                x=rows["TyreLife"],
+                y=rows["Corrected"],
+                mode="markers",
+                name=str(compound),
+                marker=dict(color=palette.get(str(compound), NEUTRAL_GREY), size=7),
+                customdata=np.stack(
+                    [
+                        rows["Driver"],
+                        rows["LapNumber"],
+                        [format_lap(v) for v in rows["LapSeconds"]],
+                    ],
+                    axis=-1,
+                ),
+                hovertemplate=(
+                    "%{customdata[0]} lap %{customdata[1]}<br>"
+                    "Tyre age %{x}<br>Lap %{customdata[2]}<br>"
+                    "Corrected %{y:.3f} s<extra></extra>"
+                ),
+            )
+        )
+    fig.update_layout(
+        xaxis_title="Tyre age (laps)",
+        yaxis_title="Fuel-corrected lap time (s)",
+        hovermode="closest",
+        height=480,
+    )
+    _plot(fig, width="stretch")
+
+    slopes = degradation(pace)
+    if not slopes.empty:
+        table = slopes.rename(
+            columns={
+                "FirstLap": "From lap",
+                "LastLap": "To lap",
+                "SecondsPerLap": "s per lap",
+            }
+        )
+        st.dataframe(table, hide_index=True, width="stretch")
+    st.caption(
+        f"In- and out-laps, laps under SC, VSC or red flag, deleted laps and lap 1 are left "
+        f"out. The fuel correction is an estimate: {FUEL_SECONDS_PER_LAP:.2f} s for every lap "
+        "of fuel still on board."
+    )
+
+
+def render_speed_traps(laps_df: pd.DataFrame, drivers=None):
+    """Each driver's best reading at every speed trap, fastest first (FEAT-09)."""
+    from processing.analysis import speed_trap_ranking
+
+    ranking = speed_trap_ranking(laps_df)
+    if not ranking:
+        st.info("No speed-trap readings in this session")
+        return
+    columns = st.columns(len(ranking))
+    for column, (name, table) in zip(columns, ranking.items(), strict=True):
+        shown = table if drivers is None else table[table["Driver"].isin(list(drivers))]
+        shown = shown.assign(
+            Pos=range(1, len(shown) + 1),
+            Speed=shown["Speed"].round(0).astype(int),
+            Lap=pd.to_numeric(shown["Lap"], errors="coerce").astype("Int64"),
+        )[["Pos", "Driver", "Speed", "Lap"]]
+        with column:
+            st.markdown(f"**{name}** (km/h)")
+            st.dataframe(shown, hide_index=True, width="stretch")
+
+
+def render_deleted_laps(laps_df: pd.DataFrame):
+    """Laps the stewards deleted, with the reason they gave (FEAT-11)."""
+    from processing.analysis import deleted_laps
+
+    table = deleted_laps(laps_df)
+    if table.empty:
+        st.info("No lap times were deleted in this session")
+        return
+    table = table.assign(
+        LapNumber=pd.to_numeric(table["LapNumber"], errors="coerce").astype("Int64"),
+        LapSeconds=[format_lap(v) for v in table["LapSeconds"]],
+        Reason=[str(r) if r else MISSING for r in table["Reason"]],
+    ).rename(columns={"LapNumber": "Lap", "LapSeconds": "Lap time"})
+    st.dataframe(table, hide_index=True, width="stretch")
+    st.caption(f"{len(table)} lap time(s) deleted.")
