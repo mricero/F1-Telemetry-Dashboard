@@ -88,6 +88,7 @@ producing that dict, not touching `ui/`.
 | `processing/replay.py` | `ReplayClock` (start, lights out, end) and the `PositionCube`: every car's position on one regular time grid. |
 | `processing/replay_model.py` | `tower_series()` change-point series and `snapshot_at(t)`: the session as it stood at `t`, never reading rows stamped after it; `events()` for jump targets. |
 | `processing/replay_payload.py` | `build_replay_payload()`: the JSON-safe dict the browser player animates (clock, track, packed positions, tower series with display strings, flags, race control, weather, lap marks). |
+| `processing/driver_selection.py` | Which drivers the Analysis charts plot: classification order, the top-five default and the `drivers=` URL form (UX-03). |
 | `processing/metrics_store.py` | `MetricsStore`: persistent fastest lap, sector bests and top speed per session and all-time, in SQLite (WAL mode). |
 
 ### `ui/` - rendering
@@ -96,6 +97,7 @@ producing that dict, not touching `ui/`.
 |---|---|
 | `ui/layout.py` | The canonical rendering module: the sidebar session picker, charts (telemetry, head-to-head with the integrated time delta, lap times, positions, weather, race control), the live view and its controls, Settings. Network lookups on a rerun are wrapped in `@st.cache_data` with a TTL. |
 | `ui/pages.py` | The `st.navigation` pages: Replay, Results, Analysis, Records and Settings for a loaded session; Live, Records and Settings while live. |
+| `ui/preferences.py` | Per-viewer preferences: the Analysis driver selection (`drivers=`) and favourite drivers (`fav=`), validated and mirrored in the URL (UX-03). |
 | `ui/replay_view.py` | The Replay page: the dashboard drawn from `snapshot_at()` at the cursor, with the browser player or the server fallback (`F1_REPLAY_PLAYER`). |
 | `ui/dashboard.py` | The timing dashboard assembly (`layout.md` sections 2-5): header bar, tower, sector top-3 widgets, map panel. |
 | `ui/track_map.py` | The SVG track map: outline, corner numbers, dominance layer, car markers. |
@@ -273,6 +275,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   ├── token_store.py
 │   └── update_check.py
 ├── processing/
+│   ├── driver_selection.py
 │   ├── metrics_store.py
 │   ├── replay.py
 │   ├── replay_model.py
@@ -287,6 +290,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   ├── fonts.py
 │   ├── layout.py
 │   ├── pages.py
+│   ├── preferences.py
 │   ├── replay_view.py
 │   ├── status.py
 │   ├── theme.py

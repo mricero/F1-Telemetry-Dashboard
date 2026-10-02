@@ -358,6 +358,10 @@ DASHBOARD_CSS = f"""
   font-variant-numeric: tabular-nums;
 }}
 .f1-code {{ font-family: var(--font-label); font-weight: 600; letter-spacing: .04em; }}
+/* A favourite driver (UX-03): underlined code, titled "Favourite driver". */
+.f1-tower tr.fav .f1-code {{
+  text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px;
+}}
 .f1-team {{
   font-family: var(--font-label); font-size: 11px; color: var(--text-dim);
   text-transform: uppercase; letter-spacing: .06em;

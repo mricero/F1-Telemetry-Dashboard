@@ -29,6 +29,7 @@ from processing.timing import (
     sector_leaders,
     theoretical_best,
 )
+from ui.preferences import favourite_drivers
 from ui.theme import (
     COMPOUND_LETTER,
     COMPOUND_RING,
@@ -364,8 +365,13 @@ def _speed_text(speed, word: str) -> str:
     return f"{float(speed):.0f}"
 
 
-def tower_html(rows: Sequence[dict]) -> str:
-    """The driver leaderboard matrix (spec section 3)."""
+def tower_html(rows: Sequence[dict], favourites: Sequence[str] = ()) -> str:
+    """The driver leaderboard matrix (spec section 3).
+
+    A favourite driver's code is underlined and titled (UX-03): a shape and a
+    word, so the mark does not depend on colour.
+    """
+    favourite = set(favourites or ())
     if not rows:
         return '<div class="f1-empty">No timing data for this session.</div>'
 
@@ -408,10 +414,15 @@ def tower_html(rows: Sequence[dict]) -> str:
             for number, s in enumerate(row["sectors"], start=1)
         )
 
+        is_favourite = row["code"] in favourite
+        row_classes = " ".join(
+            name for name, on in (("ko", row.get("knocked_out")), ("fav", is_favourite)) if on
+        )
+        code_title = ' title="Favourite driver"' if is_favourite else ""
         body.append(
-            f'<tr class="{"ko" if row.get("knocked_out") else ""}">'
+            f'<tr class="{row_classes}">'
             f'<td class="f1-pos" style="--team:{accent}">{row["position"]}</td>'
-            f'<td><div class="f1-code">{_esc(row["code"])}</div>'
+            f'<td><div class="f1-code"{code_title}>{_esc(row["code"])}</div>'
             f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
             f"<td>{_status_html(status or '')}</td>"
             f'<td><span class="{last_class} f1-num">{_esc(row["last_lap"])}</span></td>'
@@ -621,16 +632,21 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     return f'<div class="f1-map-wrap">{bench}{image}</div>{dominance_legend(dominance, meta)}'
 
 
-def render_dashboard(session_data: dict) -> None:
-    """Render the full timing dashboard on the spec's 60/40 grid."""
+def render_dashboard(session_data: dict, favourites: Sequence[str] | None = None) -> None:
+    """Render the full timing dashboard on the spec's 60/40 grid.
+
+    ``favourites`` defaults to the viewer's favourite drivers (UX-03).
+    """
     st.html(DASHBOARD_CSS)
+    if favourites is None:
+        favourites = favourite_drivers()
 
     rows = build_timing_rows(session_data)
     st.html(f'<div class="f1-dash">{header_html(session_data)}</div>')
 
     left, right = st.columns([6, 4], gap="small")
     with left:
-        st.html(f'<div class="f1-dash">{tower_html(rows)}</div>')
+        st.html(f'<div class="f1-dash">{tower_html(rows, favourites)}</div>')
     with right:
         st.html(f'<div class="f1-dash">{sector_cards_html(sector_leaders(rows))}</div>')
         st.html(f'<div class="f1-dash">{map_panel_html(session_data, rows)}</div>')

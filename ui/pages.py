@@ -10,6 +10,7 @@ before navigation, and each page reads it from ``st.session_state``.
 import streamlit as st
 
 from data.runtime_cache import runtime_cache
+from processing.driver_selection import classification_order
 from ui.dashboard import render_dashboard
 from ui.layout import (
     render_delay_input,
@@ -26,6 +27,7 @@ from ui.layout import (
     render_token_helper,
     render_weather,
 )
+from ui.preferences import only_drivers, render_driver_picker, render_favourites_picker
 from ui.replay_view import (
     FOCUS_PREFIX,
     cursor_key,
@@ -61,6 +63,10 @@ ANALYSIS_SECTIONS = (
     "Weather",
     "Race control",
 )
+
+# The sections that plot many drivers at once and follow the driver
+# selection (UX-03); Head-to-head picks its own two.
+DRIVER_SECTIONS = ("Telemetry", "Lap times", "Positions")
 
 SCOPE_NOTES = {
     "fastest": "Each driver's fastest lap: distance runs from 0 to the lap length, "
@@ -170,6 +176,14 @@ def analysis_page() -> None:
     revision = f"analysis:{context['session_key']}"
     year = (session_data.get("session_info") or {}).get("year")
     track_status = session_data.get("track_status")
+    # One driver selection for every multi-driver chart (UX-03).
+    drivers = (
+        render_driver_picker(
+            context["session_key"], classification_order(session_data, context["laps"])
+        )
+        if section in DRIVER_SECTIONS
+        else None
+    )
     if section == "Telemetry":
         scope = (session_data.get("session_info") or {}).get("telemetry_scope")
         note = SCOPE_NOTES.get(str(scope))
@@ -177,7 +191,10 @@ def analysis_page() -> None:
             st.caption(note)
         # 2026+ has no DRS: the channel is dropped instead of a flat zero (FEAT-12).
         render_telemetry_charts(
-            context["telemetry"](), context["color_map"], year=year, uirevision=revision
+            only_drivers(context["telemetry"](), drivers),
+            context["color_map"],
+            year=year,
+            uirevision=revision,
         )
     elif section == "Head-to-head":
         pair = tuple(code for code in (moment.get("focus"), moment.get("ahead")) if code)
@@ -188,6 +205,7 @@ def analysis_page() -> None:
             context["color_map"],
             marker_lap=moment.get("lap"),
             track_status=track_status,
+            drivers=drivers,
             uirevision=revision,
         )
     elif section == "Positions":
@@ -197,6 +215,7 @@ def analysis_page() -> None:
             marker_lap=moment.get("lap"),
             track_status=track_status,
             uirevision=revision,
+            drivers=drivers,
         )
     elif section == "Weather":
         render_weather(session_data.get("weather"), uirevision=revision)
@@ -266,7 +285,11 @@ def live_page() -> None:
 
 
 def settings_page() -> None:
-    """Caches, data locations and the version (UI-22)."""
+    """Preferences, caches, data locations and the version (UI-22)."""
+    context = st.session_state.get(CONTEXT_KEY) or {}
+    session_data = context.get("session_data") or {}
+    st.subheader("Preferences")
+    render_favourites_picker(classification_order(session_data, context.get("laps")))
     render_settings()
 
 
