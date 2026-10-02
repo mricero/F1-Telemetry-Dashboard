@@ -168,14 +168,16 @@ class TestLegacyPickles:
         assert loaded["session_info"]["gp"] == "Old GP"
         assert loaded["source"] == "replay"
 
-    def test_available_replays_lists_both_formats(self, manager):
+    def test_available_replays_hides_legacy_pickles(self, manager):
+        # SEC-02: no UI path passes allow_pickle, so offering one only errors;
+        # scripts/convert_legacy_replay.py turns it into a bundle instead.
         self._write_legacy(manager)
         manager.save_replay(_session(), "Monza_R")
 
         names = manager.get_available_replays()
 
-        assert any(name.endswith(".pkl") for name in names)
-        assert any(not name.endswith(".pkl") for name in names)
+        assert names, "the Parquet bundle is offered"
+        assert not any(name.endswith(".pkl") for name in names)
 
 
 class TestSchemaGuard:
@@ -189,6 +191,80 @@ class TestSchemaGuard:
 
         with pytest.raises(ValueError, match="update the app"):
             manager.get_session_data(source="replay", replay_file=str(path))
+
+
+class TestManifestIsValidated:
+    """SEC-02: meta.json is a shared file; it names only known tables and values."""
+
+    @staticmethod
+    def _tamper(manager, change) -> str:
+        from pathlib import Path
+
+        path = Path(manager.save_replay(_session(), "Monza_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        change(meta)
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return str(path)
+
+    def test_an_untouched_replay_still_loads(self, manager):
+        path = self._tamper(manager, lambda meta: None)
+
+        loaded = manager.get_session_data(source="replay", replay_file=path)
+
+        assert loaded["source"] == "replay"
+        assert loaded["is_live"] is False
+
+    def test_a_traversing_frame_dict_key_is_rejected(self, manager, tmp_path):
+        evil = tmp_path.parent / "evil"
+        evil.mkdir(exist_ok=True)
+        pd.DataFrame({"X": [1.0]}).to_parquet(evil / "VER.parquet")
+        path = self._tamper(manager, lambda meta: meta["frame_dicts"].update({"../evil": ["VER"]}))
+
+        with pytest.raises(ValueError, match=r"\.\./evil"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_a_traversing_frame_key_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["frames"].append("../laps"))
+
+        with pytest.raises(ValueError, match=r"\.\./laps"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_an_unknown_frame_dict_key_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["frame_dicts"].update({"secrets": []}))
+
+        with pytest.raises(ValueError, match="secrets"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_is_live_true_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["values"].update({"is_live": True}))
+
+        with pytest.raises(ValueError, match="is_live"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    @pytest.mark.parametrize("key", ["source", "live_client"])
+    def test_meta_cannot_set_the_source_or_a_live_client(self, manager, key):
+        path = self._tamper(manager, lambda meta: meta["values"].update({key: "live"}))
+
+        with pytest.raises(ValueError, match=key):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_an_unknown_value_key_is_rejected(self, manager):
+        path = self._tamper(manager, lambda meta: meta["values"].update({"telemetry": "x"}))
+
+        with pytest.raises(ValueError, match="telemetry"):
+            manager.get_session_data(source="replay", replay_file=path)
+
+    def test_a_schema_7_replay_with_source_and_is_live_false_still_opens(self, manager):
+        def legacy(meta):
+            meta["schema"] = 7
+            meta["values"].update({"source": "fastf1", "is_live": False})
+
+        loaded = manager.get_session_data(
+            source="replay", replay_file=self._tamper(manager, legacy)
+        )
+
+        assert loaded["source"] == "replay"
+        assert loaded["is_live"] is False
 
 
 class TestReplayStreams:
