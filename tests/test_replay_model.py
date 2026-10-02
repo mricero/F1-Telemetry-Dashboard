@@ -99,7 +99,8 @@ class TestRaceOrderWithoutAStream:
     """REPLAY-08 groundwork: timing-line estimates when the stream is empty."""
 
     @pytest.fixture(scope="class")
-    def estimated(self):
+    @classmethod
+    def estimated(cls):
         return fx.race_session(with_stream=False)
 
     def test_the_order_still_follows_the_laps(self, estimated):
@@ -288,7 +289,7 @@ class TestStreamsInTheSnapshot:
     def test_the_weather_is_the_last_reading_before_t(self, race, race_series):
         weather = snapshot_at(race, 1125.0, race_series)["weather"]
 
-        assert weather["Time"].iloc[-1] == pd.Timedelta(seconds=1120.0)
+        assert weather["Time"].iloc[-1] == pd.Timedelta(1120.0, unit="s")
 
     def test_the_flag_timeline(self, race):
         states = [state for _, state in flag_timeline(race)]
@@ -328,7 +329,7 @@ def _garbled(session: dict, moment: float, seed: int) -> dict:
     stamps = ["Time", "PitInTime", "PitOutTime"] + [f"Sector{n}SessionTime" for n in (1, 2, 3)]
     for column in stamps:
         after = (laps[column].dt.total_seconds() > moment).to_numpy()
-        laps.loc[after, column] = pd.Timedelta(seconds=moment) + later_by[:count][after]
+        laps.loc[after, column] = pd.Timedelta(moment, unit="s") + later_by[:count][after]
     # An out-lap whose car has not left the box yet: its new tyre is not known.
     waiting = laps["PitOutTime"].dt.total_seconds() > moment
     laps.loc[waiting.to_numpy() & touched, "Compound"] = "WET"
@@ -487,7 +488,7 @@ def _pit_lane_start_race(pit_out: float) -> dict:
     session = fx.race_session()
     laps = session["laps"].copy()
     first = (laps["Driver"] == "C") & (laps["LapNumber"] == 1)
-    laps.loc[first, "PitOutTime"] = pd.Timedelta(seconds=pit_out)
+    laps.loc[first, "PitOutTime"] = pd.Timedelta(pit_out, unit="s")
     laps["IsPitOutLap"] = laps["PitOutTime"].notna()
     session["laps"] = laps
     return session
@@ -531,9 +532,9 @@ def _red_flag_race() -> dict:
     for offset, code in enumerate(("A", "B", "C")):
         own = laps["Driver"] == code
         lap3, lap4 = own & (laps["LapNumber"] == 3), own & (laps["LapNumber"] == 4)
-        laps.loc[lap3, "PitInTime"] = pd.Timedelta(seconds=1220.0 + offset)
+        laps.loc[lap3, "PitInTime"] = pd.Timedelta(1220.0 + offset, unit="s")
         start4 = laps.loc[lap4, "LapStartTime"].iloc[0]
-        laps.loc[lap4, "PitOutTime"] = start4 + pd.Timedelta(seconds=3.0)
+        laps.loc[lap4, "PitOutTime"] = start4 + pd.Timedelta(3.0, unit="s")
     laps["IsPitOutLap"] = laps["PitOutTime"].notna()
     session["laps"] = laps
     session["track_status"] = pd.DataFrame(
@@ -599,12 +600,12 @@ def _big_race() -> dict:
                     "Driver": code,
                     "DriverNumber": str(number),
                     "LapNumber": float(lap),
-                    "LapTime": pd.Timedelta(seconds=lap_time),
-                    "Time": pd.Timedelta(seconds=end),
-                    "LapStartTime": pd.Timedelta(seconds=start),
-                    "Sector1Time": pd.Timedelta(seconds=lap_time / 3),
-                    "Sector2Time": pd.Timedelta(seconds=lap_time / 3),
-                    "Sector3Time": pd.Timedelta(seconds=lap_time / 3),
+                    "LapTime": pd.Timedelta(lap_time, unit="s"),
+                    "Time": pd.Timedelta(end, unit="s"),
+                    "LapStartTime": pd.Timedelta(start, unit="s"),
+                    "Sector1Time": pd.Timedelta(lap_time / 3, unit="s"),
+                    "Sector2Time": pd.Timedelta(lap_time / 3, unit="s"),
+                    "Sector3Time": pd.Timedelta(lap_time / 3, unit="s"),
                     "PitInTime": end - 5 if lap == 20 else np.nan,
                     "PitOutTime": start + 20 if lap == 21 else np.nan,
                     "Compound": "HARD" if lap > 20 else "MEDIUM",
@@ -656,7 +657,8 @@ class TestPerformance:
     """Budgets from REPLAY-03: snapshot < 150 ms, series < 2 s."""
 
     @pytest.fixture(scope="class")
-    def big_race(self):
+    @classmethod
+    def big_race(cls):
         return _big_race()
 
     def test_tower_series_is_under_two_seconds(self, big_race):

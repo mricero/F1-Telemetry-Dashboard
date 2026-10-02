@@ -47,3 +47,24 @@ def _isolated_user_files(tmp_path_factory, monkeypatch):
     # An installed copy would check GitHub for a newer release; tests never do.
     monkeypatch.setenv("F1_UPDATE_CHECK", "0")
     yield root
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _pandas_3_downcasting():
+    """Run every test under pandas 3's downcasting rule (CORE-02).
+
+    With ``future.no_silent_downcasting`` (the pandas 3 default), object
+    columns stay object after ``fillna``/``ffill``; code that relied on the
+    silent object->bool downcast breaks here first, not after the upgrade.
+    Together with ``filterwarnings = error`` this also turns pandas'
+    downcasting FutureWarning into a failure.
+    """
+    import pandas as pd
+
+    try:
+        pd.set_option("future.no_silent_downcasting", True)
+    except (KeyError, pd.errors.OptionError):  # pandas 3: the option is gone
+        yield
+        return
+    yield
+    pd.reset_option("future.no_silent_downcasting")

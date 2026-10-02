@@ -20,6 +20,8 @@ import json
 import logging
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -85,15 +87,32 @@ class MetricsStore:
         self.writes = 0  # commits that changed something; tests count them
         self._lock = threading.Lock()
         legacy = self._prepare_file() if self.persist else None
-        self._conn = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
-        if self.persist:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(_SCHEMA)
-        self._conn.commit()
+        # A file store opens a short-lived connection per operation, so no
+        # connection outlives its use (or its thread); an in-memory store
+        # has only the one connection it lives in.
+        self._shared = (
+            None if self.persist else sqlite3.connect(":memory:", check_same_thread=False)
+        )
+        with self._db() as conn:
+            if self.persist:
+                conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(_SCHEMA)
+            conn.commit()
         if legacy:
             self._import_legacy(legacy)
 
     # ---------------------------------------------------------------- io
+    @contextmanager
+    def _db(self) -> Iterator[sqlite3.Connection]:
+        if self._shared is not None:
+            yield self._shared
+            return
+        conn = sqlite3.connect(self.path, timeout=10)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _prepare_file(self) -> dict | None:
         """Make ``self.path`` usable as a database; return legacy JSON to import.
 
@@ -146,10 +165,10 @@ class MetricsStore:
 
     def _replace(self, label: str, circuit, rows: dict, metrics=LAP_METRICS) -> bool:
         """Make the stored ``metrics`` of ``label`` equal ``rows``; write only on change."""
-        with self._lock:
+        with self._lock, self._db() as conn:
             current = {
                 metric: (driver, value, lap)
-                for metric, driver, value, lap in self._conn.execute(
+                for metric, driver, value, lap in conn.execute(
                     "SELECT metric, driver, value, lap FROM records WHERE session = ?",
                     (label,),
                 )
@@ -158,13 +177,13 @@ class MetricsStore:
             if current == rows:
                 return False
             stamp = datetime.now(UTC).isoformat()
-            with self._conn:
+            with conn:
                 for metric in set(current) - set(rows):
-                    self._conn.execute(
+                    conn.execute(
                         "DELETE FROM records WHERE session = ? AND metric = ?", (label, metric)
                     )
                 for metric, (driver, value, lap) in rows.items():
-                    self._conn.execute(
+                    conn.execute(
                         "INSERT OR REPLACE INTO records VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (label, metric, circuit, driver, value, lap, stamp),
                     )
@@ -172,7 +191,8 @@ class MetricsStore:
             return True
 
     def close(self) -> None:
-        self._conn.close()
+        if self._shared is not None:
+            self._shared.close()
 
     # ------------------------------------------------------------ update
     @staticmethod
@@ -259,8 +279,8 @@ class MetricsStore:
 
     # ------------------------------------------------------------- read
     def session_records(self, label: str) -> dict:
-        with self._lock:
-            found = self._conn.execute(
+        with self._lock, self._db() as conn:
+            found = conn.execute(
                 "SELECT metric, driver, value, lap FROM records WHERE session = ?", (label,)
             ).fetchall()
         return {metric: _record(metric, driver, value, lap) for metric, driver, value, lap in found}
@@ -276,8 +296,8 @@ class MetricsStore:
         if circuit:
             query += " WHERE circuit = ?"
             params = (circuit,)
-        with self._lock:
-            found = self._conn.execute(query, params).fetchall()
+        with self._lock, self._db() as conn:
+            found = conn.execute(query, params).fetchall()
         agg: dict[str, dict] = {}
         best: dict[str, float] = {}
         for label, metric, driver, value, lap in found:

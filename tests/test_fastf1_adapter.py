@@ -83,10 +83,13 @@ class TestFastF1Adapter:
         assert cache_dir.exists()
 
     @patch("data.fastf1_adapter.fastf1.Cache.enable_cache")
-    def test_init_enables_cache(self, mock_enable_cache):
-        """Test that FastF1 cache is enabled"""
-        FastF1Adapter(cache_dir="./test_cache")
-        mock_enable_cache.assert_called_once_with("./test_cache")
+    def test_init_enables_cache(self, mock_enable_cache, tmp_path, monkeypatch):
+        """Test that FastF1 cache is enabled (in a temp folder: "./test_cache"
+        used to be created inside the repository on every run, TEST-08)"""
+        monkeypatch.setattr("data.fastf1_adapter._enabled_cache_dir", None)
+        cache_dir = str(tmp_path / "test_cache")
+        FastF1Adapter(cache_dir=cache_dir)
+        mock_enable_cache.assert_called_once_with(cache_dir)
 
     @patch("data.fastf1_adapter.fastf1.get_event_schedule")
     def test_get_available_sessions(self, mock_get_schedule):
@@ -659,8 +662,8 @@ class TestSegmentStarts:
     @staticmethod
     def _session(splits, start=1000.0):
         session = Mock()
-        session._session_split_times = [pd.Timedelta(seconds=s) for s in splits]
-        session.session_start_time = pd.Timedelta(seconds=start)
+        session._session_split_times = [pd.Timedelta(s, unit="s") for s in splits]
+        session.session_start_time = pd.Timedelta(start, unit="s")
         return session
 
     def test_a_race_has_no_segments(self):
@@ -710,4 +713,6 @@ class TestRaceControlClock:
 
         messages = FastF1Adapter.get_race_control(session)
 
-        assert messages["SessionTime"].iloc[0] == pd.Timedelta("2:36:29.151")
+        assert messages["SessionTime"].iloc[0] == pd.Timedelta(
+            2 * 3600 + 36 * 60 + 29.151, unit="s"
+        )

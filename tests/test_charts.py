@@ -29,7 +29,7 @@ def _laps(drivers=("VER", "HAM", "LEC", "NOR"), laps=5) -> pd.DataFrame:
                     "Driver": code,
                     "LapNumber": lap,
                     "Position": index + 1,
-                    "LapTime": pd.Timedelta(seconds=90 + index + lap * 0.1),
+                    "LapTime": pd.Timedelta(90 + index + lap * 0.1, unit="s"),
                     "IsPitOutLap": lap == 3,
                 }
             )
