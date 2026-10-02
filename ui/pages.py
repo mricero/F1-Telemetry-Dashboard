@@ -165,23 +165,43 @@ def analysis_page() -> None:
         )
         or ANALYSIS_SECTIONS[0]
     )
+    # Per session: zoom survives reruns of this session only (UX-02), and the
+    # race-control filters belong to one session (UX-06).
+    revision = f"analysis:{context['session_key']}"
+    year = (session_data.get("session_info") or {}).get("year")
+    track_status = session_data.get("track_status")
     if section == "Telemetry":
         scope = (session_data.get("session_info") or {}).get("telemetry_scope")
         note = SCOPE_NOTES.get(str(scope))
         if note:
             st.caption(note)
-        render_telemetry_charts(context["telemetry"](), context["color_map"])
+        # 2026+ has no DRS: the channel is dropped instead of a flat zero (FEAT-12).
+        render_telemetry_charts(
+            context["telemetry"](), context["color_map"], year=year, uirevision=revision
+        )
     elif section == "Head-to-head":
         pair = tuple(code for code in (moment.get("focus"), moment.get("ahead")) if code)
         render_driver_comparison(context["telemetry"](), context["color_map"], preselect=pair)
     elif section == "Lap times":
-        render_lap_times(context["laps"], context["color_map"], marker_lap=moment.get("lap"))
+        render_lap_times(
+            context["laps"],
+            context["color_map"],
+            marker_lap=moment.get("lap"),
+            track_status=track_status,
+            uirevision=revision,
+        )
     elif section == "Positions":
-        render_position_changes(context["laps"], context["color_map"], marker_lap=moment.get("lap"))
+        render_position_changes(
+            context["laps"],
+            context["color_map"],
+            marker_lap=moment.get("lap"),
+            track_status=track_status,
+            uirevision=revision,
+        )
     elif section == "Weather":
-        render_weather(session_data.get("weather"))
+        render_weather(session_data.get("weather"), uirevision=revision)
     elif section == "Race control":
-        render_race_control(session_data.get("race_control"))
+        render_race_control(session_data.get("race_control"), key=f"rc:{context['session_key']}")
 
 
 def records_page() -> None:
