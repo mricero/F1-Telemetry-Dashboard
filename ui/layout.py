@@ -20,6 +20,8 @@ import streamlit as st
 from config import config
 from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
+from data.openf1_adapter import FIRST_YEAR as OPENF1_FIRST_YEAR
+from data.openf1_adapter import get_team_radio
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from processing.timing import MISSING, format_lap, is_raining
@@ -1499,3 +1501,65 @@ def _speed_on_grid(df: pd.DataFrame, grid: np.ndarray | None = None):
         if grid.size < 10:
             return None, None
     return grid, np.interp(grid, distance, speed)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _team_radio_cached(
+    year: int,
+    session_name: str,
+    date: str | None,
+    country: str | None,
+    drivers: pd.DataFrame | None,
+    session_start: float | None,
+) -> pd.DataFrame:
+    """OpenF1 team radio, fetched once an hour per session (FEAT-05)."""
+    stamp = pd.to_datetime(date, errors="coerce") if date else None
+    return get_team_radio(year, session_name, stamp, country, drivers, session_start)
+
+
+def render_team_radio(session_data: dict) -> None:
+    """The session's team radio as a table of links (FEAT-05).
+
+    The page never fetches a recording: each row links to the MP3 and the
+    viewer opens it. OpenF1 has them from 2023 on.
+    """
+    info = session_data.get("session_info") or {}
+    year = info.get("year")
+    name = info.get("session_name")
+    if session_data.get("is_live") or not year or not name:
+        show(DataStatus.unavailable("Team radio is listed for finished sessions only"))
+        return
+    if int(year) < OPENF1_FIRST_YEAR:
+        show(DataStatus.unavailable(f"OpenF1 has team radio from {OPENF1_FIRST_YEAR} onwards"))
+        return
+    date = info.get("date")
+    try:
+        radio = _team_radio_cached(
+            int(year),
+            str(name),
+            None if date is None else str(date),
+            info.get("country"),
+            session_data.get("drivers"),
+            info.get("session_start"),
+        )
+    except ConnectionError:
+        show(DataStatus.unavailable("OpenF1 could not be reached, so team radio is not listed"))
+        return
+    if radio.empty:
+        show(DataStatus.empty("team radio on OpenF1"))
+        return
+    table = radio.copy()
+    table["Clock"] = [
+        "" if pd.isna(t) else f"{int(t) // 3600}:{int(t) % 3600 // 60:02d}:{int(t) % 60:02d}"
+        for t in table["Time"]
+    ]
+    st.caption(
+        f"{len(table)} recordings from OpenF1. Each link opens the audio on F1's server; "
+        "the clock is approximate."
+    )
+    st.dataframe(
+        table[["Clock", "Driver", "Url"]],
+        hide_index=True,
+        width="stretch",
+        column_config={"Url": st.column_config.LinkColumn("Recording", display_text="Open")},
+    )

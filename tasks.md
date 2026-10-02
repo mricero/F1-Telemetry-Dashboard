@@ -330,3 +330,7 @@ IMPROVEMENTS.md revision 3 (2026-09-24, Azerbaijan GP weekend). Offline gates: 9
 - **REPLAY-15** — Only the current session's replay model and payload stay in `st.session_state`; sector cards are memoised per moment.
 - **REPLAY-16** — Snapshot + tower 173 ms → ~130 ms (per-column writes, vectorised sector bests); the seconds-series perf test takes the best of three runs with 25 % slack.
 - **UI-08** — `baseRadius = "4px"` so Streamlit's own widgets follow guideline 5.6.
+
+## Round 9 — revision 4 review
+
+- **FEAT-05** — Analysis > Team radio lists OpenF1 `team_radio` (2023+, no key, F1TV token never sent) as links; the page never fetches audio. Fetch is `@st.cache_data(ttl=3600)`; clock is date minus OpenF1 `date_start` plus `session_start` (approximate).

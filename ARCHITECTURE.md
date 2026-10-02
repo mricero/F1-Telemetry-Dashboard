@@ -65,6 +65,7 @@ producing that dict, not touching `ui/`.
 | Module | Role |
 |---|---|
 | `data/fastf1_adapter.py` | FastF1 sessions: laps (with `IsPitOutLap` derived from `PitOutTime`), stints, telemetry and location from the merged `get_telemetry()` under the `fastest`/`session` scope, whole-session positions on a 0.5 s grid, timing stream, track status, weather, race control, compound colours. |
+| `data/openf1_adapter.py` | OpenF1 client for the team radio list (2023 onwards, no key, never the F1TV token): finds the session, returns recording links with session-clock times. Shown on the Analysis page; recordings are links, never fetched by the app. |
 | `data/jolpica_adapter.py` | Jolpica (Ergast-compatible) REST client with pagination, a request throttle and 429 `Retry-After` retries: schedules, results, standings, lap times, pit stops. `DataSourceManager` holds one; the load path does not call it today. |
 | `data/source_manager.py` | `DataSourceManager`: `get_session_data()` for `fastf1`, `live` and `replay`; `live_session()` (the session on air, from the FastF1 schedule); `poll_live_data()` for the live view; `save_replay()` / `_load_replay()` for the Parquet replay format. |
 | `data/signalr_core.py` | SignalR Core client: negotiate (`AWSALBCORS` cookie, `negotiateVersion=1`), socket, `Subscribe`, 10 s pings, reconnect with backoff (longer after 401/403/429), optional `Authorization: Bearer` token. |
@@ -262,6 +263,7 @@ variable `PUBLISH_PYPI` is `true`.
 ├── docs/history/               # superseded research notes
 ├── data/
 │   ├── fastf1_adapter.py
+│   ├── openf1_adapter.py
 │   ├── jolpica_adapter.py
 │   ├── live_adapter.py
 │   ├── live_recorder.py

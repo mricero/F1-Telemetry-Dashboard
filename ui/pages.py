@@ -21,6 +21,7 @@ from ui.layout import (
     render_position_changes,
     render_race_control,
     render_settings,
+    render_team_radio,
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
@@ -60,6 +61,7 @@ ANALYSIS_SECTIONS = (
     "Positions",
     "Weather",
     "Race control",
+    "Team radio",
 )
 
 SCOPE_NOTES = {
@@ -202,6 +204,8 @@ def analysis_page() -> None:
         render_weather(session_data.get("weather"), uirevision=revision)
     elif section == "Race control":
         render_race_control(session_data.get("race_control"), key=f"rc:{context['session_key']}")
+    elif section == "Team radio":
+        render_team_radio(session_data)
 
 
 def records_page() -> None:
