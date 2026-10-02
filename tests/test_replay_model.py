@@ -474,6 +474,47 @@ class TestPractice:
         assert _order(session, 600.0)[0] == "E"  # E's 90.5 comes last
 
 
+PIT_LANE_EXIT = fx.LIGHTS_OUT + 20.0
+
+
+def _pit_lane_start_race(pit_out: float) -> dict:
+    """The race with C's lap 1 carrying a PitOutTime at ``pit_out``.
+
+    FastF1 stamps lap 1's PitOutTime for a pit-lane starter when it leaves
+    the pit exit after the field; a grid starter's lap 1 may carry the
+    moment it left the garage, long before lights out.
+    """
+    session = fx.race_session()
+    laps = session["laps"].copy()
+    first = (laps["Driver"] == "C") & (laps["LapNumber"] == 1)
+    laps.loc[first, "PitOutTime"] = pd.Timedelta(seconds=pit_out)
+    laps["IsPitOutLap"] = laps["PitOutTime"].notna()
+    session["laps"] = laps
+    return session
+
+
+class TestPitLaneStart:
+    """REPLAY-27: a pit-lane starter waits IN PIT until it leaves the pit exit."""
+
+    def test_in_pit_from_lights_out_until_pit_out(self):
+        series = tower_series(_pit_lane_start_race(PIT_LANE_EXIT))
+
+        assert series.value("C", "status", fx.LIGHTS_OUT + 5) == IN_PIT
+        assert series.value("C", "status", PIT_LANE_EXIT - 0.1) == IN_PIT
+        assert series.value("C", "status", PIT_LANE_EXIT) == ON_TRACK
+        assert series.value("C", "status", fx.C_PIT_IN) == IN_PIT  # the real stop
+
+    def test_a_grid_starter_that_left_the_garage_before_the_start_is_on_track(self):
+        series = tower_series(_pit_lane_start_race(fx.LIGHTS_OUT - 1800.0))
+
+        assert series.value("C", "status", fx.LIGHTS_OUT + 5) == ON_TRACK
+
+    def test_the_pit_lane_start_is_not_a_pit_stop(self):
+        series = tower_series(_pit_lane_start_race(PIT_LANE_EXIT))
+
+        assert series.value("C", "pits", PIT_LANE_EXIT + 1) == 0
+
+
 RED_START, RED_END = 1215.0, 1290.0
 
 
