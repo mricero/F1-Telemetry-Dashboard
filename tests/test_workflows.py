@@ -134,3 +134,33 @@ class TestDependabot:
         ecosystems = {update["package-ecosystem"] for update in config["updates"]}
 
         assert {"pip", "github-actions", "pre-commit"} <= ecosystems
+
+
+@pytest.fixture(scope="module")
+def release() -> dict:
+    return _load(WORKFLOWS / "release.yml")
+
+
+class TestReleaseWorkflow:
+    """DIST-06: a v* tag builds, checks the version, smoke-installs, releases."""
+
+    def test_runs_on_version_tags(self, release):
+        assert release["on"]["push"]["tags"] == ["v*"]
+
+    def test_the_tag_must_match_the_version(self, release):
+        text = _steps_text(release["jobs"]["build"])
+        assert "uv build" in text
+        assert 'GITHUB_REF_NAME}" != "v' in text
+
+    def test_smoke_installs_on_windows_and_linux(self, release):
+        smoke = release["jobs"]["smoke"]
+        assert set(smoke["strategy"]["matrix"]["os"]) == {"ubuntu-latest", "windows-latest"}
+        assert "f1dash --version" in _steps_text(smoke)
+
+    def test_the_release_carries_the_installers(self, release):
+        text = _steps_text(release["jobs"]["release"])
+        assert "install.ps1" in text and "install.sh" in text
+        assert release["jobs"]["release"]["permissions"] == {"contents": "write"}
+
+    def test_pypi_is_opt_in(self, release):
+        assert "PUBLISH_TO_PYPI" in release["jobs"]["pypi"]["if"]
