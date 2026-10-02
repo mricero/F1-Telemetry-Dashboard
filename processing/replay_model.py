@@ -222,10 +222,22 @@ def format_laptime(seconds: float | None) -> str:
     return f"{int(minutes)}:{rest:06.3f}"
 
 
+_PLAIN_TYPES = frozenset((str, bool, int, tuple))
+
+
 def _clean(value):
     """NaN/NA/NaT -> None, numpy scalars -> Python, so values compare plainly."""
     if value is None:
         return None
+    # Fast paths for the plain values nearly every call sees: pd.isna on each
+    # of ~600 k values was most of tower_series' time (REPLAY-28).
+    kind = type(value)
+    if kind is float:
+        return None if value != value else value
+    if kind is np.float64:
+        return None if value != value else float(value)
+    if kind in _PLAIN_TYPES:
+        return value
     try:
         if pd.isna(value):
             return None
@@ -256,10 +268,16 @@ class FieldSeries:
         return len(self.v)
 
 
+def _is_moment(t) -> bool:
+    if isinstance(t, float):  # Python and NumPy floats: NaN is not equal to itself
+        return t == t
+    return t is not None and not pd.isna(t)
+
+
 def _series(points: Iterable[tuple[float, object]]) -> FieldSeries:
     """Sorted, with consecutive repeats removed (a point only on a change)."""
     ordered = sorted(
-        ((float(t), _clean(v)) for t, v in points if t is not None and not pd.isna(t)),
+        ((float(t), _clean(v)) for t, v in points if _is_moment(t)),
         key=lambda item: item[0],
     )
     times: list[float] = []
@@ -1163,7 +1181,10 @@ def _race_from_stream(stream: pd.DataFrame, codes: list[str]) -> dict[str, dict[
         def column(name: str, own=own) -> list:
             if name not in own.columns:
                 return [None] * len(own)
-            return [_clean(value) for value in own[name].tolist()]
+            # Missing values become None once per column, not per value
+            # (REPLAY-28); tolist() already yields Python scalars.
+            values = own[name]
+            return values.astype(object).where(values.notna(), None).tolist()
 
         position = _series(_settled_positions(own))
         gap_s, gap_laps = column("GapSeconds"), column("GapLapsDown")

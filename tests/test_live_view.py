@@ -278,3 +278,66 @@ class TestFullFeedThroughTheRealIngestPath:
         html = " ".join(str(element.proto) for element in app.get("html"))
 
         assert "OFFLINE" in html  # no client started in this test
+
+
+class TestOnlyTheOpenTabIsDrawn:
+    """LIVE-35: with the Weather tab open, the telemetry figures are not rebuilt."""
+
+    def test_the_weather_tab_draws_one_chart(self, live_app):
+        from ui.layout import LIVE_TAB_KEY
+
+        live_app.session_state[LIVE_TAB_KEY] = "Weather"
+        live_app.run()
+
+        assert not live_app.exception, live_app.exception
+        charts = live_app.get("plotly_chart")
+        assert len(charts) == 1
+
+
+class TestTokenHelper:
+    """LIVE-24: the token line and the paste box."""
+
+    @staticmethod
+    def _jwt(exp: int) -> str:
+        import base64
+        import json
+
+        def part(data: dict) -> str:
+            raw = json.dumps(data).encode()
+            return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+        return f"{part({'alg': 'none'})}.{part({'exp': exp})}.sig"
+
+    def test_an_expired_token_says_so(self):
+        from datetime import UTC, datetime
+
+        from ui.layout import token_line
+
+        now = datetime(2026, 10, 2, tzinfo=UTC)
+        expired = self._jwt(int(datetime(2026, 9, 30, tzinfo=UTC).timestamp()))
+        valid = self._jwt(int(datetime(2026, 10, 5, 12, tzinfo=UTC).timestamp()))
+
+        assert "expired" in token_line(expired, now=now)
+        assert "3 more day" in token_line(valid, now=now)
+        assert token_line(None).startswith("No subscription token")
+
+    def test_saving_writes_exactly_one_line(self, tmp_path, monkeypatch):
+        from data.token_store import save_subscription_token
+
+        env = tmp_path / ".env"
+        env.write_text(
+            "LOG_LEVEL=INFO\nF1TV_SUBSCRIPTION_TOKEN=old\nexport F1TV_SUBSCRIPTION_TOKEN=older\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("F1TV_SUBSCRIPTION_TOKEN", raising=False)
+
+        save_subscription_token("new-token", env)
+
+        lines = env.read_text(encoding="utf-8").splitlines()
+        assert lines == ["LOG_LEVEL=INFO", "F1TV_SUBSCRIPTION_TOKEN=new-token"]
+
+    def test_a_multi_line_value_is_refused(self, tmp_path):
+        from data.token_store import save_subscription_token
+
+        with pytest.raises(ValueError):
+            save_subscription_token("a\nb", tmp_path / ".env")
