@@ -88,7 +88,7 @@ them. This is the single most important thing to preserve:
 ```
 
 A replay is a directory of Parquet tables plus `meta.json`, which carries a `schema` version
-(currently **7**); `_load_replay` accepts older replays by defaulting the keys they lack, and
+(currently **8**); `_load_replay` accepts older replays by defaulting the keys they lack, and
 rejects newer ones with a clear message. Bump `REPLAY_SCHEMA_VERSION` whenever this dict
 gains or changes a persisted key. Legacy `.pkl` replays are refused (unpickling runs code);
 `scripts/convert_legacy_replay.py --trust` converts ones the user made.
