@@ -57,7 +57,9 @@ def to_seconds(value) -> float | None:
     if isinstance(value, np.timedelta64):
         value = pd.Timedelta(value)
     if isinstance(value, pd.Timedelta):
-        return None if pd.isna(value) else _round3(value.total_seconds())
+        # Scalar Timedelta.total_seconds() truncates to microseconds, the
+        # Series one keeps nanoseconds; use ns / 1e9 so both round alike.
+        return None if pd.isna(value) else _round3(value.value / 1e9)
     if isinstance(value, _dt_timedelta):
         return _round3(value.total_seconds())
     if isinstance(value, (int, float, np.integer, np.floating)):
