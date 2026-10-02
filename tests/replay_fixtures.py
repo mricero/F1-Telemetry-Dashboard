@@ -46,7 +46,12 @@ TIME_COLUMNS = (
 
 
 def _td(values) -> pd.Series:
-    return pd.to_timedelta(pd.Series(values, dtype="float64"), unit="s")
+    # Through integer nanoseconds: pandas' float cast multiplies the NaN
+    # slots too and, depending on memory left by earlier tests, warned
+    # "overflow encountered in multiply".
+    seconds = pd.Series(values, dtype="float64")
+    nanos = (seconds * 1e9).round().astype("Int64")
+    return pd.to_timedelta(nanos, unit="ns")
 
 
 def _drivers(codes) -> pd.DataFrame:
