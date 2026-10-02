@@ -12,6 +12,7 @@ import streamlit as st
 from config import config
 from data.fastf1_adapter import clear_session_cache
 from data.runtime_cache import runtime_cache
+from ui import units
 from ui.dashboard import render_dashboard
 from ui.layout import (
     app_version,
@@ -351,6 +352,21 @@ def live_page() -> None:
 def settings_page() -> None:
     """Caches, file locations and the version (UI-22)."""
     st.markdown(f"**Version** {app_version()}")
+
+    st.subheader("Units")
+    labels = {units.METRIC: "Metric (km/h, \u00b0C)", units.IMPERIAL: "Imperial (mph, \u00b0F)"}
+    current = units.preference()
+    chosen = st.radio(
+        "Units",
+        list(labels),
+        index=list(labels).index(current),
+        format_func=labels.get,
+        key="settings_units",
+        label_visibility="collapsed",
+        horizontal=True,
+    )
+    if chosen != current or st.session_state.get(units.UNITS_KEY) != chosen:
+        units.set_preference(chosen)
 
     st.subheader("Caches")
     st.caption(

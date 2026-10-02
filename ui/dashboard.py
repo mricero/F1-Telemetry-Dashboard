@@ -28,6 +28,7 @@ from processing.timing import (
     sector_leaders,
     theoretical_best,
 )
+from ui import units
 from ui.theme import (
     COMPOUND_LETTER,
     COMPOUND_RING,
@@ -66,6 +67,8 @@ TOWER_COLUMNS = [
 
 # Columns dropped below 1200 px (guideline 5.5: low-priority columns first).
 COLUMN_CLASSES = {"Tyre history": "col-compact", "Diff": "col-compact", "Speed km/h": "col-compact"}
+# The speed column's heading follows the viewer's units (UX-12).
+SPEED_COLUMN = "Speed km/h"
 
 _CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
@@ -208,23 +211,27 @@ def header_html(session_data: dict) -> str:
             f'<span class="f1-env-value {extra} f1-num">{value}</span></div>'
         )
 
-    def number(key: str, unit: str, digits: int = 1) -> str:
+    def number(key: str, unit: str, digits: int = 1, convert=None) -> str:
         value = latest.get(key)
         value = pd.to_numeric(value, errors="coerce") if value is not None else None
         if value is None or pd.isna(value):
             return MISSING
+        if convert is not None:
+            value = convert(float(value))
         return f"{float(value):.{digits}f} {unit}"
 
     rain = latest.get("Rainfall")
     rain_yes = bool(rain) and not pd.isna(rain)
-    wind_speed = wind_kmh(latest.get("WindSpeed"))
+    wind_speed = units.speed(wind_kmh(latest.get("WindSpeed")))
     direction = latest.get("WindDirection")
     wind = (
-        f"{_wind_arrow(direction)} {wind_speed:.1f} km/h {_cardinal(direction)}".strip()
+        f"{_wind_arrow(direction)} {wind_speed:.1f} {units.speed_unit()} "
+        f"{_cardinal(direction)}".strip()
         if wind_speed is not None
         else MISSING
     )
 
+    temp_unit = _esc(units.temperature_unit()).replace("\u00b0", "&deg;")
     # REPLAY-08: without the timing stream (an old replay, or FastF1 could
     # not provide it) race gaps are measured at the timing lines. Say so.
     estimated_note = (
@@ -247,8 +254,8 @@ def header_html(session_data: dict) -> str:
   </div>
   <div class="f1-env">
     {reading("Wind", wind)}
-    {reading("Track", number("TrackTemp", "&deg;C"))}
-    {reading("Air", number("AirTemp", "&deg;C"))}
+    {reading("Track", number("TrackTemp", temp_unit, convert=units.temperature))}
+    {reading("Air", number("AirTemp", temp_unit, convert=units.temperature))}
     {reading("Humidity", number("Humidity", "%"))}
     {reading("Pressure", number("Pressure", "mb"))}
     {reading("Rain", "YES" if rain_yes else "NO", "rain-yes" if rain_yes else "")}
@@ -355,7 +362,7 @@ def _speed_text(speed, word: str) -> str:
         return MISSING
     if word == "PIT" and float(speed) == 0.0:
         return MISSING
-    return f"{float(speed):.0f}"
+    return f"{float(units.speed(float(speed))):.0f}"
 
 
 def tower_html(rows: Sequence[dict]) -> str:
@@ -363,7 +370,12 @@ def tower_html(rows: Sequence[dict]) -> str:
     if not rows:
         return '<div class="f1-empty">No timing data for this session.</div>'
 
-    head = "".join(f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(c)}</th>' for c in TOWER_COLUMNS)
+    speed_label = f"Speed {units.speed_unit()}"
+    head = "".join(
+        f'<th class="{COLUMN_CLASSES.get(c, "")}">'
+        f"{_esc(speed_label if c == SPEED_COLUMN else c)}</th>"
+        for c in TOWER_COLUMNS
+    )
     body: list[str] = []
 
     for row in rows:

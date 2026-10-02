@@ -24,6 +24,7 @@ from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from processing.timing import MISSING, format_lap
 from processing.track_periods import lap_spans, lap_states
+from ui import units
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
 from ui.status import DataStatus, show
@@ -524,6 +525,9 @@ def create_telemetry_chart(
     """
     col = config["col"]
     unit = config["unit"]
+    convert = None
+    if col == "Speed":  # UX-12: drawn in the viewer's units
+        unit, convert = units.speed_unit(), units.speed
 
     fig = go.Figure()
     has_data = False
@@ -537,10 +541,11 @@ def create_telemetry_chart(
         frame = decimate_by_distance(df)
         suffix = f" {unit}" if unit else ""
         line = dict(color=color, shape="hv") if col == "Gear" else dict(color=color, width=2)
+        values = frame[col] if convert is None else convert(pd.to_numeric(frame[col]))
         fig.add_trace(
             go.Scattergl(
                 x=frame["Distance"],
-                y=frame[col],
+                y=values,
                 mode="lines",
                 name=driver,
                 line=line,
@@ -1157,19 +1162,23 @@ def render_weather(
     latest = weather_df.iloc[-1]
     cols = st.columns(5)
     # Wind arrives in m/s and is shown in km/h, matching the dashboard header.
+    temp = units.temperature_unit()
     readings = [
-        ("Air", "AirTemp", "°C", None),
-        ("Track", "TrackTemp", "°C", None),
+        ("Air", "AirTemp", temp, units.temperature),
+        ("Track", "TrackTemp", temp, units.temperature),
         ("Humidity", "Humidity", "%", None),
-        ("Wind", "WindSpeed", "km/h", wind_kmh),
+        ("Wind", "WindSpeed", units.speed_unit(), lambda v: units.speed(wind_kmh(v))),
         ("Pressure", "Pressure", "mbar", None),
     ]
     for col, (label, key, unit, convert) in zip(cols, readings, strict=False):
         # The live feed sends these as strings ("21.0"); FastF1 sends floats.
         value = pd.to_numeric(latest.get(key), errors="coerce")
-        if convert is not None:
+        if convert is not None and pd.notna(value):
             value = convert(value)
-        col.metric(label, f"{value:g} {unit}" if pd.notna(value) else MISSING)
+        col.metric(
+            label,
+            f"{float(value):.1f} {unit}" if value is not None and pd.notna(value) else MISSING,
+        )
 
     if "Rainfall" in weather_df.columns and bool(weather_df["Rainfall"].any()):
         st.warning("Rainfall recorded during this session")
@@ -1177,14 +1186,14 @@ def render_weather(
     x = _elapsed_minutes(weather_df)
     fig = go.Figure()
     for key, label, color in (
-        ("TrackTemp", "Track temp (°C)", CHART_WARM),
-        ("AirTemp", "Air temp (°C)", CHART_COOL),
+        ("TrackTemp", f"Track temp ({temp})", CHART_WARM),
+        ("AirTemp", f"Air temp ({temp})", CHART_COOL),
     ):
         if key in weather_df.columns:
             fig.add_trace(
                 go.Scatter(
                     x=x,
-                    y=weather_df[key],
+                    y=units.temperature(pd.to_numeric(weather_df[key], errors="coerce")),
                     mode="lines",
                     name=label,
                     line=dict(color=color, width=2),
@@ -1204,7 +1213,7 @@ def render_weather(
 
     fig.update_layout(
         xaxis_title="Session time (min)",
-        yaxis=dict(title="Temperature (°C)"),
+        yaxis=dict(title=f"Temperature ({temp})"),
         yaxis2=dict(title="Humidity (%)", overlaying="y", side="right", showgrid=False),
         hovermode="x unified",
         height=340,
@@ -1346,16 +1355,18 @@ def render_driver_comparison(
         fig.add_trace(
             go.Scatter(
                 x=df["Distance"],
-                y=df["Speed"],
+                y=units.speed(pd.to_numeric(df["Speed"])),
                 mode="lines",
                 name=driver,
                 line=dict(color=color_map.get(driver, NEUTRAL_GREY), width=2),
-                hovertemplate=f"{driver}: %{{y}} km/h<br>%{{x:.0f}} m<extra></extra>",
+                hovertemplate=(
+                    f"{driver}: %{{y:.0f}} {units.speed_unit()}<br>%{{x:.0f}} m<extra></extra>"
+                ),
             )
         )
     fig.update_layout(
         xaxis_title="Distance (m)",
-        yaxis_title="Speed (km/h)",
+        yaxis_title=f"Speed ({units.speed_unit()})",
         hovermode="x unified",
         height=380,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -1575,11 +1586,11 @@ def render_speed_traps(laps_df: pd.DataFrame, drivers=None):
         shown = table if drivers is None else table[table["Driver"].isin(list(drivers))]
         shown = shown.assign(
             Pos=range(1, len(shown) + 1),
-            Speed=shown["Speed"].round(0).astype(int),
+            Speed=units.speed(shown["Speed"]).round(0).astype(int),
             Lap=pd.to_numeric(shown["Lap"], errors="coerce").astype("Int64"),
         )[["Pos", "Driver", "Speed", "Lap"]]
         with column:
-            st.markdown(f"**{name}** (km/h)")
+            st.markdown(f"**{name}** ({units.speed_unit()})")
             st.dataframe(shown, hide_index=True, width="stretch")
 
 
