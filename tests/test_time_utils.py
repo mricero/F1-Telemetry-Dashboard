@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from processing.time_utils import seconds_series, to_seconds
@@ -99,6 +99,8 @@ class TestSecondsSeriesProperty:
 
     @settings(max_examples=100, deadline=None)
     @given(st.lists(st.floats(0, 10**5), min_size=1, max_size=20))
+    @example([82147.87850033071])  # sub-microsecond tie: .8785003 rounds up
+    @example([12058.206500042881])
     def test_timedelta_columns_match_the_scalar_parser(self, seconds):
         series = pd.Series(pd.to_timedelta(seconds, unit="s"))
         assert seconds_series(series).equals(series.map(to_seconds).astype("float64"))
