@@ -474,3 +474,12 @@ class TestReplayModelOnARealRace:
         per = tenth.set_index("Driver").loc["PER", "end"]
         gap = float(next(row["gap"] for row in rows if row["code"] == "PER").lstrip("+"))
         assert abs(gap - (per - ver)) < 0.5
+
+
+class TestOpenF1Live:
+    def test_team_radio_2023_italian_grand_prix(self):
+        from data.openf1_adapter import get_team_radio
+
+        radio = get_team_radio(2023, "Race", pd.Timestamp("2023-09-03 13:00"), "Italy")
+        assert not radio.empty
+        assert radio["Url"].str.endswith(".mp3").all()

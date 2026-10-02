@@ -335,3 +335,4 @@ IMPROVEMENTS.md revision 3 (2026-09-24, Azerbaijan GP weekend). Offline gates: 9
 
 - **UX-03** — Analysis driver multiselect (default top five, `drivers=` in the URL, validated) drives Telemetry, Lap times and Positions; favourites (`fav=`, Settings) are underlined in the tower.
 - **REPLAY-28** — `tower_series` on the 22-car race 0.45 s → ~0.14 s: stream columns are cleaned with one vectorised NA test, change-point series come from numpy masks, lap rows from `tolist()`; an oracle test keeps the old builders and compares every series.
+- **FEAT-05** — Analysis > Team radio lists OpenF1 `team_radio` (2023+, no key, F1TV token never sent) as links; the page never fetches audio. Fetch is `@st.cache_data(ttl=3600)`; clock is date minus OpenF1 `date_start` plus `session_start` (approximate).
