@@ -641,6 +641,9 @@ class FastF1Adapter:
         # let the lap view be read alongside tyre choice without a second query.
         cols = [
             "Driver",
+            # Car number as text ("44"): race control names deleted laps by
+            # number, so the replay matches them on it (REPLAY-20).
+            "DriverNumber",
             "LapNumber",
             "LapTime",
             # Session time at the lap's end: the header's session duration and
