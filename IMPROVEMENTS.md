@@ -909,7 +909,7 @@ Still valid. Each gets `Files:` and `Acceptance:` written in as the first step o
 - [x] **FEAT-02** · M — **Pit rejoin predictor:** current gap minus the circuit's pit loss, from a per-circuit table seeded from historical `PitInTime → PitOutTime` medians. — done
 - [x] **FEAT-03** · M — **Tyre degradation and stint pace:** fuel-corrected lap time against tyre age per compound, excluding in/out laps, SC laps and `IsAccurate == False`. Status: open; the laps frame drops FastF1's `TrackStatus` column (`data/fastf1_adapter.py:491-525`), which is needed to exclude SC laps. Keep it. — done
 - [x] **FEAT-05** · S — **Team radio list:** OpenF1 `team_radio` (historical, free from 2023); the live feed's `TeamRadio` is auth-gated. Respect the token rules. — done
-- [ ] **FEAT-06** · S — **Standings panels** via Jolpica (`get_driver_standings` / `get_constructor_standings` exist with no callers), with a points-after-this-race projection for live races.
+- [x] **FEAT-06** · S — **Standings panels** via Jolpica (`get_driver_standings` / `get_constructor_standings` exist with no callers), with a points-after-this-race projection for live races. — done
 - [x] **FEAT-07** · S — **Linear track-position strip:** every car on a straight 0 → lap-length line, readable on mobile, good for spotting overtake-mode trains. — done
 - [x] **FEAT-09** · S — **Speed-trap and sector ranking panel.** Status: partly done (sector top-3 cards and a top-speed column exist); still missing the I1/I2/FL/ST ranking. — done
 - [ ] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params.

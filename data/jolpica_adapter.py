@@ -227,12 +227,20 @@ class JolpicaAdapter:
         return self._fetch(f"{year}/{round_num}/{session}/practice.json")
 
     @_instance_memo(maxsize=32)
-    def get_driver_standings(self, year: int) -> dict:
-        return self._fetch(f"{year}/driverStandings.json")
+    def get_driver_standings(self, year: int, round_num: int | None = None) -> dict:
+        """Driver standings after ``round_num`` (the season's latest when omitted)."""
+        return self._fetch(self._standings_endpoint(year, round_num, "driverStandings"))
 
     @_instance_memo(maxsize=32)
-    def get_constructor_standings(self, year: int) -> dict:
-        return self._fetch(f"{year}/constructorStandings.json")
+    def get_constructor_standings(self, year: int, round_num: int | None = None) -> dict:
+        """Constructor standings after ``round_num`` (the latest when omitted)."""
+        return self._fetch(self._standings_endpoint(year, round_num, "constructorStandings"))
+
+    @staticmethod
+    def _standings_endpoint(year: int, round_num: int | None, table: str) -> str:
+        if round_num is None:
+            return f"{year}/{table}.json"
+        return f"{year}/{int(round_num)}/{table}.json"
 
     @_instance_memo(maxsize=64)
     def get_driver_info(self, year: int) -> dict:

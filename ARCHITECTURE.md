@@ -94,6 +94,7 @@ producing that dict, not touching `ui/`.
 | `processing/replay.py` | `ReplayClock` (start, lights out, end) and the `PositionCube`: every car's position on one regular time grid. |
 | `processing/replay_model.py` | `tower_series()` change-point series and `snapshot_at(t)`: the session as it stood at `t`, never reading rows stamped after it; `events()` for jump targets. |
 | `processing/replay_payload.py` | `build_replay_payload()`: the JSON-safe dict the browser player animates (clock, track, packed positions, tower series with display strings, flags, race control, weather, lap marks). |
+| `processing/standings.py` | Jolpica standings parsed to frames, the calendar round of a session, and the points-after-this-race projection (race 25-18-..., sprint 8-7-..., no fastest-lap point since 2025). |
 | `processing/driver_selection.py` | Which drivers the Analysis charts plot: classification order, the top-five default and the `drivers=` URL form (UX-03). |
 | `processing/metrics_store.py` | `MetricsStore`: persistent fastest lap, sector bests and top speed per session and all-time, in SQLite (WAL mode). |
 
@@ -110,6 +111,7 @@ producing that dict, not touching `ui/`.
 | `ui/track_map.py` | The SVG track map: outline, corner numbers, dominance layer, car markers. |
 | `ui/theme.py` | Colour tokens (guideline 5.4 of `IMPROVEMENTS.md`) emitted once as CSS variables, flag states, shared CSS. |
 | `ui/fonts.py` | Titillium Web embedded as base64 `@font-face`, so the app requests no fonts at runtime. |
+| `ui/standings.py` | Driver and constructor standings after the selected round (Results page) and the points projection while a race is live (Live page); Jolpica lookups are `@st.cache_data` with a 30 minute TTL (FEAT-06). |
 | `ui/status.py` | `DataStatus`: why a panel is empty, carried to the panel that shows it. |
 
 `ui/components/replay_player/` holds the browser replay player
@@ -293,6 +295,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   ├── replay_model.py
 │   ├── lap_compare.py
 │   ├── replay_payload.py
+│   ├── standings.py
 │   ├── telemetry_processor.py
 │   ├── time_utils.py
 │   ├── timing.py
@@ -306,6 +309,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   ├── lap_panels.py
 │   ├── preferences.py
 │   ├── replay_view.py
+│   ├── standings.py
 │   ├── status.py
 │   ├── theme.py
 │   ├── track_map.py

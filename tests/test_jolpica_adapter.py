@@ -352,3 +352,19 @@ class TestFastF1CacheOncePerProcess:
         DataSourceManager(cache_dir=cache, replay_dir=str(tmp_path))
 
         assert calls == [cache]
+
+
+class TestStandingsEndpoints:
+    def test_round_is_part_of_the_url_and_the_memo_key(self, adapter):
+        adapter.get_driver_standings(2024, 3)
+        adapter.get_driver_standings(2024, 4)
+        adapter.get_driver_standings(2024, 3)
+        adapter.get_constructor_standings(2024)
+        adapter.get_constructor_standings(2024, 3)
+        calls = [url.split("/f1/")[1] for url in adapter.session.get.calls]
+        assert calls == [
+            "2024/3/driverStandings.json",
+            "2024/4/driverStandings.json",
+            "2024/constructorStandings.json",
+            "2024/3/constructorStandings.json",
+        ]
