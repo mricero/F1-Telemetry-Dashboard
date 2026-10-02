@@ -19,13 +19,16 @@ from ui.layout import (
     render_lap_times,
     render_live_controls,
     render_live_dashboard,
+    render_pit_rejoin,
     render_position_changes,
     render_race_control,
+    render_race_trace,
     render_settings,
     render_team_radio,
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
+    render_tyre_pace,
     render_weather,
 )
 from ui.preferences import only_drivers, render_driver_picker, render_favourites_picker
@@ -60,6 +63,9 @@ ANALYSIS_SECTIONS = (
     "Telemetry",
     "Head-to-head",
     "Lap times",
+    "Race trace",
+    "Tyre pace",
+    "Pit rejoin",
     "Positions",
     "Weather",
     "Race control",
@@ -209,6 +215,33 @@ def analysis_page() -> None:
             track_status=track_status,
             drivers=drivers,
             uirevision=revision,
+        )
+    elif section == "Race trace":
+        render_race_trace(
+            context["laps"],
+            context["color_map"],
+            session_data.get("session_info"),
+            track_status=track_status,
+            marker_lap=moment.get("lap"),
+            key=f"trace:{context['session_key']}",
+            uirevision=revision,
+        )
+    elif section == "Tyre pace":
+        render_tyre_pace(
+            context["laps"],
+            session_data.get("session_info"),
+            track_status=track_status,
+            compound_colors=session_data.get("compound_colors"),
+            uirevision=revision,
+        )
+    elif section == "Pit rejoin":
+        render_pit_rejoin(
+            context["laps"],
+            session_data.get("session_info"),
+            track_status=track_status,
+            focus=moment.get("focus"),
+            lap=moment.get("lap"),
+            key=f"rejoin:{context['session_key']}",
         )
     elif section == "Positions":
         render_position_changes(

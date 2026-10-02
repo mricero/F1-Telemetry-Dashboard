@@ -24,7 +24,14 @@ from data.openf1_adapter import FIRST_YEAR as OPENF1_FIRST_YEAR
 from data.openf1_adapter import get_team_radio
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
-from processing.timing import MISSING, format_lap, is_raining
+from processing.timing import (
+    MISSING,
+    format_delta,
+    format_lap,
+    gap_trace,
+    is_race_session,
+    is_raining,
+)
 from processing.track_periods import lap_spans, lap_states
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
@@ -1571,4 +1578,259 @@ def render_team_radio(session_data: dict) -> None:
         hide_index=True,
         width="stretch",
         column_config={"Url": st.column_config.LinkColumn("Recording", display_text="Open")},
+    )
+
+
+# --- Analysis sections over the laps frame (IMPROVEMENTS.md 3.8) -------------
+#
+# Each section has a pure builder (a figure or an HTML string, testable without
+# a Streamlit runtime) and a ``render_*`` function that draws it. The numbers
+# come from ``processing.timing``.
+
+LEADER = "Leader"
+NOT_A_RACE = (
+    "The race trace needs a race or sprint: in other sessions the cars do not share a "
+    "start, so a gap at the timing line has no meaning."
+)
+
+
+def _line_styles(drivers, color_map: dict[str, str]) -> dict[str, dict]:
+    """Team colour per driver; the second car of a team is dashed (guideline 5.6)."""
+    seen: set[str] = set()
+    styles = {}
+    for driver in drivers:
+        colour = color_map.get(driver, NEUTRAL_GREY)
+        styles[driver] = {"color": colour, "width": 2, "dash": "dash" if colour in seen else None}
+        seen.add(colour)
+    return styles
+
+
+def race_trace_figure(
+    laps: pd.DataFrame,
+    color_map: dict[str, str],
+    reference: str | None = None,
+    track_status: pd.DataFrame | None = None,
+    marker_lap: int | None = None,
+) -> go.Figure | None:
+    """Gap at the line per lap, one line per driver; ``None`` without lap times.
+
+    The y axis runs downwards (the leader, or the cars ahead of the
+    reference, at the top), as on a timing screen. SC, VSC and red-flag laps
+    are shaded with their word.
+    """
+    trace = gap_trace(laps, reference=reference)
+    if trace.empty:
+        return None
+    last = trace.sort_values("LapNumber").groupby("Driver")[["LapNumber", "Gap"]].last()
+    # Legend and hover in running order at each driver's last lap.
+    order = last.sort_values(["LapNumber", "Gap"], ascending=[False, True]).index
+    styles = _line_styles(order, color_map)
+    fig = go.Figure()
+    for driver in order:
+        rows = trace[trace["Driver"] == driver].sort_values("LapNumber")
+        fig.add_trace(
+            go.Scatter(
+                x=rows["LapNumber"],
+                y=rows["Gap"],
+                mode="lines",
+                name=str(driver),
+                line=styles[driver],
+                customdata=[format_delta(value) for value in rows["Gap"]],
+                hovertemplate=f"{driver} %{{customdata}}<extra></extra>",
+            )
+        )
+    target = "leader" if reference is None else reference
+    fig.update_layout(
+        xaxis_title="Lap",
+        yaxis={"title": f"Gap to {target} (s)", "autorange": "reversed"},
+        height=520,
+    )
+    shade_neutral_laps(fig, laps, track_status)
+    _mark_lap(fig, marker_lap)
+    return fig
+
+
+def render_race_trace(
+    laps: pd.DataFrame,
+    color_map: dict[str, str],
+    session_info: dict | None = None,
+    track_status: pd.DataFrame | None = None,
+    marker_lap: int | None = None,
+    key: str = "race_trace",
+    uirevision: str | None = None,
+) -> None:
+    """The race trace section: gap to the leader or to a chosen driver (FEAT-01)."""
+    if not is_race_session(session_info):
+        st.info(NOT_A_RACE)
+        return
+    drivers = sorted(set(gap_trace(laps)["Driver"]))
+    if not drivers:
+        st.info("No lap completion times for this session, so there is no race trace.")
+        return
+    choice = st.selectbox("Gap to", [LEADER, *drivers], key=f"{key}_reference")
+    reference = None if choice == LEADER else choice
+    fig = race_trace_figure(laps, color_map, reference, track_status, marker_lap)
+    if fig is None:
+        st.info(f"{choice} completed no laps, so there is nothing to measure from.")
+        return
+    _plot(fig, width="stretch", uirevision=uirevision)
+    st.caption(
+        "Gap when each car crossed the timing line to complete the lap. "
+        "Shaded laps ran under a safety car, VSC or red flag."
+    )
+
+
+def tyre_pace_figure(
+    pace: pd.DataFrame, compound_colors: dict[str, str] | None = None
+) -> go.Figure | None:
+    """Fuel-corrected lap time against tyre age, one marker colour per compound.
+
+    ``pace`` is :func:`processing.pace.stint_pace`'s output. The compound
+    letter is in the legend and the hover, so colour is not the only carrier.
+    """
+    if pace is None or pace.empty:
+        return None
+    palette = compound_palette(compound_colors)
+    fig = go.Figure()
+    for compound, rows in pace.groupby("Compound", sort=True):
+        fig.add_trace(
+            go.Scatter(
+                x=rows["TyreAge"],
+                y=rows["FuelCorrected"],
+                mode="markers",
+                name=str(compound),
+                marker={"color": palette.get(str(compound), NEUTRAL_GREY), "size": 6},
+                customdata=[
+                    f"{driver} lap {lap}"
+                    for driver, lap in zip(rows["Driver"], rows["LapNumber"], strict=True)
+                ],
+                hovertemplate=(
+                    "%{customdata}<br>tyre age %{x:.0f} laps<br>%{y:.3f} s<extra></extra>"
+                ),
+            )
+        )
+    fig.update_layout(
+        xaxis_title="Tyre age (laps)",
+        yaxis_title="Fuel-corrected lap time (s)",
+        showlegend=True,
+        height=480,
+    )
+    return fig
+
+
+def degradation_table(summary: pd.DataFrame) -> pd.DataFrame:
+    """Per-compound degradation formatted for display (seconds per lap of tyre age)."""
+    if summary is None or summary.empty:
+        return pd.DataFrame(columns=["Compound", "Stints", "Laps", "Loss s/lap"])
+    return pd.DataFrame(
+        {
+            "Compound": summary["Compound"],
+            "Stints": summary["Stints"],
+            "Laps": summary["Laps"],
+            "Loss s/lap": [f"{value:+.3f}" for value in summary["Slope"]],
+        }
+    )
+
+
+def render_tyre_pace(
+    laps: pd.DataFrame,
+    session_info: dict | None = None,
+    track_status: pd.DataFrame | None = None,
+    compound_colors: dict[str, str] | None = None,
+    uirevision: str | None = None,
+) -> None:
+    """Tyre degradation: clean laps against tyre age per compound (FEAT-03)."""
+    from processing.pace import compound_degradation, stint_pace
+
+    # Qualifying and practice fuel loads differ run to run, so only races are corrected.
+    race = is_race_session(session_info)
+    pace = stint_pace(laps, track_status, fuel_correct=race)
+    fig = tyre_pace_figure(pace, compound_colors)
+    if fig is None:
+        st.info(
+            "No clean laps with a tyre compound in this session, so there is no "
+            "degradation to show."
+        )
+        return
+    _plot(fig, width="stretch", uirevision=uirevision)
+    table = degradation_table(compound_degradation(pace))
+    if table.empty:
+        st.info("No stint has enough clean laps to fit a trend.")
+    else:
+        st.dataframe(table, hide_index=True, width="stretch")
+    st.caption(
+        "Loss per lap is the median across stints of a straight-line fit to lap time "
+        "against tyre age."
+        + (" Lap times are corrected for fuel burned." if race else "")
+        + " In-laps, out-laps, the first lap, safety car, VSC and red-flag laps and "
+        "inaccurately timed laps are left out."
+    )
+
+
+def rejoin_sentence(driver: str, lap: int, result: dict) -> str:
+    """One literal sentence for a predicted rejoin (FEAT-02)."""
+    parts = [
+        f"If {driver} pitted at the end of lap {lap}, it would rejoin in P{result['position']}"
+    ]
+    if result["ahead"] is not None:
+        parts.append(f"{result['gap_ahead']:.3f} s behind {result['ahead']}")
+    if result["behind"] is not None:
+        parts.append(f"{result['gap_behind']:.3f} s ahead of {result['behind']}")
+    return ", ".join(parts) + "."
+
+
+def render_pit_rejoin(
+    laps: pd.DataFrame,
+    session_info: dict | None = None,
+    track_status: pd.DataFrame | None = None,
+    focus: str | None = None,
+    lap: int | None = None,
+    key: str = "pit_rejoin",
+) -> None:
+    """Pit rejoin predictor: current gap plus the circuit's pit loss (FEAT-02)."""
+    from processing.pit_loss import pit_loss_for, rejoin_after_lap
+
+    if not is_race_session(session_info):
+        st.info(
+            "The pit rejoin predictor needs a race or sprint: it works from the gap to the leader."
+        )
+        return
+    trace = gap_trace(laps)
+    if trace.empty:
+        st.info("No lap completion times for this session, so a rejoin cannot be predicted.")
+        return
+    drivers = sorted(set(trace["Driver"]))
+    last_lap = int(trace["LapNumber"].max())
+    loss, source = pit_loss_for((session_info or {}).get("gp"), laps, track_status)
+    left, middle, right = st.columns(3)
+    driver = left.selectbox(
+        "Driver",
+        drivers,
+        index=drivers.index(focus) if focus in drivers else 0,
+        key=f"{key}_driver",
+    )
+    at_lap = middle.number_input(
+        "After lap",
+        min_value=1,
+        max_value=last_lap,
+        value=min(max(int(lap or last_lap), 1), last_lap),
+        step=1,
+        key=f"{key}_lap",
+    )
+    seconds = right.number_input(
+        "Pit loss (s)",
+        min_value=5.0,
+        max_value=60.0,
+        value=float(loss),
+        step=0.5,
+        key=f"{key}_loss:{loss}",
+    )
+    result = rejoin_after_lap(laps, driver, int(at_lap), float(seconds))
+    if result is None:
+        st.info(f"{driver} has no timed lap {int(at_lap)}, so there is no gap to start from.")
+        return
+    st.markdown(rejoin_sentence(driver, int(at_lap), result))
+    st.caption(
+        f"Pit loss {loss:.1f} s: {source}. It is the pit lane time from pit entry to pit exit; "
+        "the other cars are assumed to stay out at their gaps to the leader at the end of that lap."
     )
