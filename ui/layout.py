@@ -46,6 +46,7 @@ from processing.track_periods import lap_spans, lap_states
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
 from ui.preferences import sync_preference_params
+from ui.standings import render_standings
 from ui.status import DataStatus, show
 from ui.theme import (
     ACCENT,
@@ -1054,6 +1055,8 @@ def render_live_dashboard(data_manager, processor):
     if weather_tab.open:
         with weather_tab:
             render_weather(snapshot.get("weather"), uirevision=revision)
+    st.subheader("Championship")
+    render_standings(snapshot)
 
 
 LIVE_CONTROLS_ENV = "F1_LIVE_CONTROLS"

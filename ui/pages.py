@@ -40,6 +40,7 @@ from ui.replay_view import (
     sync_seek_cursor,
     wants_analysis,
 )
+from ui.standings import render_standings
 
 # What app.main() stores for the pages to draw from.
 CONTEXT_KEY = "page_context"
@@ -131,6 +132,8 @@ def results_page() -> None:
     render_tire_strategy(
         context["stints"], context["color_map"], context["session_data"].get("compound_colors")
     )
+    st.subheader("Championship")
+    render_standings(context["session_data"])
 
 
 def replay_moment(context: dict) -> dict:

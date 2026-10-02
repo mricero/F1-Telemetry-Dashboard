@@ -21,15 +21,14 @@ PACKAGES = ("data", "processing")
 # not referenced anywhere is dead code and fails the test.
 KEPT_WITHOUT_CALLERS = {
     # Jolpica is an Ergast-compatible REST adapter: these are its query
-    # surface, paged and rate-limited by HIST-07, and FEAT-06 (standings
-    # panels) is the item that consumes them. Deleting them would mean
-    # rewriting the same requests against the same endpoints.
+    # surface, paged and rate-limited by HIST-07. The standings queries have
+    # callers since FEAT-06; the rest stay until a feature reads them.
+    # Deleting them would mean rewriting the same requests against the same
+    # endpoints.
     "data/jolpica_adapter.py": {
         "get_session_results",
         "get_qualifying_results",
         "get_practice_results",
-        "get_driver_standings",
-        "get_constructor_standings",
         "get_driver_info",
         "get_constructor_info",
     },
