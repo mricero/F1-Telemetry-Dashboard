@@ -1,3 +1,11 @@
+> **Superseded.** This is the original phase 1 research note, kept for
+> history. It does not describe the current code; read `ARCHITECTURE.md`
+> and `CLAUDE.md` instead. In particular, LiveF1's `RealF1Client` does not
+> use "the same SignalR endpoint": it targets the classic `/signalr/` hub,
+> which answers 401 since F1's 2025 move. The app connects to
+> `wss://livetiming.formula1.com/signalrcore` with its own client
+> (`data/signalr_core.py`), and the `livef1` dependency was removed.
+
 # Phase 1: Research & Reconnaissance - Summary Report
 
 ## Executive Summary

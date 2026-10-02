@@ -25,7 +25,13 @@ The first versioned release. It collects the eight review rounds recorded in
   directories; a git checkout keeps the repo-local paths (DIST-03, CACHE-04).
 - A daily update check that names a newer release, disabled with
   `F1_UPDATE_CHECK=0` (DIST-05).
-- `__version__`, this changelog and a release workflow (REPO-23, DIST-06).
+- `__version__` and this changelog (REPO-23).
+- A release workflow: a pushed `v*` tag builds the wheel and sdist, checks the
+  tag against the version in `pyproject.toml`, installs the wheel as a uv tool
+  on Windows and Ubuntu, and publishes a GitHub Release with the wheel, the
+  sdist, `install.ps1`, `install.sh` and this file's section as notes.
+  Publishing to PyPI with trusted publishing is opt-in through the
+  `PUBLISH_PYPI` repository variable (DIST-06).
 - `.env.example` listing every environment variable the app reads (REPO-13).
 - `NOTICE` for the bundled font and the recorded F1 timing fixtures (REPO-25).
 
@@ -73,11 +79,16 @@ Rounds 1-5 - first audits
   websockets 16, plotly 7 (REPO-19, REPO-20).
 - CI runs Ubuntu 3.11-3.14 and Windows 3.11/3.14, re-locks and fails on a diff,
   and audits the lock (TEST-09).
+- The readme leads with installing, running, updating and uninstalling
+  `f1dash`, and has a "Data sources & terms" section; `ARCHITECTURE.md` and
+  `CLAUDE.md` describe the current code; the phase 1 research note moved to
+  `docs/history/` (DOC-02, DOC-03, DOC-05, DOC-06, DOC-07).
 
 ### Removed
 
-- `livef1`, `signalrcore` and `requests-cache`, and the dead LiveF1 loader
-  (REPO-18).
+- `livef1`, `signalrcore` and `requests-cache` as direct dependencies, and the
+  dead LiveF1 loader (REPO-18). FastF1 still installs `signalrcore` and
+  `requests-cache` for itself; the app does not import them.
 - `dashboard_preview.html`; `scripts/preview_replay_player.py` builds a current
   preview (DOC-04).
 
