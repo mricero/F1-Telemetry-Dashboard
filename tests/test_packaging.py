@@ -71,8 +71,8 @@ def wheel(tmp_path_factory) -> list[str]:
     if shutil.which("uv") is None:
         pytest.skip("uv is not installed")
     out = tmp_path_factory.mktemp("dist")
-    result = subprocess.run(  # noqa: S603 - fixed argv
-        ["uv", "build", "--wheel", "--out-dir", str(out), str(PROJECT_ROOT)],  # noqa: S607
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(out), str(PROJECT_ROOT)],
         capture_output=True,
         text=True,
         check=False,

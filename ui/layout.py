@@ -6,6 +6,7 @@ single source of truth for the dashboard's visuals (the former
 """
 
 import html
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,8 @@ from ui.theme import (
     chart_layout,
     status_chip,
 )
+
+logger = logging.getLogger(__name__)
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
 # (see FastF1Adapter.compound_colors); the defaults are the theme's.
@@ -175,6 +178,97 @@ def menu_items() -> dict:
     }
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _update_notice_cached(version: str) -> str | None:
+    from data.update_check import update_notice
+
+    return update_notice(version)
+
+
+def render_sidebar_footer() -> None:
+    """The running version and, when there is one, the newer release (REPO-23,
+    DIST-05). The check runs at most hourly here and daily against GitHub."""
+    version = app_version()
+    st.caption(f"F1 Replay {version}")
+    notice = _update_notice_cached(version)
+    if notice:
+        st.caption(notice)
+
+
+def _folder_size(path) -> int:
+    total = 0
+    for item in Path(path).rglob("*"):
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _folder_size_cached(path: str) -> int:
+    return _folder_size(path) if Path(path).exists() else 0
+
+
+def clear_cached_schedules() -> None:
+    """Drop the event lists and race-weekend probe (stale on a race weekend)."""
+    for cached in (_is_race_weekend_cached, _event_names_cached, _session_codes_cached):
+        cached.clear()
+
+
+def clear_loaded_sessions() -> None:
+    """Drop the sessions held in memory: the runtime cache and FastF1's."""
+    from data.fastf1_adapter import clear_session_cache
+    from data.runtime_cache import runtime_cache
+
+    runtime_cache.clear()
+    clear_session_cache()
+
+
+def render_settings() -> None:
+    """Caches, data locations and the version (UI-22, CACHE-04)."""
+    st.subheader("Caches")
+    left, right = st.columns(2)
+    with left:
+        st.caption(
+            "The event list and the race-weekend check are kept for up to an hour. "
+            "Clear them to see a session that has just been added."
+        )
+        if st.button("Clear cached schedules", key="settings_clear_schedules"):
+            clear_cached_schedules()
+            st.success("Schedules cleared. The next selection fetches them again.")
+    with right:
+        st.caption("Loaded sessions stay in memory for instant re-selection until the app closes.")
+        if st.button("Clear loaded sessions", key="settings_clear_sessions"):
+            clear_loaded_sessions()
+            st.success("Loaded sessions cleared. The next load reads them again.")
+
+    st.subheader("Where data lives")
+    size_mb = _folder_size_cached(str(config.fastf1_cache_dir)) / (1024 * 1024)
+    rows = [
+        ("FastF1 cache", f"{config.fastf1_cache_dir} ({size_mb:,.0f} MB)"),
+        ("Replays", str(config.replay_dir)),
+        ("Records", str(config.metrics_store_path)),
+        ("Settings file", str(config.env_path)),
+    ]
+    st.html(
+        '<table class="f1-kv">'
+        + "".join(
+            f"<tr><th>{html.escape(name)}</th><td>{html.escape(value)}</td></tr>"
+            for name, value in rows
+        )
+        + "</table>"
+    )
+    st.caption(
+        "The FastF1 cache can be deleted while the app is closed; sessions download "
+        "again on their next load. Set FASTF1_CACHE_DIR to move it."
+    )
+
+    st.subheader("About")
+    st.caption(f"F1 Replay {app_version()}. Not affiliated with Formula 1.")
+
+
 def sidebar_state(selection, query_params) -> str:
     """``initial_sidebar_state`` for this run (UI-19).
 
@@ -291,7 +385,8 @@ def _selection_from_url(data_manager) -> dict | None:
         and FIRST_SEASON <= year <= datetime.now(UTC).year
         and bool(gp)
         and gp in _event_names_cached(data_manager, year)
-        and session in (_session_codes_cached(data_manager, year, gp) or FALLBACK_SESSION_TYPES)
+        and session
+        in (_session_codes_cached(data_manager, year, str(gp)) or FALLBACK_SESSION_TYPES)
     )
     if not valid:
         st.session_state[LINK_REJECTED_KEY] = True
@@ -327,6 +422,7 @@ def render_session_selector(data_manager) -> dict | None:
 
     with st.sidebar:
         _session_picker(data_manager)
+        render_sidebar_footer()
     selection = st.session_state.get(SELECTION_KEY)
     if selection is None and st.session_state.get(LINK_REJECTED_KEY):
         st.warning(f"{UNKNOWN_LINK}. Choose a session in the sidebar.")
@@ -951,7 +1047,8 @@ def live_controls_allowed(environ=None, url: str | None = None, ip: str | None =
 def _viewer_may_control() -> bool:
     try:
         url, ip = st.context.url, st.context.ip_address
-    except Exception:  # no script-run context: nobody to grant anything to
+    except Exception as exc:  # no script-run context: nobody to grant anything to
+        logger.debug("No request context for the live controls: %s", exc)
         return False
     return live_controls_allowed(url=url, ip=ip)
 
@@ -1035,9 +1132,8 @@ def render_token_helper(now: datetime | None = None) -> None:
         )
         token = st.text_input("Token", type="password", key="token_paste")
         if st.button("Save token", key="token_save", disabled=not token):
-            env_path = getattr(config, "env_path", ".env")
             try:
-                where = save_subscription_token(token, env_path)
+                where = save_subscription_token(token, config.env_path)
             except (OSError, ValueError) as exc:
                 st.error(f"Could not save the token: {exc}")
             else:

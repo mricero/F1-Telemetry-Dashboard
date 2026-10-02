@@ -115,6 +115,9 @@ ignore = [
     # assert is how tests state their expectations.
     "S101",
 ]
+# The en dash is the UI guideline's missing-value glyph and range separator
+# (IMPROVEMENTS.md 5.7), so it is intended wherever it appears.
+allowed-confusables = ["–"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests may use asserts, temp paths and non-cryptographic randomness freely.

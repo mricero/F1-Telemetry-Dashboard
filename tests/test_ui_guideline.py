@@ -181,7 +181,6 @@ class TestColoursComeFromTheTheme:
 
         assert not offenders, offenders
 
-
     def test_no_css_colour_names(self):
         offenders = []
         for path in _python_files():
@@ -412,7 +411,13 @@ class TestTowerVocabulary:
     def test_live_track_status_chips_use_the_flag_words(self):
         from ui.layout import TRACK_STATUS
 
-        assert {label for _, label in TRACK_STATUS.values()} <= {"GREEN", "YELLOW", "SC", "VSC", "RED"}
+        assert {label for _, label in TRACK_STATUS.values()} <= {
+            "GREEN",
+            "YELLOW",
+            "SC",
+            "VSC",
+            "RED",
+        }
 
     def test_race_control_text_is_escaped_not_markdown(self):
         from ui.layout import race_control_html

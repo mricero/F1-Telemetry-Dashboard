@@ -294,6 +294,7 @@ class DataSourceManager:
                 # snapshot; without this the caption froze (LIVE-23).
                 info["last_heartbeat"] = adapter.last_heartbeat
             current = cache.snapshot
+            assert current is not None  # stored above when missing
             cache.remember(moment, pd.Timestamp.now(tz="UTC"))
             if not delay or delay <= 0:
                 return current

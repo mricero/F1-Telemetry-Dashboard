@@ -12,6 +12,7 @@ import streamlit as st
 from data.runtime_cache import runtime_cache
 from ui.dashboard import render_dashboard
 from ui.layout import (
+    render_delay_input,
     render_driver_comparison,
     render_feed_status,
     render_lap_times,
@@ -19,7 +20,7 @@ from ui.layout import (
     render_live_dashboard,
     render_position_changes,
     render_race_control,
-    render_delay_input,
+    render_settings,
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
@@ -42,6 +43,7 @@ PAGE_RESULTS = "Results"
 PAGE_ANALYSIS = "Analysis"
 PAGE_RECORDS = "Records"
 PAGE_LIVE = "Live"
+PAGE_SETTINGS = "Settings"
 # Which page runs now and which ran on the previous script run, so the replay
 # can tell it is being re-entered. app.main() sets both from st.navigation's
 # result (UI-10): a page that forgot to set it (Records, Live) used to make the
@@ -192,9 +194,15 @@ def records_page() -> None:
         st.markdown("\n".join(f"- {line}" for line in lines))
     else:
         st.info("No records yet for this session.")
-    all_time = store.summary_lines(store.all_time())
+    circuit = context.get("metrics_circuit")
+    all_time = store.summary_lines(store.all_time(circuit))
     if all_time:
-        st.markdown("**All sessions viewed here**")
+        # Records only compare on one track (CACHE-02).
+        st.markdown(
+            f"**Best at {circuit}, every session viewed here**"
+            if circuit
+            else "**All sessions viewed here**"
+        )
         st.markdown("\n".join(f"- {line}" for line in all_time))
 
     with st.expander("Diagnostics", expanded=False):
@@ -237,16 +245,23 @@ def live_page() -> None:
     render_live_controls(live_client)
 
 
+def settings_page() -> None:
+    """Caches, data locations and the version (UI-22)."""
+    render_settings()
+
+
 def page_specs(session_data: dict) -> list[tuple]:
     """``(page function, title, url path)`` for a session; the first opens."""
     records = (records_page, PAGE_RECORDS, "records")
+    settings = (settings_page, PAGE_SETTINGS, "settings")
     if session_data.get("is_live"):
-        return [(live_page, PAGE_LIVE, "live"), records]
+        return [(live_page, PAGE_LIVE, "live"), records, settings]
     return [
         (replay_page, PAGE_REPLAY, "replay"),
         (results_page, PAGE_RESULTS, "results"),
         (analysis_page, PAGE_ANALYSIS, "analysis"),
         records,
+        settings,
     ]
 
 

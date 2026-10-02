@@ -407,7 +407,7 @@ def tower_html(rows: Sequence[dict]) -> str:
             f'<td class="f1-pos" style="--team:{accent}">{row["position"]}</td>'
             f'<td><div class="f1-code">{_esc(row["code"])}</div>'
             f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
-            f"<td>{_status_html(status)}</td>"
+            f"<td>{_status_html(status or '')}</td>"
             f'<td><span class="{last_class} f1-num">{_esc(row["last_lap"])}</span></td>'
             f'<td><span class="{best_class} f1-num">{_esc(row["best_lap"])}</span></td>'
             f'<td><span class="f1-time f1-num f1-dim">{_esc(row["interval"])}</span></td>'

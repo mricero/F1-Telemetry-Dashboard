@@ -160,7 +160,7 @@ def _pack_positions(quantised: np.ndarray, absent: np.ndarray) -> str:
 
     An absent frame repeats the car's last value, so it costs nothing.
     """
-    frames, drivers, _ = quantised.shape
+    frames = quantised.shape[0]
     index = np.where(~absent, np.arange(frames)[:, None], 0)
     held = np.take_along_axis(quantised, np.maximum.accumulate(index, axis=0)[..., None], axis=0)
     planar = np.ascontiguousarray(held.transpose(1, 2, 0))  # driver, coordinate, frame
@@ -314,7 +314,7 @@ def _interval_trend(series: TowerSeries, clock: ReplayClock) -> dict:
             continue
         index = np.searchsorted(field.t, moments, side="right") - 1
         picked = [field.v[i] if i >= 0 else None for i in index.tolist()]
-        values = np.array([np.nan if _json(v) is None else float(v) for v in picked])
+        values = np.array([np.nan if (j := _json(v)) is None else float(j) for v in picked])
         scaled = np.clip(np.rint(values * TREND_SCALE), 0, TREND_MISSING - 1)
         rows.append(np.where(np.isnan(values), TREND_MISSING, scaled).astype("<u2"))
         codes.append(code)

@@ -259,7 +259,7 @@ def first_session_end(event: pd.Series) -> pd.Timestamp | None:
         start = pd.to_datetime(event.get(f"Session{index}DateUtc"), utc=True, errors="coerce")
         if pd.isna(start):
             continue
-        code = SESSION_NAME_TO_CODE.get(str(name).strip())
+        code = SESSION_NAME_TO_CODE.get(str(name).strip(), "")
         return start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
     return None
 
@@ -369,17 +369,18 @@ class FastF1Adapter:
             )
 
     @staticmethod
-    def ended_recently(session, now: pd.Timestamp | None = None) -> bool:
-        """Whether the session ended less than ``ARCHIVE_SETTLE_TIME`` ago.
+    def ended_recently(date, name, now: pd.Timestamp | None = None) -> bool:
+        """Whether a session (its start ``date`` and FastF1 ``name``) ended
+        less than ``ARCHIVE_SETTLE_TIME`` ago.
 
         Such a session may still be partial in the archive, so the app does
         not keep it in the runtime cache (HIST-09).
         """
-        start = pd.to_datetime(getattr(session, "date", None), utc=True, errors="coerce")
+        start = pd.to_datetime(date, utc=True, errors="coerce")
         if not isinstance(start, pd.Timestamp) or pd.isna(start):
             return False
-        name = str(getattr(session, "name", "") or "")
-        code = SESSION_NAME_TO_CODE.get(name.strip())
+        name = str(name or "")
+        code = SESSION_NAME_TO_CODE.get(name.strip(), "")
         end = start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
         return bool((now if now is not None else _utcnow()) - end < ARCHIVE_SETTLE_TIME)
 

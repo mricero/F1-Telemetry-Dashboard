@@ -70,6 +70,7 @@ logging.basicConfig(
     level=getattr(logging, str(config.log_level).upper(), logging.WARNING),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+from data.fastf1_adapter import FastF1Adapter  # noqa: E402
 from data.runtime_cache import runtime_cache  # noqa: E402
 from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402
@@ -116,9 +117,21 @@ def load_session_data(data_manager, selection: dict) -> dict:
         st.stop()
         raise RuntimeError("get_session_data() returned None")
 
-    if not session_data.get("is_live"):
+    if should_runtime_cache(session_data):
         runtime_cache.set(cache_key, session_data)
     return session_data
+
+
+def should_runtime_cache(session_data: dict) -> bool:
+    """Live feeds change by the second, and a session that ended in the last
+    few hours may still be partial in F1's archive (HIST-09): neither is kept
+    for the life of the process."""
+    if session_data.get("is_live"):
+        return False
+    info = session_data.get("session_info") or {}
+    if session_data.get("source") == "fastf1":
+        return not FastF1Adapter.ended_recently(info.get("date"), info.get("session_name"))
+    return True
 
 
 def ensure_driver_table(session_data: dict) -> pd.DataFrame:
@@ -155,7 +168,7 @@ def init_browser_session() -> None:
     if "processor" not in st.session_state:
         st.session_state.processor = TelemetryProcessor()
     if "metrics_store" not in st.session_state:
-        st.session_state.metrics_store = MetricsStore()
+        st.session_state.metrics_store = MetricsStore(config.metrics_store_path)
 
 
 PROCESSED_PREFIX = "processed"
@@ -219,16 +232,17 @@ def processed_views(session_data: dict, key: str, processor) -> dict:
     return views
 
 
-def record_metrics(metrics_store, label: str, views: dict, key: str) -> None:
-    """Fold the session into the persistent records, once per session."""
+def record_metrics(metrics_store, label: str, views: dict, key: str, circuit=None) -> None:
+    """Fold the session into the persistent records, once per session.
+
+    Top speed comes from the laps' speed traps, so this never forces the
+    telemetry alignment the Analysis page builds on first use (HIST-08).
+    """
     done_key = f"recorded:{key}"
     if st.session_state.get(done_key):
         return
     if not views["laps"].empty:
-        metrics_store.update_laps(label, views["laps"])
-    telemetry = views["telemetry"]()
-    if telemetry:
-        metrics_store.update_telemetry(label, telemetry)
+        metrics_store.update_laps(label, views["laps"], circuit=circuit)
     st.session_state[done_key] = True
 
 
@@ -264,7 +278,7 @@ def main():
     chosen = {k: v for k, v in selection.items() if v is not None}
     metrics_label = MetricsStore.make_label({**info, **chosen})
     if not session_data.get("is_live"):
-        record_metrics(metrics_store, metrics_label, views, key)
+        record_metrics(metrics_store, metrics_label, views, key, circuit=info.get("gp"))
 
     pages = pages_for(session_data)
     st.session_state[CONTEXT_KEY] = {
@@ -273,6 +287,7 @@ def main():
         "session_key": key,
         "metrics_store": metrics_store,
         "metrics_label": metrics_label,
+        "metrics_circuit": info.get("gp"),
         "data_manager": data_manager,
         "processor": processor,
     }

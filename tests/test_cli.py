@@ -184,7 +184,7 @@ class TestUpdate:
 
 
 def _get(url: str) -> int:
-    with urllib.request.urlopen(url, timeout=2) as response:  # noqa: S310 - localhost
+    with urllib.request.urlopen(url, timeout=2) as response:
         return response.status
 
 
@@ -193,7 +193,7 @@ def test_f1dash_serves_the_app_from_a_temp_directory(tmp_path):
     """DIST-02 acceptance: ``f1dash --no-browser --port 8599`` answers 200 on /."""
     port = 8599
     env = {**os.environ, "F1_UPDATE_CHECK": "0"}
-    process = subprocess.Popen(  # noqa: S603 - our own interpreter and script
+    process = subprocess.Popen(
         [sys.executable, str(PROJECT_ROOT / "f1dash_cli.py"), "--no-browser", "--port", str(port)],
         cwd=tmp_path,
         env=env,

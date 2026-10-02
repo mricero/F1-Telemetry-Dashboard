@@ -406,6 +406,14 @@ DASHBOARD_CSS = f"""
   border-bottom: 1px solid var(--line);
 }}
 
+/* ---------- settings: name / value rows ---------- */
+.f1-kv {{ border-collapse: collapse; font-size: 13px; }}
+.f1-kv th {{
+  color: var(--text-dim); font-family: var(--font-label); font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; text-align: left; padding: 4px 16px 4px 0;
+}}
+.f1-kv td {{ color: var(--text); padding: 4px 0; word-break: break-all; }}
+
 /* ---------- sector top-3 widgets ---------- */
 /* auto-fit: three cards side by side on a desktop, fewer per row on a phone,
    so the sector-3 times are never clipped by .f1-dash's overflow (UI-20). */

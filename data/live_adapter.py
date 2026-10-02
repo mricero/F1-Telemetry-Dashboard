@@ -434,7 +434,9 @@ class SignalRLiveAdapter:
         if self.recorder is not None and not self._auto_recording:
             return  # a recording the user started keeps going
         self.stop_recording()
-        meeting = info.get("Meeting") if isinstance(info.get("Meeting"), dict) else {}
+        meeting = info.get("Meeting")
+        if not isinstance(meeting, dict):
+            meeting = {}
         gp = _safe_name(meeting.get("Name") or "live")
         session = _safe_name(info.get("Name") or info.get("Type") or "session")
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")

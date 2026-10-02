@@ -352,8 +352,8 @@ class TestCompactEncoding:
         from processing.replay_payload import _interval_trend, decode_trend
 
         class Series:
-            drivers = ["A", "B"]
-            fields = {
+            drivers = ["A", "B"]  # noqa: RUF012
+            fields = {  # noqa: RUF012
                 "A": {"interval_s": _series([(0.0, None), (10.0, 1.234), (20.0, None)])},
                 "B": {"interval_s": _series([(0.0, 700.0)])},
             }

@@ -79,8 +79,7 @@ def default_paths(checkout: bool, root: Path = PROJECT_ROOT) -> dict[str, Path]:
             "env_path": root / ".env",
         }
     return {
-        "fastf1_cache_dir": Path(platformdirs.user_cache_dir(APP_NAME, appauthor=False))
-        / "fastf1",
+        "fastf1_cache_dir": Path(platformdirs.user_cache_dir(APP_NAME, appauthor=False)) / "fastf1",
         "replay_dir": Path(platformdirs.user_data_dir(APP_NAME, appauthor=False)) / "replays",
         "metrics_store_path": Path(platformdirs.user_data_dir(APP_NAME, appauthor=False))
         / "metrics_store.sqlite",

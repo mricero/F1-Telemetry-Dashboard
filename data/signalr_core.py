@@ -145,8 +145,8 @@ class FeedStatus(enum.Enum):
 
 
 # Why a configured token is not being sent; the free feed carries on (LIVE-26).
-TOKEN_REJECTED = "Token rejected – timing only"  # noqa: S105, RUF001 - UI copy
-TOKEN_EXPIRED = "Token expired – timing only"  # noqa: S105, RUF001 - UI copy
+TOKEN_REJECTED = "Token rejected – timing only"  # noqa: S105 - UI copy
+TOKEN_EXPIRED = "Token expired – timing only"  # noqa: S105 - UI copy
 
 
 # Plain words for each state, shown next to the chip.

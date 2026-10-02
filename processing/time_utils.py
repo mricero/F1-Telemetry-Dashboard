@@ -39,7 +39,7 @@ def _parse_text(text: str) -> float | None:
         return None
     days, hours, minutes, seconds = match.groups()
     total = 0.0
-    for part, unit in zip((days, hours, minutes), _UNIT_SECONDS):
+    for part, unit in zip((days, hours, minutes), _UNIT_SECONDS, strict=True):
         total = total + (float(part) if part is not None else 0.0) * unit
     return _round3(total + float(seconds))
 
@@ -95,7 +95,7 @@ def seconds_series(values: pd.Series) -> pd.Series:
     text = values.astype("string").str.strip()
     parts = text.str.extract(_TIME_PATTERN)
     total = pd.Series(0.0, index=index)
-    for column, unit in zip((0, 1, 2), _UNIT_SECONDS):
+    for column, unit in zip((0, 1, 2), _UNIT_SECONDS, strict=True):
         number = pd.to_numeric(parts[column], errors="coerce").astype("float64")
         total = total + number.fillna(0.0) * unit
     seconds = pd.to_numeric(parts[3], errors="coerce").astype("float64")

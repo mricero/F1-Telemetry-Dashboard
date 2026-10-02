@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from importlib import metadata
 from pathlib import Path
 
@@ -53,9 +53,9 @@ def is_newer(latest: str | None, current: str) -> bool:
     return latest_version > current_version
 
 
-def checks_enabled(environ: dict | None = None) -> bool:
-    environ = os.environ if environ is None else environ
-    return str(environ.get(DISABLE_ENV, "1")).strip().lower() not in {"0", "false", "no", "off"}
+def checks_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    env: Mapping[str, str] = os.environ if environ is None else environ
+    return str(env.get(DISABLE_ENV, "1")).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def default_cache_path() -> Path:

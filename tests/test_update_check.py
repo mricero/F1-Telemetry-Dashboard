@@ -162,7 +162,11 @@ class TestOncePerDay:
         calls = []
 
         update_check.update_notice(
-            "0.9.0", cache_path=cache, now=NOW, get=answering("v1.0.0", calls=calls), environ=enabled
+            "0.9.0",
+            cache_path=cache,
+            now=NOW,
+            get=answering("v1.0.0", calls=calls),
+            environ=enabled,
         )
 
         assert calls[0]["timeout"] == 3.0

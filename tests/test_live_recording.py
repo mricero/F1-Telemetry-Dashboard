@@ -148,10 +148,15 @@ class TestControlsAreReachable:
         assert "render_live_controls(live_client)" in lines
         assert "return" not in lines
 
-    def test_the_controls_offer_recording(self, tmp_path, monkeypatch):
+    @staticmethod
+    def _controls(tmp_path, monkeypatch, allowed: bool) -> list[str]:
         from streamlit.testing.v1 import AppTest
 
         monkeypatch.setenv("REPLAY_DIR", str(tmp_path))
+        if allowed:
+            monkeypatch.setenv("F1_LIVE_CONTROLS", "1")
+        else:
+            monkeypatch.delenv("F1_LIVE_CONTROLS", raising=False)
 
         def script():
             import streamlit as st
@@ -167,6 +172,37 @@ class TestControlsAreReachable:
         app_test.run()
 
         assert not app_test.exception
-        labels = [button.label for button in app_test.button]
+        return [button.label for button in app_test.button]
+
+    def test_the_controls_are_hidden_from_other_viewers(self, tmp_path, monkeypatch):
+        """LIVE-29: without the flag (and with no localhost browser) nobody
+        but the person running the app can stop or clear the shared feed."""
+        assert self._controls(tmp_path, monkeypatch, allowed=False) == []
+
+    def test_the_controls_offer_recording(self, tmp_path, monkeypatch):
+        labels = self._controls(tmp_path, monkeypatch, allowed=True)
         assert "Record raw stream" in labels
         assert "Stop live" in labels
+
+
+class TestWhoMayControlTheFeed:
+    """LIVE-29: the process-level controls are for the machine running the app."""
+
+    def test_the_flag_grants_control(self):
+        from ui.layout import live_controls_allowed
+
+        assert live_controls_allowed({"F1_LIVE_CONTROLS": "1"}, url=None, ip="10.0.0.5")
+
+    def test_a_localhost_browser_on_a_loopback_socket_may_control(self):
+        from ui.layout import live_controls_allowed
+
+        assert live_controls_allowed({}, url="http://localhost:8501/", ip=None)
+        assert live_controls_allowed({}, url="http://127.0.0.1:8501/live", ip=None)
+
+    def test_remote_viewers_only_read(self):
+        from ui.layout import live_controls_allowed
+
+        assert not live_controls_allowed({}, url="http://192.168.1.4:8501/", ip=None)
+        # A localhost URL through a proxy still arrives from a real address.
+        assert not live_controls_allowed({}, url="http://localhost:8501/", ip="203.0.113.9")
+        assert not live_controls_allowed({}, url=None, ip=None)

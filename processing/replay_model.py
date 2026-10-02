@@ -22,6 +22,7 @@ import bisect
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -76,6 +77,7 @@ def segment_names(info: dict | None) -> tuple[str, ...]:
         if value in _SPRINT_QUALIFYING:
             return SPRINT_SEGMENT_NAMES
     return SEGMENT_NAMES
+
 
 TOWER_FIELDS = (
     "position",
@@ -809,8 +811,8 @@ class _BestTracker:
     """The quickest of a changing set of laps; ties go to the earlier lap."""
 
     def __init__(self) -> None:
-        self.active: dict[int, tuple[float, float, object]] = {}
-        self._best: tuple[float, float, object] | None = None
+        self.active: dict[int, tuple[float, float, Any]] = {}
+        self._best: tuple[float, float, Any] | None = None
         self._stale = False
 
     def add(self, lap) -> None:
@@ -830,14 +832,14 @@ class _BestTracker:
         return self._best[2] if self._best is not None else None
 
 
-def _validity_events(laps: pd.DataFrame) -> list[tuple[float, int, object]]:
+def _validity_events(laps: pd.DataFrame) -> list[tuple[float, int, Any]]:
     """``(moment, order, lap)``: order 0 = becomes valid, 1 = deleted.
 
     A lap becomes valid when it ends (unless it is already deleted then) and
     again when reinstated; it stops being valid when the deletion is
     announced. Sorted, so a sweep sees the session as it unfolded.
     """
-    found: list[tuple[float, int, object]] = []
+    found: list[tuple[float, int, Any]] = []
     for lap in laps.itertuples():
         if not lap.base_valid or pd.isna(lap.end):
             continue
@@ -851,10 +853,10 @@ def _validity_events(laps: pd.DataFrame) -> list[tuple[float, int, object]]:
     return found
 
 
-def _running_best(laps: pd.DataFrame) -> list[tuple[float, object]]:
+def _running_best(laps: pd.DataFrame) -> list[tuple[float, Any]]:
     """Change points of the quickest valid lap among ``laps``, as known."""
     tracker = _BestTracker()
-    points: list[tuple[float, object]] = []
+    points: list[tuple[float, Any]] = []
     for moment, order, lap in _validity_events(laps):
         if order == 0:
             tracker.add(lap)
@@ -1565,7 +1567,7 @@ def red_flag_windows(session_data: dict) -> list[tuple[float, float]]:
 
 
 # Scheduled segment lengths in seconds: Q1-Q3 and SQ1-SQ3.
-SEGMENT_SECONDS = {
+SEGMENT_SECONDS: dict[tuple[str, ...], tuple[float, ...]] = {
     SEGMENT_NAMES: (18 * 60.0, 15 * 60.0, 12 * 60.0),
     SPRINT_SEGMENT_NAMES: (12 * 60.0, 10 * 60.0, 8 * 60.0),
 }
