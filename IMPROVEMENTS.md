@@ -178,13 +178,13 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Push, then protect `main` so it requires green CI.
   - Acceptance: `origin/main` equals local `main`; the first Actions run is green on every leg; no blob over 512 KB and no secret anywhere in history.
 
-- [x] **SEC-01** — done · P1 · S — **The bearer token is logged at `LOG_LEVEL=DEBUG`**
+- [x] **SEC-01** · P1 · S — **The bearer token is logged at `LOG_LEVEL=DEBUG`** — done
   - Files: `data/signalr_core.py:227-241` (`_default_connect`), `app.py:69-72` (root logger from `LOG_LEVEL`).
   - Problem: at DEBUG, `websockets` logs every handshake header, including `Authorization: Bearer <JWT>`, the `?id=<connectionToken>` path and every frame. DEBUG is documented, and REPLAY-05 used it. This breaks the rule that the token is never logged.
   - Fix: pass `logger=logging.getLogger("data.signalr_core.ws")` to `connect()` and pin it to INFO, or add a redacting `logging.Filter` on the `websockets` loggers.
   - Acceptance: a local `websockets.sync.server`, root logging at DEBUG, connecting with a token: the token string is absent from `caplog.text`.
 
-- [x] **SEC-02** — done · P2 · S — **Replay loading trusts `meta.json`; legacy pickles are listed but cannot load**
+- [x] **SEC-02** · P2 · S — **Replay loading trusts `meta.json`; legacy pickles are listed but cannot load** — done
   - Files: `data/source_manager.py:975-991` (`_load_replay`), `:1063-1071` (replay list).
   - Problem:
     - `frame_dicts` keys become path segments, so `"../x"` reads Parquet from outside the bundle.
@@ -193,7 +193,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: accept only `FRAME_KEYS` / `FRAME_DICT_KEYS` and the known value keys; reject path separators; hide `.pkl` from the list (REPO-24 converts the one that exists).
   - Acceptance: a crafted meta with `"../evil"` or `"is_live": true` is rejected with a clear message; `.pkl` files are not offered.
 
-- [x] **REPO-18** — done · P1 · S — **Remove `livef1`, `signalrcore`, `requests-cache` and the dead LiveF1 loader**
+- [x] **REPO-18** · P1 · S — **Remove `livef1`, `signalrcore`, `requests-cache` and the dead LiveF1 loader** — done
   - Files:
     - `requirements.txt`, `requirements.lock`;
     - `data/source_manager.py:12` (top-level `import livef1`), `:253-386` (`CIRCUIT_MAP`, `_gp_to_circuit_short`, `_load_livef1_session`, unreachable because `:133` raises `NotImplementedError`), plus the unreachable buffer fallbacks for state topics around `:444-460`, `:571-597`, `:759`, `:785`;
@@ -213,7 +213,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Add `pip-audit` to CI (TEST-09), with a documented ignore for the msgpack advisory until FastF1 moves.
   - Acceptance: `import data.source_manager` creates no `livef1.log` and adds no handlers; the runtime resolve shrinks by ≥ 15 packages; suite green.
 
-- [x] **REPO-19** — done · P1 · S — **Dependency ceilings and upgrades: NumPy < 2.6 while pandas < 3; unblock Streamlit 1.64**
+- [x] **REPO-19** · P1 · S — **Dependency ceilings and upgrades: NumPy < 2.6 while pandas < 3; unblock Streamlit 1.64** — done
   - Files: `requirements.txt`, `requirements.lock`, `tests/test_dependencies.py`.
   - Problem:
     - FastF1 3.8.3 (latest) requires `pandas<3`, so pandas stays on 2.3.3, the last 2.x. On that pandas, numpy 2.5 deprecates every `pd.Timedelta(seconds=…)` / `pd.to_timedelta(str)` call ("generic unit … will raise an error in the future"). FastF1 itself calls these on every laps load (`core.py` `__fix_tyre_info`, telemetry resampling), so a future NumPy turns this into a broken historical load that this repo cannot patch. `numpy<3` does not stop it; numpy 2.4.6 does not warn.
@@ -229,7 +229,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Acceptance: lock updated; suite green on 3.11–3.13 (and 3.14, TEST-09); the generic-unit warning count from production paths is 0 (CORE-01 handles ours).
   - Depends on: REPO-18.
 
-- [x] **REPO-20** — done · P1 · M — **A real lock: every transitive package, hashes, markers; a CI check that can fail** (supersedes REPO-16)
+- [x] **REPO-20** · P1 · M — **A real lock: every transitive package, hashes, markers; a CI check that can fail** (supersedes REPO-16) — done
   - Files: `requirements.lock`, new `requirements-dev.lock`, `scripts/lock_requirements.py`, `.github/workflows/ci.yml:33-34`, `tests/test_dependencies.py`.
   - Problem:
     - The lock pins 19 of ~84 packages, so altair, protobuf, scipy, starlette and others float between installs.
@@ -243,7 +243,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Acceptance: every installed package is pinned; editing `requirements.txt` without re-locking turns CI red; the lock installs on 3.11.
   - Depends on: REPO-19.
 
-- [x] **REPO-21** — done · P1 · S — **The pre-commit mypy hook fails on `processing/`**
+- [x] **REPO-21** · P1 · S — **The pre-commit mypy hook fails on `processing/`** — done
   - Files: `.pre-commit-config.yaml`, `readme.md` (pre-commit section), `tests/test_pre_commit_config.py`.
   - Problem:
     - The hook's isolated env installs unpinned `pandas-stubs`. With `check_untyped_defs` on `processing.*`, it reports **156 errors in 5 files**. CI runs mypy without stubs and passes.
@@ -256,13 +256,13 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Test that the pre-commit revs equal the lock's versions.
   - Acceptance: `pre-commit run --all-files` is green on a clean checkout.
 
-- [x] **REPO-22** — done · P2 · S — **Streamlit sends usage statistics from every viewer's browser**
+- [x] **REPO-22** · P2 · S — **Streamlit sends usage statistics from every viewer's browser** — done
   - Files: `.streamlit/config.toml`, `tests/test_ui_guideline.py`.
   - Problem: `browser.gatherUsageStats` defaults to `true`, which conflicts with "no external requests" (§0.5, §5.2).
   - Fix: `[browser] gatherUsageStats = false`; while there, consider `[server] enableWebsocketCompression = true` (measure first, REPLAY-29).
   - Acceptance: a guideline test asserts the setting.
 
-- [x] **REPO-23** — done · P2 · S — **No version number, no changelog**
+- [x] **REPO-23** · P2 · S — **No version number, no changelog** — done
   - Files: `pyproject.toml` (no `[project]`), new `CHANGELOG.md`, `data/source_manager.py:903-906` (replay `meta`), `ui/layout.py:119` (`set_page_config`).
   - Problem:
     - Nothing says which build is running.
@@ -285,7 +285,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - `livef1.log` disappears with REPO-18.
   - Acceptance: the replay picker lists only replays that load; `git status --ignored` shows no stray files after a test run.
 
-- [x] **REPO-25** — done · P3 · S — **LICENSE does not cover the third-party content in the repo**
+- [x] **REPO-25** · P3 · S — **LICENSE does not cover the third-party content in the repo** — done
   - Files: `LICENSE`, `tests/fixtures/live/manifest.json`, `ui/assets/fonts/OFL.txt`.
   - Problem: MIT reads as covering everything, but the repo ships F1 live-timing recordings (FOM data) and Titillium Web (OFL-1.1).
   - Fix: a `NOTICE` (or a LICENSE section) listing the fonts under OFL-1.1 and the fixture data as © Formula One World Championship Ltd, included for testing only and not under MIT. DOC-05 covers the readme side.
@@ -302,14 +302,14 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Status: partly done. `app.py` no longer patches `sys.path`, but `scripts/live_smoke.py:22` and `scripts/preview_replay_player.py:18` still do. There is no `src/` layout. REPO-23 adds `[project]`.
   - Fix: `src/f1dash/{data,processing,ui}`, entry point `f1dash = "f1dash.cli:main"` (wraps `streamlit run`). Last in the order: it touches every import.
 
-- [x] **REPO-13** — done · P3 · S — **`.env.example` and secrets** (carried)
+- [x] **REPO-13** · P3 · S — **`.env.example` and secrets** (carried) — done
   - Status: open. There is no `.env.example`. `config.py` reads six variables; the token variable is read in `data/live_adapter.py:158`.
   - Fix: `.env.example` documenting `FASTF1_CACHE_DIR`, `REPLAY_DIR`, `F1_METRICS_STORE`, `F1TV_SUBSCRIPTION_TOKEN`, `F1_NETWORK_TESTS`, `LOG_LEVEL`, `F1_REPLAY_PLAYER` and any flag added by this revision (`F1_LIVE_CONTROLS`, `F1_LIVE_AUTORECORD`). Read the token via `st.secrets` when deployed.
   - Acceptance: a test checks that every `os.getenv`/`environ.get` name in the code appears in `.env.example`.
 
 ### 3.2 Live feed
 
-- [x] **LIVE-25** — done · P1 · S — **Reconnect backoff never resets after a healthy connection**
+- [x] **LIVE-25** · P1 · S — **Reconnect backoff never resets after a healthy connection** — done
   - Files: `data/signalr_core.py:327-367` (`run` loop), `:420-445` (`_stream_once`).
   - Problem:
     - `_stream_once` returns normally only when stopped. Every real drop raises, including a server close, the 60 s silence and F1's ~2 h cut. The `except` path doubles the backoff, so the "had data → reset" branch never runs.
@@ -317,7 +317,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: keep `self._had_data`, reset it at the start of `_stream_once` and set it when data arrives. In `except`, reset the backoff to `backoff_start` when it is set.
   - Acceptance: the same fake gives every wait equal to `backoff_start`; a socket that drops without data still doubles.
 
-- [x] **LIVE-26** — done · P1 · S — **An expired or rejected token also blocks the free feed**
+- [x] **LIVE-26** · P1 · S — **An expired or rejected token also blocks the free feed** — done
   - Files: `data/signalr_core.py:339-346`, `:384-387`, `data/live_adapter.py:368-402`, `scripts/live_smoke.py`.
   - Problem:
     - With a stale `F1TV_SUBSCRIPTION_TOKEN`, negotiate answers 401, and the client retries the same token every 120 s for ever. Timing, race control and weather need no token, but never arrive.
@@ -329,7 +329,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Status text "Token rejected – timing only".
   - Acceptance: a fake that answers 401 only when `Authorization` is present connects within `backoff_start`, reaches `LIVE`, and the Subscribe arguments contain no `CarData.z`.
 
-- [x] **LIVE-27** — done · P1 · M — **The snapshot merges into old state, and nothing resets when the session changes**
+- [x] **LIVE-27** · P1 · M — **The snapshot merges into old state, and nothing resets when the session changes** — done
   - Files: `data/live_state.py:117-129` (`seed`), `data/live_adapter.py:290-345`, `:769-772`.
   - Problem:
     - `seed()` deep-merges a new snapshot over the existing state, and nothing clears state, `lap_history`, `_lap_counter` or the buffers when `SessionInfo` changes.
@@ -341,7 +341,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - When `SessionInfo.Key` (or `Path`) differs from the last one seen, clear state, lap history, lap counter and buffers, then bump the change token.
   - Acceptance: a qualifying snapshot followed by a race snapshot has no `KO` status and an empty `lap_history`; re-seeding the same session keeps `lap_history`.
 
-- [x] **LIVE-28** — done · P1 · S — **"Go live" can only appear on the last day of an event** (live half of CACHE-03)
+- [x] **LIVE-28** · P1 · S — **"Go live" can only appear on the last day of an event** (live half of CACHE-03) — done
   - Files: `data/fastf1_adapter.py:225-238` (`get_available_sessions` filter), `data/source_manager.py:147-162` (`live_session`), `ui/layout.py:126-128`.
   - Problem:
     - `live_session()` is fed `get_available_sessions()`, which drops every event whose `EventDate` (the last session's date at 00:00) is still ahead. So no practice session, Sprint Qualifying, Sprint or Qualifying is ever detected as live.
@@ -349,7 +349,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: `FastF1Adapter.get_schedule(years)` without the date filter, used by `live_session()`. Fix CACHE-03 in the same commit.
   - Acceptance: with the clock frozen during a Saturday qualifying (and a Friday Sprint Qualifying), `live_session()` returns that session.
 
-- [x] **LIVE-29** — done · P1 · S — **Any viewer can clear or stop the one live feed every viewer shares**
+- [x] **LIVE-29** · P1 · S — **Any viewer can clear or stop the one live feed every viewer shares** — done
   - Files: `ui/layout.py:996-1038` (`render_live_controls`), `ui/pages.py:220`, `data/live_adapter.py:477-487` (`clear_buffer`).
   - Problem:
     - "Clear buffers" also runs `state.clear()` on the merged state topics, which only come back with the next Subscribe snapshot (the next reconnect, up to ~2 h away). One click empties the tower for everyone.
@@ -360,13 +360,13 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Confirm Stop with `st.dialog`.
   - Acceptance: after Clear, `poll_live_data()` keeps its standings; with the flag unset, the buttons are not rendered (AppTest).
 
-- [x] **LIVE-30** — done · P2 · S — **Refusals at the websocket upgrade are retried hot**
+- [x] **LIVE-30** · P2 · S — **Refusals at the websocket upgrade are retried hot** — done
   - Files: `data/signalr_core.py:351-355`, `:393`.
   - Problem: a 401/403/429 on the upgrade raises `websockets.exceptions.InvalidStatus`. The generic `except` treats it as a drop and retries at 1, 2, 4 … s with status `RECONNECTING`, which breaks "a refusal waits 120 s and is shown".
   - Fix: catch `InvalidStatus` and take the `NegotiateError` branch using `exc.response.status_code`.
   - Acceptance: a fake connect raising `InvalidStatus(403)` gives `BLOCKED`, with exactly one attempt inside the back-off window.
 
-- [x] **LIVE-31** — done · P2 · S — **A recorder failure freezes live state**
+- [x] **LIVE-31** · P2 · S — **A recorder failure freezes live state** — done
   - Files: `data/live_adapter.py:251-252`, `:334-335`, `:347-363`.
   - Problem:
     - `self.recorder.record(...)` runs before the state update and is not guarded. With `OSError(28)` (disk full), every later message raises and the tower freezes for the rest of the session.
@@ -374,7 +374,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: read `rec = self.recorder` once and wrap the call in try/except. On error, log once, set `recorder = None` and keep the error for the Live page.
   - Acceptance: a raising recorder still updates state; `is_recording()` turns False and the error is shown.
 
-- [x] **LIVE-32** — done · P2 · S — **Recordings lose reconnect snapshots, so replays end in the wrong state**
+- [x] **LIVE-32** · P2 · S — **Recordings lose reconnect snapshots, so replays end in the wrong state** — done
   - Files: `data/live_recorder.py:39-42`, `:65-97`, `data/live_adapter.py:334-335`.
   - Problem:
     - Each reconnect overwrites `subscribe.json`, and `replay_recording` applies that latest snapshot first and every message after it.
@@ -383,7 +383,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: write each snapshot inline in `live.jsonl` as `["__snapshot__", result, utc]` and `seed_state` at that point when replaying. `subscribe.json` stays the first snapshot.
   - Acceptance: the scenario above replays to green; old recordings still replay.
 
-- [x] **LIVE-33** — done · P2 · S — **Stop is not honoured during negotiate or connect**
+- [x] **LIVE-33** · P2 · S — **Stop is not honoured during negotiate or connect** — done
   - Files: `data/signalr_core.py:315-325`, `:383-418`, `data/live_adapter.py:407-419`, `:489-507`.
   - Problem:
     - `_stream_once` does not check `_stop` between negotiate (up to 2 × 15 s), connect (15 s) and Subscribe, and `join(5)` times out.
@@ -391,19 +391,19 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: check `_stop` after negotiate and after connect (close and return); never set a status after stop; `start()` joins a lingering thread or uses a fresh Event per run.
   - Acceptance: with a negotiate that sleeps 2 s, `stop()` means connect is never called and the status stays `STOPPED`.
 
-- [x] **LIVE-34** — done · P2 · S — **Live rainfall reads "yes" in every dry session**
+- [x] **LIVE-34** · P2 · S — **Live rainfall reads "yes" in every dry session** — done
   - Files: `data/live_adapter.py:630-636` (weather values stay strings), `ui/dashboard.py:216-217` (`bool("0")` is True), `ui/layout.py:766` (`.any()` over `"0"`), `processing/replay_payload.py:169` (same pattern, safe today).
   - Problem: the live `WeatherData` fields are strings (`Rainfall: "0"`), so the dashboard shows rain and the layout warns about it with the 2023 fixture.
   - Fix: `pd.to_numeric` the numeric weather fields in `parse_weather_data`; treat rain as `== 1`.
   - Acceptance: with `tests/fixtures/live/WeatherData.jsonl.gz`, the dashboard shows no rain and the numeric columns have numeric dtypes.
 
-- [x] **LIVE-35** — done · P2 · M — **The Live page redraws all four tabs every 3 s**
+- [x] **LIVE-35** · P2 · M — **The Live page redraws all four tabs every 3 s** — done
   - Files: `ui/layout.py:680-692`.
   - Problem: with the Weather tab open, the fragment still builds six telemetry figures across all drivers, the stint chart and a dataframe every 3 s. This overlaps UX-02, which covers the zoom reset and `Scattergl`.
   - Fix: `st.tabs(..., key="live_tab", on_change="rerun")` (available in 1.59) and render only the tab whose `.open` is true.
   - Acceptance: AppTest on the Weather tab counts one `plotly_chart` after a fragment tick.
 
-- [x] **LIVE-36** — done · P3 · M — **The live snapshot is rebuilt once per browser tab**
+- [x] **LIVE-36** · P3 · M — **The live snapshot is rebuilt once per browser tab** — done
   - Files: `data/source_manager.py:76-78`, `:417-427`, `:639-641`.
   - Problem: the adapter is shared, but each tab's manager holds its own change-token cache, so N viewers mean N full rebuilds every 3 s (budget ~150 ms each), competing with the ingest thread for the GIL.
   - Fix: move the cache (token, snapshot, lock) to the adapter or `live_service`.
@@ -432,29 +432,29 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Acceptance: a fixture inside Q2 shows Q1-eliminated drivers under the heading and the rest ordered by Q2 bests; the same for SQ.
   - Depends on: LIVE-18, LIVE-27.
 
-- [x] **LIVE-20** — done · P2 · S — **Record every live session automatically** (carried)
+- [x] **LIVE-20** · P2 · S — **Record every live session automatically** (carried) — done
   - Status: not done; recording is only the button at `ui/layout.py:1029-1032`.
   - Fix: `F1_LIVE_AUTORECORD=1` (default on) starts recording into `replay_sessions/raw_<gp>_<session>_<utc>` when the first `SessionInfo` arrives, rotating when it changes.
   - Acceptance: two sessions' `SessionInfo` through `handle_message` produce two directories; with the flag off, nothing is written.
   - Depends on: LIVE-32, LIVE-27.
 
-- [x] **LIVE-21** — done · P2 · M — **Broadcast delay** (carried)
+- [x] **LIVE-21** · P2 · M — **Broadcast delay** (carried) — done
   - Status: not done.
   - Fix: ingest stays real-time. Keep one immutable snapshot per second for 5 minutes (`deque`). The Live page reads `snapshot_at(now − delay)` from a 0–300 s sidebar input kept in `st.session_state`.
   - Acceptance: with a 30 s delay, the tower shows the order from 30 s earlier in a simulated feed.
   - Depends on: LIVE-36.
 
-- [x] **LIVE-22** — done · P2 · S — **Track state and sector yellows on the live map** (carried)
+- [x] **LIVE-22** · P2 · S — **Track state and sector yellows on the live map** (carried) — done
   - Status: partly done. The header flag reads `TrackStatus` (`ui/dashboard.py:126-131`), but a second, sentence-case chip sits under the dashboard (`ui/layout.py:666-669`; see UI-13). The map tint and chip exist only for replay snapshots (`ui/dashboard.py:491-513`). The live `circuit_info` is `{}` (`source_manager.py:634`), so there are no corners and no marshal sectors.
   - Fix: load `circuit_info` from FastF1 for the event when the live session starts; reuse the replay tint and chip; optional marshal-sector yellows from race-control messages with `Scope == "Sector"`.
   - Acceptance: a live snapshot with `TrackStatus` 4 renders the `SC` chip and tint on the map.
 
-- [x] **LIVE-23** — done · P3 · S — **"Last update" freshness** (carried, extended)
+- [x] **LIVE-23** · P3 · S — **"Last update" freshness** (carried, extended) — done
   - Status: open. `session_info.last_heartbeat` (`source_manager.py:797`) and `stats.last_data_at` exist but nothing shows them. A Heartbeat does not change the change token, and the cache-hit path refreshes only the clock, so `last_heartbeat` freezes in the cached snapshot (`data/live_adapter.py:254-257`, `:445-454`, `source_manager.py:421-427`).
   - Fix: refresh `last_heartbeat` on the cache-hit path; caption `Last update 3 s ago`, turning into `No update for 45 s` past 30 s.
   - Acceptance: after a Heartbeat the next poll shows the new UTC; a frozen-clock unit test checks both captions.
 
-- [x] **LIVE-24** — done · P3 · S — **Token helper** (carried)
+- [x] **LIVE-24** · P3 · S — **Token helper** (carried) — done
   - Status: partly done. Expiry is shown (`ui/layout.py:614-626`); there is no paste box. LIVE-26 is the more urgent half.
   - Fix: a collapsed "Subscription token" expander with a paste box, written to `.env` only on an explicit Save; show the expiry; explain where `login-session` is. No automated login.
   - Acceptance: a JWT with a past `exp` shows "expired"; saving writes exactly one `F1TV_SUBSCRIPTION_TOKEN=` line.
@@ -467,7 +467,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
 
 ### 3.3 Time parsing and the pandas/NumPy layer
 
-- [x] **CORE-01** — done · P1 · S — **`to_seconds` still sends `H:MM:SS` and unit strings to `pd.to_timedelta`**
+- [x] **CORE-01** · P1 · S — **`to_seconds` still sends `H:MM:SS` and unit strings to `pd.to_timedelta`** — done
   - Files: `processing/time_utils.py:16-18`, `:43-63`, `:90-93`; caller `data/source_manager.py:40` (`extrapolated_remaining`).
   - Problem:
     - The live `ExtrapolatedClock.Remaining` is `"02:00:00"`. It misses both regexes and falls through to `pd.to_timedelta`. Under NumPy 2.5 that raises the generic-unit DeprecationWarning on every poll; `tests/test_signalr_core.py::TestSessionClock` fails three times under `-W error::DeprecationWarning`.
@@ -483,7 +483,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - No warning under `-W error::DeprecationWarning`.
     - Property test: `seconds_series(s).equals(s.map(to_seconds))`.
 
-- [x] **CORE-02** — done · P2 · S — **Silent-downcasting FutureWarnings that change meaning under pandas 3**
+- [x] **CORE-02** · P2 · S — **Silent-downcasting FutureWarnings that change meaning under pandas 3** — done
   - Files: `data/live_adapter.py:972-978` (`ffill().bfill()` on object flag columns in a `groupby.transform`), `data/source_manager.py:648` (`_ever_true`), `data/fastf1_adapter.py:737`, `processing/timing.py:241` (`_valid_laps`: `Deleted` is all-None when race control failed to load), `processing/timing.py:329`.
   - Problem:
     - Completed laps from `lap_history` lack `InPit/PitOut/Retired/Stopped` (NaN), while in-progress rows hold bools, so the columns are `object`. The silent object→bool downcast is deprecated.
@@ -493,7 +493,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
 
 ### 3.4 Replay, results and historical data
 
-- [x] **REPLAY-17** — done · P1 · S — **A CHEQUERED flag at the end of Q1 marks the rest of qualifying as finished**
+- [x] **REPLAY-17** · P1 · S — **A CHEQUERED flag at the end of Q1 marks the rest of qualifying as finished** — done
   - Files: `processing/replay_model.py:433-458` (`chequered_times`), `:461-475` (`flag_state`), `:478-492` (`flag_timeline`), `:1320-1326` (`events`), `processing/replay_payload.py:307`.
   - Problem:
     - Race control shows a track-wide CHEQUERED flag at the end of Q1, Q2 and Q3 (and of SQ1–SQ3).
@@ -506,7 +506,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - One `flag` event per segment.
   - Acceptance: in that scenario, `flag_timeline` contains RED at 1800, `flag_state(1850) == "RED"`, and CHEQUERED appears once per segment.
 
-- [x] **REPLAY-18** — done · P1 · S — **Deleted laps win the Results tower, the micro-sectors and the records**
+- [x] **REPLAY-18** · P1 · S — **Deleted laps win the Results tower, the micro-sectors and the records** — done
   - Files: `processing/timing.py:362-372` (`fastest_lap_row`), `:625-626`, `:938-950` (`best_seconds` over all laps), `:1009-1023`; `processing/metrics_store.py:91-137`.
   - Problem:
     - Only the sector bests go through `_valid_laps`. Reproduced on practice with E's 1:30.500 `Deleted`: the Results tower ranks E P1 in purple, while the replay's end state ranks E P3.
@@ -515,7 +515,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: use `_valid_laps` for best, session best, `fastest_lap_row` and the metrics lap/sector records. Still show a deleted lap as "last", with a struck-through marker and `DeletedReason` in its `title` (the start of FEAT-11).
   - Acceptance: the Results tower and the replay's end state agree; the store records the fastest valid lap.
 
-- [x] **REPLAY-19** — done · P1 · S — **Saved replays crash the map: `circuit_info.corners` is stored as a string**
+- [x] **REPLAY-19** · P1 · S — **Saved replays crash the map: `circuit_info.corners` is stored as a string** — done
   - Files: `data/source_manager.py:934-939` (`meta["values"]` written with `json.dumps(default=str)`), `:980`, consumer `processing/track_geometry.py:134-137`.
   - Problem:
     - The corners DataFrame becomes its `repr` string. After the round trip, `TrackGeometry.corners()` raises `ValueError: DataFrame constructor not properly called!`, so the payload and the map fail for every saved replay that has corners.
@@ -527,7 +527,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Bump `REPLAY_SCHEMA_VERSION` to **8**; a schema ≤ 7 `str` corners value loads as an empty frame.
   - Acceptance: save → load returns an equal corners frame and the payload builds; a schema-7 replay with string corners opens without a map crash.
 
-- [x] **REPLAY-20** — done · P2 · M — **Snapshots know about lap deletions before the stewards announce them**
+- [x] **REPLAY-20** · P2 · M — **Snapshots know about lap deletions before the stewards announce them** — done
   - Files: `processing/replay_model.py:390` (`valid` from the final `Deleted`), `:660`, `:742`, `:901`, `:1312`, `processing/timing.py:851`.
   - Problem:
     - FastF1 derives `Deleted` from a later race-control message ("… TIME 1:29.123 DELETED", possibly REINSTATED). At the moment the lap ends, the real screen showed it as best; the snapshot never does.
@@ -538,7 +538,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - A lap counts as valid until `deleted_at`; recompute the series at deletion moments.
   - Acceptance: a lap deleted 90 s after it ends is session best in `snapshot_at(t+30)` and not in `snapshot_at(t+120)`; a new no-future-leak case covers late deletions.
 
-- [x] **REPLAY-21** — done · P2 · S — **The race leader is highlighted as "close" and has a 0.000 s interval trend**
+- [x] **REPLAY-21** · P2 · S — **The race leader is highlighted as "close" and has a 0.000 s interval trend** — done
   - Files: `processing/replay_model.py:810-821`, `processing/replay_payload.py:237-258` (`_interval_trend`, `_close_series`), `ui/components/replay_player/player.js:632`, `:737-760`.
   - Problem:
     - The leader's `IntervalToPositionAhead` is `"LAP n"`, which parses to 0.0, so `close` is True for whoever leads.
@@ -546,13 +546,13 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: `interval_s` and `close` are None while the raw cell is lap-form or the settled position is 1.
   - Acceptance: the leader's `close` is False at every t, and the trend values are None while leading.
 
-- [x] **REPLAY-22** — done · P2 · S — **Qualifying cut-offs count cars with laps, not the entry list**
+- [x] **REPLAY-22** · P2 · S — **Qualifying cut-offs count cars with laps, not the entry list** — done
   - Files: `processing/timing.py:662-700` (`qualifying_cutoffs(len(rows))`).
   - Problem: with 22 entries and one car that never ran, the cut-offs become `[15, 10]`, and the official P16, who set a Q2 time, is shown as "Eliminated in Q1". The same happens with 19 runners in 2018–25.
   - Fix: count the entries (`results` or the drivers table); a Q2 or Q3 time also proves the segment was reached.
   - Acceptance: that scenario puts the "Eliminated in Q1" heading above P17.
 
-- [x] **REPLAY-23** — done · P2 · M — **A GPS dropout over 5 s makes a race car OUT and adds a "Retirement" event**
+- [x] **REPLAY-23** · P2 · M — **A GPS dropout over 5 s makes a race car OUT and adds a "Retirement" event** — done
   - Files: `processing/replay_model.py:47` (5 s threshold), `:594-605`, `:624-632`, `:1157`, `:1305-1310`.
   - Problem: removing 7 s of a car's position samples mid-race gives `OUT` and a `Retirement - B` event, and drops its lap in progress from the snapshot. Tunnels (Monaco, Singapore) and feed dropouts make this common.
   - Fix:
@@ -561,24 +561,24 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Emit "Retirement" only for an OUT that never ends before the flag; any shorter silence is not an event.
   - Acceptance: a 7 s gap gives no OUT and no event; a car that stops for good still gives one.
 
-- [x] **REPLAY-24** — done · P2 · S — **The qualifying segment clock runs through red flags**
+- [x] **REPLAY-24** · P2 · S — **The qualifying segment clock runs through red flags** — done
   - Files: `processing/replay_model.py:1254-1268` (`segment_elapsed`).
   - Problem: the session clock stops under a red flag, but after a 30-minute Q1 suspension the header reads "Q1 time 0:48:00" for an 18-minute segment.
   - Fix: subtract the overlap of `Status == "5"` windows inside the segment. Optionally show the remaining time (18/15/12 min in 2026) and label sprint segments SQ1–SQ3.
   - Acceptance: with track status 5 in a test, `segment_elapsed` is frozen between the red flag and the restart.
 
-- [x] **REPLAY-25** — done · P2 · S — **Pit-lane entries under a red flag count as pit stops** (confirm on real data first)
+- [x] **REPLAY-25** · P2 · S — **Pit-lane entries under a red flag count as pit stops** (confirm on real data first) — done
   - Files: `processing/replay_model.py:703-706` (`pits` = count of `PitInTime`), `:1299-1303`.
   - Problem: under a red flag every car enters the pit lane, so every car gets Pits = 1 and about 20 "Pit stop" events appear within seconds.
   - Fix: label entries during status 5 as "Red flag" and exclude them from `pits`, or compare with TimingAppData stint changes.
   - Acceptance: confirmed or refuted on 2023 Australia R (three red flags); a synthetic red flag leaves `pits` unchanged.
 
-- [x] **REPLAY-26** — done · P3 · S — **The Results tower breaks tied laps by row order, not by who set the time first**
+- [x] **REPLAY-26** · P3 · S — **The Results tower breaks tied laps by row order, not by who set the time first** — done
   - Files: `processing/timing.py:625-626` (`_classify_by_best_lap`), `:1009-1013`.
   - Fix: sort by `(best, time the best was set)`.
   - Acceptance: A sets 1:30.500 at 383 s and E at 503 s; A is P1 in both the Results tower and the replay.
 
-- [x] **REPLAY-27** — done · P3 · S — **A pit-lane starter shows ON TRACK while waiting at pit exit**
+- [x] **REPLAY-27** · P3 · S — **A pit-lane starter shows ON TRACK while waiting at pit exit** — done
   - Files: `processing/replay_model.py:573-587`, `:615`.
   - Fix: in races, when lap 1 has `PitOutTime` and no earlier `PitInTime` (grid 0), open an IN PIT window `[lights_out, pit_out)`.
   - Acceptance: a fixture with a pit-lane starter shows IN PIT at lights out + 5 s.
@@ -589,37 +589,37 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: clean stream columns once per column with vectorised operations; build `_series` from numpy change masks (`v[1:] != v[:-1]`).
   - Acceptance: `tower_series` on the big synthetic race < 0.15 s, with identical series (equality test).
 
-- [x] **REPLAY-29** — done · P3 · M — **Replay payload size (1.6–3 MB uncompressed)**
+- [x] **REPLAY-29** · P3 · M — **Replay payload size (1.6–3 MB uncompressed)** — done
   - Files: `processing/replay_payload.py:95-118`, `:237-248`, `:318`.
   - Problem: positions are 1.31 MB of base64 Int16 for a 93-minute race. `trend`, sampled every 5 s, is 37 % of the non-position payload, although `interval_s` is already a change-point series. `server.enableWebsocketCompression` is off.
   - Fix: ship `interval_s` change points and drop `trend`; delta-encode positions (Int8 deltas plus keyframes) or quantise to 0.5 viewBox units; measure compression (REPO-22).
   - Acceptance: the reference race payload shrinks by ≥ 40 %; the player tests pass.
 
-- [x] **HIST-09** — done · P2 · S — **A session in progress, or not archived yet, fails to load or is cached partial**
+- [x] **HIST-09** · P2 · S — **A session in progress, or not archived yet, fails to load or is cached partial** — done
   - Files: `data/fastf1_adapter.py:164-166`, `:257`, `:488`, `data/source_manager.py:180-209`, `app.py:119-120`.
   - Problem: a session becomes selectable once it has started (the session-level filter). If FastF1 soft-fails the lap load, `session.laps` raises `DataNotLoadedError` ("…has not been loaded yet. See `Session.load`"); otherwise a partial dict is runtime-cached for the life of the process. This comes from reading FastF1's source; reproduce it with a mock.
   - Fix: catch `DataNotLoadedError` and empty laps, and say "not in F1's archive yet (usually 1–2 h after the session)". Don't runtime-cache sessions that ended less than ~3 h ago, or give them a TTL.
   - Acceptance: a mocked session without `_laps` shows that message; a recent session is not cached.
 
-- [x] **HIST-10** — done · P3 · S — **The FastF1 cache is re-enabled for every browser tab**
+- [x] **HIST-10** · P3 · S — **The FastF1 cache is re-enabled for every browser tab** — done
   - Files: `data/fastf1_adapter.py:198-202`, `data/source_manager.py:68-69`.
   - Problem: each `DataSourceManager` calls `fastf1.Cache.enable_cache`, which builds a new requests-cache SQLite session without closing the old one, possibly in the middle of another tab's load. An unused Jolpica `requests.Session` is also created per tab.
   - Fix: enable once per process behind a module guard; build the Jolpica session lazily.
   - Acceptance: after two managers, FastF1's cached session is the same object.
 
-- [x] **HIST-11** — done · P3 · S — **Jolpica memo ignores keyword arguments; `Retry-After` is uncapped**
+- [x] **HIST-11** · P3 · S — **Jolpica memo ignores keyword arguments; `Retry-After` is uncapped** — done
   - Files: `data/jolpica_adapter.py:22-55`.
   - Problem: `get_practice_results(2024, 1, session="2")` raises `TypeError`. A 429 carrying `Retry-After: 3600` blocks the Streamlit script thread for an hour.
   - Fix: key the memo on `(args, frozenset(kwargs.items()))`; cap `Retry-After` at ~10 s and raise beyond that.
   - Acceptance: the keyword call works; `Retry-After: 3600` raises quickly. Patch `time.sleep` in the fixture (TEST-06).
 
-- [x] **CACHE-05** — done · P3 · S — **The metrics store never corrects a record and crashes on a malformed file**
+- [x] **CACHE-05** · P3 · S — **The metrics store never corrects a record and crashes on a malformed file** — done
   - Files: `processing/metrics_store.py:44-51`, `:115-137`.
   - Problem: per-session records are replaced only when beaten, so a wrong value (REPLAY-18, or a later FastF1 data fix) stays for ever. A JSON file holding `[]` makes `load()` raise `AttributeError` at app start.
   - Fix: recompute and overwrite each session's records (only "all-time" stays a running minimum); reset the store when the top level is not a dict, keeping a `.bak`.
   - Acceptance: corrected laps lower or raise the stored record; a list-JSON file loads empty with a logged warning.
 
-- [x] **HIST-08** — done · P2 · S — **FastF1 first load is slow; drivers load serially; changing scope reloads** (carried)
+- [x] **HIST-08** · P2 · S — **FastF1 first load is slow; drivers load serially; changing scope reloads** (carried) — done
   - Status: partly done. Per-driver progress exists ("Telemetry i/N" in `st.status`, `source_manager.py:178-188`). Still open:
     - no `st.cache_resource` for the `Session`;
     - the loop is serial (`:186-193`);
@@ -629,7 +629,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: cache the loaded session per `(year, gp, session)` with `max_entries=3`; derive scope frames from it; compute telemetry lazily; measure a `ThreadPoolExecutor` for the merges.
   - Acceptance: switching scope on a warm session < 2 s; loading does not build the telemetry alignment until Analysis opens.
 
-- [x] **CACHE-02** — done · P2 · M — **Metrics store: cross-circuit "all-time", writes, concurrency** (carried)
+- [x] **CACHE-02** · P2 · M — **Metrics store: cross-circuit "all-time", writes, concurrency** (carried) — done
   - Status: partly done. Rerun writes are gone (recorded once per tab per session, `app.py:202-213`), and live sessions are no longer recorded. Still open:
     - `update_laps` saves unconditionally (`metrics_store.py:138`);
     - all-time records compare circuits (`:160-176`);
@@ -640,12 +640,12 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Acceptance: 100 reruns with nothing changed write 0 times; two concurrent writers keep both records; all-time is grouped by circuit.
   - Depends on: CACHE-05, REPLAY-18.
 
-- [x] **CACHE-03** — done · P2 · S — **The current weekend's sessions are hidden until race day** (carried)
+- [x] **CACHE-03** · P2 · S — **The current weekend's sessions are hidden until race day** (carried) — done
   - Status: valid. `fastf1_adapter.py:225-238` filters on `EventDate` (the last session's date at 00:00). The session-level filter is already done (`:144-168`).
   - Fix: include an event once its first session has ended; shorter schedule TTL on race weekends. Same commit as LIVE-28.
   - Acceptance: on Saturday of a sprint weekend, FP1, SQ and the Sprint are selectable.
 
-- [x] **CACHE-04** — done · P3 · S — **FastF1 cache directory hygiene** (carried)
+- [x] **CACHE-04** · P3 · S — **FastF1 cache directory hygiene** (carried) — done
   - Status: valid. `config.py:15` and `fastf1_adapter.py:198` default to `./ff1_cache`, relative to the working directory. The cache in the maintainer's folder already holds eleven sessions plus the HTTP SQLite.
   - Fix: default to `platformdirs.user_cache_dir("f1-telemetry-dashboard")` (and the same for replays and the metrics store when not overridden); show the size and a clear button on the Settings page (UI-22).
   - Acceptance: with no env vars, nothing is written inside the repository.
@@ -654,7 +654,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
 
 Every item here follows §5. No XSS was found: every `st.html` value is escaped, numeric or passed through `safe_hex`; the player only uses `textContent`/`setAttribute`. The player's listener, rAF and ResizeObserver cleanup is clean.
 
-- [x] **UI-09** — done · P1 · S — **The map's SC/VSC/RED chip stays after the period ends; an empty driver card is always shown**
+- [x] **UI-09** · P1 · S — **The map's SC/VSC/RED chip stays after the period ends; an empty driver card is always shown** — done
   - Files: `ui/components/replay_player/player.css:58-61` (`.rp-chip { display: inline-block }`), `:135` (`.rp-card { display: grid }`), `player.js:249`, `:469-470`, `:676`, `:715`.
   - Problem:
     - An author `display` rule beats the browser's `[hidden]` rule. Reproduced in Chromium: seeking from under an SC to after it, the header reads GREEN while the map chip still says "SC".
@@ -662,13 +662,13 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
   - Fix: `.rp [hidden] { display: none !important; }`, or toggle a class instead. Disable Analyse with no focus.
   - Acceptance: a Playwright or jsdom test seeks into and past an SC period and finds the chip not rendered; with nothing focused the card is not rendered.
 
-- [x] **UI-10** — done · P1 · S — **Opening Records (or Live) loses the replay position** (REPLAY-14 regression)
+- [x] **UI-10** · P1 · S — **Opening Records (or Live) loses the replay position** (REPLAY-14 regression) — done
   - Files: `ui/pages.py:80-84`, `:173-199`.
   - Problem: `records_page` and `live_page` never set `LAST_PAGE_KEY`, so `sync_seek_cursor` is skipped on return and the player remounts at the last Python seek. Reproduced: Replay at 0:03:00 → Records → Replay shows 0:02:00.
   - Fix: track the current page in `main()` by comparing the `st.navigation(...)` result with the previous one, instead of setting it in each page.
   - Acceptance: AppTest Replay → seek → Records → Replay gets the reported cursor back in the player's `data.cursor`.
 
-- [x] **UI-11** — done · P2 · S — **A driver click re-sends the whole player payload; each rerun serialises it twice**
+- [x] **UI-11** · P2 · S — **A driver click re-sends the whole player payload; each rerun serialises it twice** — done
   - Files: `ui/replay_view.py:374-383`, `ui/components/replay_player/__init__.py:106`, `player.js:913-930` (`update()` ignores `data.focus`).
   - Problem:
     - `focus` is part of `data`, so each tower or car click changes the element hash and re-sends the payload: 115 KB per click on the 26 KB fixture, 2.6–4 MB on a real race.
@@ -678,13 +678,13 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
     - Later, serve the payload once (static/media URL plus a version) and pass only the URL.
   - Acceptance: AppTest shows the component's JSON is byte-identical before and after a focus change.
 
-- [x] **UI-12** — done · P2 · S — **The shared chart template overrides each chart's own layout**
+- [x] **UI-12** · P2 · S — **The shared chart template overrides each chart's own layout** — done
   - Files: `ui/layout.py:56-59` (`_plot` applies `chart_layout` last), `:363-369`, `:731-738`, `ui/theme.py:178-204`.
   - Problem: the Positions chart asks for `hovermode="closest"` and a vertical legend at x = 1.01, but gets "x unified" (a 20-driver tooltip) and a horizontal legend anchored off the plot. The Telemetry and Weather legends are overridden the same way.
   - Fix: apply the template first (as `layout.template`, or `update_layout(chart_layout)` before the chart's own `update_layout`).
   - Acceptance: a unit test where a chart's `hovermode` and `legend` survive `_plot`.
 
-- [x] **UI-13** — done · P2 · S — **Tower vocabulary and formats break §5.6/§5.7 where the guideline test can't see**
+- [x] **UI-13** · P2 · S — **Tower vocabulary and formats break §5.6/§5.7 where the guideline test can't see** — done
   - Files: `processing/timing.py:312`, `:339-359`, `:878`, `:1026`; `ui/dashboard.py:152`, `:213`, `:224`, `:317-324`; `ui/layout.py:46-53`, `:448`, `:457`, `:528`, `:666-669`, `:764`, `:854-855`.
   - Problem:
     - A `CLASSIFIED` chip on every qualifying and practice row.
@@ -703,7 +703,7 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
     - Extend check 5 of `test_ui_guideline.py` to CSS colour names.
   - Acceptance: new guideline assertions over the tower HTML for the race, qualifying and practice fixtures.
 
-- [x] **UI-14** — done · P2 · S — **Contrast below 4.5:1 for session-best times and RED chips**
+- [x] **UI-14** · P2 · S — **Contrast below 4.5:1 for session-best times and RED chips** — done
   - Files: `ui/theme.py:25`, `:89-98`; `player.css:12`, `:111`.
   - Problem:
     - `--best` text measures 3.9:1 on `--surface` and 3.6:1 on `--surface-2` (13 px purple lap times).
@@ -715,7 +715,7 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
     - Record both in §5.4.
   - Acceptance: a test computes WCAG contrast for every `FLAG_STATES` fg/bg pair and for every time-text token on both surfaces, all ≥ 4.5:1.
 
-- [x] **UI-15** — done · P2 · M — **Player keyboard and screen-reader gaps**
+- [x] **UI-15** · P2 · M — **Player keyboard and screen-reader gaps** — done
   - Files: `player.js:235-240`, `:309-323`, `:360-398`, `:434-466`, `:907-910`.
   - Problem:
     - Tower rows and map cars are click-only `div`/`g` elements, so a keyboard user cannot focus a driver. That also locks out the driver card, "Analyse this lap" and follow mode.
@@ -725,13 +725,13 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
   - Fix: make rows `button`s (or `role="row"` + `tabindex` + Enter/Space); ↑/↓ moves focus between drivers; add the ARIA states; add a "Follow" toggle.
   - Acceptance: a jsdom test tabs to a row, presses Enter and sees the card; the toggles report `aria-pressed`.
 
-- [x] **UI-16** — done · P3 · S — **Player shortcuts fire with Ctrl/Cmd held**
+- [x] **UI-16** · P3 · S — **Player shortcuts fire with Ctrl/Cmd held** — done
   - Files: `player.js:886-911` (`onKey`).
   - Problem: Ctrl/Cmd+F (find in page) also toggles follow, Ctrl+L toggles labels, and Cmd+1…8 (switch tab) changes the speed.
   - Fix: `if (event.ctrlKey || event.metaKey || event.altKey) return;` at the top.
   - Acceptance: a jsdom keydown `{key: "f", ctrlKey: true}` leaves follow off.
 
-- [x] **UI-17** — done · P2 · S — **Shared-link parameters load unvalidated, and the sidebar disagrees with what loaded**
+- [x] **UI-17** · P2 · S — **Shared-link parameters load unvalidated, and the sidebar disagrees with what loaded** — done
   - Files: `ui/layout.py:184-224`.
   - Problem:
     - `?year=2017`, `?gp=Nope Grand Prix` and `?session=XYZ` are committed and loaded as given, while the sidebar shows other values.
@@ -740,7 +740,7 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
   - Fix: validate against `_event_names_cached`, `_session_codes_cached` and `FIRST_SEASON`. On a mismatch, `st.warning("Link refers to an unknown session")` and load nothing.
   - Acceptance: AppTest with bad parameters gives `selection is None` and a warning; after a valid link, the picker values equal the loaded selection.
 
-- [x] **UI-18** — done · P2 · S — **Per-session processed views are never evicted**
+- [x] **UI-18** · P2 · S — **Per-session processed views are never evicted** — done
   - Files: `app.py:161-199`, `ui/replay_view.py:134-143`, `:405-422`.
   - Problem:
     - `processed:{key}` holds the session dict, the laps and, once Analysis has been opened, the aligned telemetry. Loading four sessions in one tab leaves four entries.
@@ -749,22 +749,22 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
   - Fix: `_evict_other_sessions("processed", key)`, and the same for the sector memo.
   - Acceptance: after loading three sessions, exactly one `processed:*` entry remains.
 
-- [x] **UI-19** — done · P2 · S — **On phones the sidebar covers the data on every first load**
+- [x] **UI-19** · P2 · S — **On phones the sidebar covers the data on every first load** — done
   - Files: `ui/layout.py:119` (`initial_sidebar_state="expanded"`).
   - Fix: `"auto"`, or `"expanded"` only while `st.session_state.get("selection") is None`.
   - Acceptance: Playwright at 375 px with a shared link shows the header bar unobstructed.
 
-- [x] **UI-20** — done · P3 · S — **Mobile Results: sector-3 times are clipped**
+- [x] **UI-20** · P3 · S — **Mobile Results: sector-3 times are clipped** — done
   - Files: `ui/theme.py` (`.f1-sectors { grid-template-columns: repeat(3, 1fr) }` inside `.f1-dash { overflow: hidden }`).
   - Fix: `repeat(auto-fit, minmax(150px, 1fr))`, or one column under 600 px.
   - Acceptance: at 360 px no `.f1-sector-time` has `scrollWidth > clientWidth`.
 
-- [x] **UI-21** — done · P3 · S — **The Analysis section resets on every page round trip**
+- [x] **UI-21** · P3 · S — **The Analysis section resets on every page round trip** — done
   - Files: `ui/pages.py:144-153`.
   - Fix: Streamlit 1.59's `segmented_control(..., persist_state="session")`, or `bind="query-params"`, which also covers part of FEAT-14.
   - Acceptance: AppTest Weather → Replay → Analysis still shows Weather.
 
-- [x] **UI-22** — done · P3 · M — **No About, Settings or cache controls**
+- [x] **UI-22** · P3 · M — **No About, Settings or cache controls** — done
   - Files: `ui/layout.py:119`, `ui/pages.py`, `.streamlit/config.toml:12-13` (`toolbarMode = "minimal"` hides Streamlit's own "Clear cache").
   - Problem: a user cannot drop the 1-hour schedule cache (stale on race weekends) or the runtime cache, see the version, or change units.
   - Fix:
@@ -774,7 +774,7 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
   - Acceptance: AppTest clears the caches; About shows the version.
   - Depends on: REPO-23.
 
-- [x] **UI-23** — done · P3 · S — **The driver card's DOM is rebuilt every animation frame**
+- [x] **UI-23** · P3 · S — **The driver card's DOM is rebuilt every animation frame** — done
   - Files: `player.js:713-759`.
   - Problem: while a driver is focused, the last-laps list and the sparkline SVG are recreated about 60 times a second. That contradicts `layout.md` §9.2 ("text is rewritten only when a value changes").
   - Fix: memoise on `(code, laps.length, last trend index)`.
@@ -782,15 +782,15 @@ Every item here follows §5. No XSS was found: every `st.html` value is escaped,
 
 Carried UI items (text as in revision 3; statuses checked against the code on 2026-10-02):
 
-- [x] **UX-02** — done · P2 · M — **Plotly performance and live chart behaviour.** Status: valid. There is no `Scattergl` and no `uirevision`, and the template forces "x unified" (`ui/theme.py:200`). Fix: `go.Scattergl` for telemetry and laps; `uirevision=<session key>`; decimate to the 5 m grid; default to a driver filter (UX-03); `hovermode="x"` with a compact template. Acceptance: a live fragment update keeps a zoomed range (AppTest asserts `uirevision`). Depends on: UI-12.
+- [x] **UX-02** · P2 · M — **Plotly performance and live chart behaviour.** Status: valid. There is no `Scattergl` and no `uirevision`, and the template forces "x unified" (`ui/theme.py:200`). Fix: `go.Scattergl` for telemetry and laps; `uirevision=<session key>`; decimate to the 5 m grid; default to a driver filter (UX-03); `hovermode="x"` with a compact template. Acceptance: a live fragment update keeps a zoomed range (AppTest asserts `uirevision`). Depends on: UI-12. — done
 - [x] **UX-03** · P2 · S — **Driver selection and favourites.** Status: valid; every chart plots every driver. Fix: a global driver multiselect (default top 5) with favourites in `st.query_params`; highlight favourites in the tower. — done
 - [x] **UX-04** · P2 · M — **Head-to-head is speed-only and fastest-lap-only.** Status: valid (`ui/layout.py:861-948`). Fix: stacked Speed/Throttle/Brake/Gear/Δt sharing x; corner markers from `circuit_info.corners`; lap pickers per driver; keep the "approximate" caption. — done
-- [x] **UX-06** — done · P2 · S — **Race-control panel usability.** Status: valid. The key is still `"rc_categories"` (`ui/layout.py:836`), there is no search, and SC/VSC/red shading exists only on the player timeline. Fix: a per-session key, a search box, and SC/VSC/red shading on the lap-time and position charts.
+- [x] **UX-06** · P2 · S — **Race-control panel usability.** Status: valid. The key is still `"rc_categories"` (`ui/layout.py:836`), there is no search, and SC/VSC/red shading exists only on the player timeline. Fix: a per-session key, a search box, and SC/VSC/red shading on the lap-time and position charts. — done
 - [ ] **UX-12** · P3 · S — **Units, time zones, preferences.** Status: valid. km/h and °C are hard-coded; `gmt_offset` is stored (`source_manager.py:774`) but never read. Fix: km/h ↔ mph, °C ↔ °F, and local vs track time on the Settings page (UI-22) and in URL params.
 
 ### 3.6 Tests and CI
 
-- [x] **TEST-06** — done · P2 · S — **The suite hides ~15 000 warnings, some of which will become errors**
+- [x] **TEST-06** · P2 · S — **The suite hides ~15 000 warnings, some of which will become errors** — done
   - Files: `pytest.ini`, `tests/test_replay_model.py:101`, `:216`, `:256`, `:430-435`, `:486`, `tests/perf/test_hot_paths.py:47`, `tests/test_fastf1_adapter.py:662-713`, `tests/test_jolpica_adapter.py:216`.
   - Problem:
     - `pytest.ini` has no `filterwarnings` and no `--strict-markers`.
@@ -806,13 +806,13 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
   - Acceptance: the suite passes under the new filters with < 100 warnings.
   - Depends on: CORE-01, CORE-02.
 
-- [x] **TEST-07** — done · P2 · S — **A timing test fails about 2 runs in 7**
+- [x] **TEST-07** · P2 · S — **A timing test fails about 2 runs in 7** — done
   - Files: `tests/perf/test_hot_paths.py:63-80` (`test_it_is_not_slower_than_the_loop_it_replaced`).
   - Problem: it compares two timings about 1.0–1.3× apart, with 25 % slack. It failed in a full run and in 1 of 6 isolated runs. `test_it_matches_the_scalar_parser` already covers correctness.
   - Fix: drop the relative timing assert, or move it behind a `perf` marker excluded by default (part of TEST-04).
   - Acceptance: 20 consecutive full runs green.
 
-- [x] **TEST-08** — done · P2 · S — **Tests and CI write into the working tree**
+- [x] **TEST-08** · P2 · S — **Tests and CI write into the working tree** — done
   - Files: `tests/test_fastf1_adapter.py:88`, `:107+`, `tests/conftest.py`, `.github/workflows/ci.yml:46-47`, `tests/test_repo_hygiene.py`, `.gitignore`.
   - Problem:
     - `FastF1Adapter()` with defaults enables a real `./ff1_cache/fastf1_http_cache.sqlite`, and `:88` creates `./test_cache` (not ignored).
@@ -824,7 +824,7 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
     - Skip the hygiene test outside a git work tree.
   - Acceptance: a full run leaves `git status --ignored` unchanged.
 
-- [x] **TEST-09** — done · P2 · M — **CI coverage gaps**
+- [x] **TEST-09** · P2 · M — **CI coverage gaps** — done
   - Files: `.github/workflows/ci.yml`, new `.github/dependabot.yml`.
   - Problem:
     - Only Ubuntu with 3.11–3.13. The maintainer runs Windows with 3.14, so that combination is never tested.
@@ -844,13 +844,13 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
   - Acceptance: Windows and 3.14 legs green; the cache key changes with the lock; dependabot opens PRs.
   - Depends on: REPO-17, REPO-20.
 
-- [x] **TEST-03** — done · P2 · S — **Network tests never run automatically** (carried). Status: valid; the 25 network tests have never run in CI. Fix: a nightly + `workflow_dispatch` workflow with `F1_NETWORK_TESTS=1`, the FastF1 cache via `actions/cache`, and an issue opened on failure. Depends on: REPO-17.
-- [x] **TEST-04** — done · P2 · S — **CI-stable performance budgets** (carried). Status: partly done (plain-test budgets in `tests/perf/` and `TestPerformance`). TEST-07 is the first concrete case. Fix: best-of-N or relative budgets behind a `perf` marker, run in their own CI job.
-- [x] **TEST-05** — done · P3 · S — **Coverage and property tests** (carried). Status: partly done. `pytest-cov` is installed but CI runs `pytest -v` without `--cov`, and `hypothesis` is not installed. Fix: `--cov` with a floor; `hypothesis` for `to_seconds` (with CORE-01), `deep_merge`, `segment_boundaries`, `resample_to_distance_grid`.
+- [x] **TEST-03** · P2 · S — **Network tests never run automatically** (carried). Status: valid; the 25 network tests have never run in CI. Fix: a nightly + `workflow_dispatch` workflow with `F1_NETWORK_TESTS=1`, the FastF1 cache via `actions/cache`, and an issue opened on failure. Depends on: REPO-17. — done
+- [x] **TEST-04** · P2 · S — **CI-stable performance budgets** (carried). Status: partly done (plain-test budgets in `tests/perf/` and `TestPerformance`). TEST-07 is the first concrete case. Fix: best-of-N or relative budgets behind a `perf` marker, run in their own CI job. — done
+- [x] **TEST-05** · P3 · S — **Coverage and property tests** (carried). Status: partly done. `pytest-cov` is installed but CI runs `pytest -v` without `--cov`, and `hypothesis` is not installed. Fix: `--cov` with a floor; `hypothesis` for `to_seconds` (with CORE-01), `deep_merge`, `segment_boundaries`, `resample_to_distance_grid`. — done
 
 ### 3.7 Documentation
 
-- [x] **DOC-06** — done · P2 · S — **`ARCHITECTURE.md` and the historical docs contradict the code**
+- [x] **DOC-06** · P2 · S — **`ARCHITECTURE.md` and the historical docs contradict the code** — done
   - Files: `ARCHITECTURE.md` (config block, project tree, replay format, CI section), `PHASE1_RESEARCH_SUMMARY.md`, `layout.md`, `tests/test_docs_live_claims.py`.
   - Problem:
     - The config block lists `distance_step` and `cache_ttl_seconds`, which `config.py` doesn't have.
@@ -864,7 +864,7 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
     - Extend the docs test so every module under `data/`, `processing/` and `ui/` appears in ARCHITECTURE.md.
   - Acceptance: that test passes; grep finds no `.pkl` replay claim.
 
-- [x] **DOC-02** — done · P2 · S — **readme drift** (carried, extended). Status: every revision-1 problem is still there:
+- [x] **DOC-02** · P2 · S — **readme drift** (carried, extended). Status: every revision-1 problem is still there: — done
   - the incomplete tree;
   - two "### 5." headings;
   - the placeholder clone URL (use `github.com/mricero/F1-Telemetry-Dashboard` after REPO-17);
@@ -883,7 +883,7 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
   - the broken mypy hook (REPO-21).
 
   Acceptance: a grep for `.pkl`, `distance_step`, `zlib`, `LiveF1` and `1.35+` in the readme is clean, apart from legacy-format notes.
-- [x] **DOC-03** — done · P2 · S — **`CLAUDE.md` / `tasks.md` out of date** (carried). Status: partly done (`tasks.md` has rounds 6–8; `CLAUDE.md` links this file). Still open:
+- [x] **DOC-03** · P2 · S — **`CLAUDE.md` / `tasks.md` out of date** (carried). Status: partly done (`tasks.md` has rounds 6–8; `CLAUDE.md` links this file). Still open: — done
   - Windows-only commands (`CLAUDE.md:14-27`);
   - "four review rounds";
   - no mention of `ui/dashboard.py`, `processing/timing.py`, `ui/track_map.py`;
@@ -891,8 +891,8 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
   - `tasks.md` §9 still lists the tower and dominance map as not started.
 
   Fix: cross-platform commands, and add a "Round 9" heading to `tasks.md` with the first item done from this revision.
-- [x] **DOC-04** — done · P3 · S — **`dashboard_preview.html` (86 KB) is a stale artefact** (carried). Status: tracked and referenced nowhere. Fix: delete it; `scripts/preview_replay_player.py` already generates a current preview.
-- [x] **DOC-05** — done · P3 · S — **Data sources and terms** (carried). Status: the readme has only the "unofficial" and IP-block notes. Fix: a "Data sources & terms" section covering:
+- [x] **DOC-04** · P3 · S — **`dashboard_preview.html` (86 KB) is a stale artefact** (carried). Status: tracked and referenced nowhere. Fix: delete it; `scripts/preview_replay_player.py` already generates a current preview. — done
+- [x] **DOC-05** · P3 · S — **Data sources and terms** (carried). Status: the readme has only the "unofficial" and IP-block notes. Fix: a "Data sources & terms" section covering: — done
   - unofficial endpoints;
   - subscription data needs the user's own F1TV account and must not be redistributed;
   - hosting publicly risks IP blocks;
@@ -909,12 +909,12 @@ Still valid. Each gets `Files:` and `Acceptance:` written in as the first step o
 - [x] **FEAT-02** · M — **Pit rejoin predictor:** current gap minus the circuit's pit loss, from a per-circuit table seeded from historical `PitInTime → PitOutTime` medians. — done
 - [x] **FEAT-03** · M — **Tyre degradation and stint pace:** fuel-corrected lap time against tyre age per compound, excluding in/out laps, SC laps and `IsAccurate == False`. Status: open; the laps frame drops FastF1's `TrackStatus` column (`data/fastf1_adapter.py:491-525`), which is needed to exclude SC laps. Keep it. — done
 - [x] **FEAT-05** · S — **Team radio list:** OpenF1 `team_radio` (historical, free from 2023); the live feed's `TeamRadio` is auth-gated. Respect the token rules. — done
-- [x] **FEAT-06** — done · S — **Standings panels** via Jolpica (`get_driver_standings` / `get_constructor_standings` exist with no callers), with a points-after-this-race projection for live races.
+- [ ] **FEAT-06** · S — **Standings panels** via Jolpica (`get_driver_standings` / `get_constructor_standings` exist with no callers), with a points-after-this-race projection for live races.
 - [x] **FEAT-07** · S — **Linear track-position strip:** every car on a straight 0 → lap-length line, readable on mobile, good for spotting overtake-mode trains. — done
 - [ ] **FEAT-09** · S — **Speed-trap and sector ranking panel.** Status: partly done (sector top-3 cards and a top-speed column exist); still missing the I1/I2/FL/ST ranking.
 - [ ] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params.
 - [ ] **FEAT-11** · S — **Track limits / deleted laps view** from race control and FastF1 `Deleted`/`DeletedReason`. Status: `DeletedReason` is not kept. REPLAY-18 and REPLAY-20 lay the groundwork.
-- [x] **FEAT-12** — done · S — **2026 regulation context:** hide the DRS channel for 2026+ instead of plotting a flat zero (the DRS tab is always rendered, `ui/layout.py:388-397`); label active aero and overtake mode where data exists.
+- [x] **FEAT-12** · S — **2026 regulation context:** hide the DRS channel for 2026+ instead of plotting a flat zero (the DRS tab is always rendered, `ui/layout.py:388-397`); label active aero and overtake mode where data exists. — done
 - [ ] **FEAT-14** · S — **Share links.** Status: partly done; year/gp/session and the page are in the URL. Still missing: the drivers, the analysis section and the replay cursor. Streamlit 1.59's widget `bind="query-params"` can carry them (with UI-21).
 
 ---
@@ -1270,7 +1270,7 @@ Depends on, from §3:
 - CACHE-04: user data directories.
 - REPO-18: drop the dead dependencies first, so the install is smaller.
 
-- [x] **DIST-01** — done · P1 · S — **Make the project an installable package**
+- [x] **DIST-01** · P1 · S — **Make the project an installable package** — done
   - Files: `pyproject.toml` (new `[project]` and `[build-system]`), `requirements.txt`, `tests/test_dependencies.py`.
   - Problem: there is no `[project]` table, so nothing can be `pip`/`uv` installed. The app, its assets, the player files and `.streamlit/config.toml` are loose files found relative to the working directory.
   - Fix:
@@ -1283,7 +1283,7 @@ Depends on, from §3:
     - Dependencies in `pyproject.toml` equal `requirements.txt`, checked by a test.
   - Depends on: REPO-23, REPO-18.
 
-- [x] **DIST-02** — done · P1 · S — **The `f1dash` command**
+- [x] **DIST-02** · P1 · S — **The `f1dash` command** — done
   - Files: new `f1dash_cli.py`, `tests/test_cli.py`.
   - Problem: Streamlit apps start with `streamlit run app.py`, from the folder holding `.streamlit/config.toml`. An installed tool has neither a known path nor that working directory.
   - Fix:
@@ -1295,7 +1295,7 @@ Depends on, from §3:
   - Acceptance: a unit test with `streamlit.web.cli.main` monkeypatched asserts the argv (app path, every theme flag equal to `config.toml`, the port). `f1dash --no-browser --port 8599` serves HTTP 200 on `/` from a temp directory, behind the `network`-free smoke marker.
   - Depends on: DIST-01.
 
-- [x] **DIST-03** — done · P1 · S — **User data directories for an installed app**
+- [x] **DIST-03** · P1 · S — **User data directories for an installed app** — done
   - Files: `config.py`, `data/fastf1_adapter.py`, `processing/metrics_store.py`, `data/live_adapter.py` (token from `.env`).
   - Problem: the FastF1 cache (`./ff1_cache`), replays, `metrics_store.json` and `.env` default to the working directory. Installed, that would be wherever the user typed `f1dash`, or the tool's `site-packages`.
   - Fix:
@@ -1310,7 +1310,7 @@ Depends on, from §3:
     - The checkout behaviour is unchanged (test).
   - Depends on: DIST-01, CACHE-04.
 
-- [x] **DIST-04** — done · P2 · S — **One-line installers: `install.ps1` and `install.sh`**
+- [x] **DIST-04** · P2 · S — **One-line installers: `install.ps1` and `install.sh`** — done
   - Files: new `install.ps1`, `install.sh` (repository root).
   - Fix:
     - The scripts are idempotent, so re-running one also updates.
@@ -1323,7 +1323,7 @@ Depends on, from §3:
   - Acceptance: a CI job on `windows-latest` and `ubuntu-latest` runs the script from the checkout (pointing at the local path instead of the git URL), then `f1dash --version`. A second run succeeds as well.
   - Depends on: DIST-02, REPO-17.
 
-- [x] **DIST-05** — done · P2 · S — **Update check and `f1dash update`**
+- [x] **DIST-05** · P2 · S — **Update check and `f1dash update`** — done
   - Files: `f1dash_cli.py`, `ui/layout.py` (sidebar footer / About, with UI-22), new `data/update_check.py`.
   - Fix:
     - `f1dash update` asks the GitHub releases API for the latest tag and runs `uv tool install --reinstall git+https://github.com/mricero/F1-Telemetry-Dashboard@<tag>`. Once the package is on PyPI (DIST-06), it runs `uv tool upgrade f1dash` instead.
@@ -1334,7 +1334,7 @@ Depends on, from §3:
     - `f1dash update` builds the expected `uv` argv (unit test with `subprocess.run` mocked).
   - Depends on: DIST-02, REPO-23.
 
-- [x] **DIST-06** — done · P2 · S — **Release workflow: build, smoke-install, publish**
+- [x] **DIST-06** · P2 · S — **Release workflow: build, smoke-install, publish** — done
   - Files: new `.github/workflows/release.yml`, `CHANGELOG.md`.
   - Fix:
     - The workflow runs on a pushed `v*` tag.
@@ -1345,7 +1345,7 @@ Depends on, from §3:
   - Acceptance: tagging `v0.9.0` produces a Release with the assets, and the smoke legs pass. With PyPI enabled, `uv tool install f1dash==0.9.0` works.
   - Depends on: DIST-01, TEST-09, REPO-17.
 
-- [x] **DOC-07** — done · P1 · S — **Update the GitHub readme for this installation**
+- [x] **DOC-07** · P1 · S — **Update the GitHub readme for this installation** — done
   - Files: `readme.md`, `tests/test_docs_live_claims.py`.
   - Problem: the readme's install section is a developer setup (clone, virtualenv, `pip install -r requirements.txt`, `streamlit run app.py`), and its clone URL is a placeholder (`your-username/f1-telemetry-dashboard`). After DIST-01…04 the readme on GitHub is the first thing a user sees, so it must lead with the uv install.
   - Fix: rewrite the top of `readme.md` as **Install** → **Run** → **Update** → **Uninstall** → **Where your data lives** → **Live timing token**, then move the existing developer setup under **Development**:
