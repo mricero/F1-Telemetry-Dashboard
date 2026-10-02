@@ -1,3 +1,8 @@
+> **Status.** The original screen specification. Section 9 (the replay player)
+> is binding and the player and its tests follow it; sections 1 to 8 describe the
+> first dashboard design and are kept as background. Where they disagree with
+> `IMPROVEMENTS.md` section 5 (the UI guideline) or the code, those win.
+
 # Telemetry & Live Timing Dashboard Specification
 
 ## 1. System Architecture & Layout Grid

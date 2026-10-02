@@ -1,3 +1,10 @@
+> **Superseded (kept for history).** This is the research note written before
+> the first implementation. Several of its conclusions no longer hold: live mode
+> does not use LiveF1 or the classic `/signalr/` hub (that hub answers 401 since
+> 2025; the app has its own SignalR Core client for `/signalrcore`), replays are
+> Parquet directories rather than pickles, and the app is replay-first. See
+> `ARCHITECTURE.md` and `CLAUDE.md` for how the code works now.
+
 # Phase 1: Research & Reconnaissance - Summary Report
 
 ## Executive Summary

@@ -4,27 +4,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-The virtualenv is not activated automatically — call its interpreter directly.
+The virtualenv is not activated automatically — call its interpreter directly:
+`.venv/Scripts/python` on Windows, `.venv/bin/python` elsewhere (written `python` below).
+Install with `uv pip install -r requirements-dev.lock` (or `pip install --require-hashes -r ...`).
 
 ```bash
-# Run the app (see "Never run app.py directly" below)
+# Run the app (see "Bare mode is the hazard" below)
 streamlit run app.py
 
-# Tests (offline, deterministic)
-.venv/Scripts/python -m pytest -q
-.venv/Scripts/python -m pytest tests/test_fastf1_adapter.py -q          # one file
-.venv/Scripts/python -m pytest -k test_get_location -q                  # one test by name
-.venv/Scripts/python -m pytest tests/test_fastf1_adapter.py::TestFastF1Adapter::test_get_location
+# Tests (offline, deterministic). pytest.ini already passes -q; deprecation
+# warnings are errors (TEST-06).
+python -m pytest
+python -m pytest tests/test_fastf1_adapter.py                       # one file
+python -m pytest -k test_get_location                               # one test by name
+python -m pytest tests/test_fastf1_adapter.py::TestFastF1Adapter::test_get_location
 
 # Opt-in network tests (real FastF1/Jolpica endpoints + full-app smoke test)
-F1_NETWORK_TESTS=1 .venv/Scripts/python -m pytest -m network -q
+F1_NETWORK_TESTS=1 python -m pytest -m network
+# Wall-clock budgets and the real-server smoke test (deselected by default)
+python -m pytest -m perf
+python -m pytest -m smoke
 
-# Lint / format (CI runs both, plus pytest, on Python 3.12)
-.venv/Scripts/python -m ruff check .
-.venv/Scripts/python -m black --check .
+# Lint / format / types - CI runs all of them on Python 3.11-3.14 (Ubuntu) and
+# 3.11/3.14 (Windows), plus the player's jsdom tests and pip-audit
+python -m ruff check .
+python -m black --check .
+python -m mypy --ignore-missing-imports app.py data processing ui
+
+# The replay player's JavaScript tests (Node 22; also run by tests/test_player_js.py)
+cd tests/js && npm ci && node --test
 
 # Live SignalR end-to-end check (only meaningful during a race weekend)
-.venv/Scripts/python scripts/live_smoke.py 30
+python scripts/live_smoke.py 30
 ```
 
 `scripts/inspect_*.py` are manual exploration scripts, not tests — `pytest.ini` pins
@@ -82,7 +93,10 @@ them. This is the single most important thing to preserve:
 
 Replay files carry a `schema` version (currently **8**); `_load_replay` accepts older files
 by defaulting the keys they lack, and rejects newer ones with a clear message. Bump
-`REPLAY_SCHEMA_VERSION` whenever this dict gains or changes a persisted key.
+`REPLAY_SCHEMA_VERSION` whenever this dict gains or changes a persisted key. A replay's
+`meta.json` is untrusted input: it is validated against the known tables and value keys before
+any file is read (SEC-02), and non-JSON values are refused at save time rather than written as
+their `str()` (REPLAY-19).
 
 `DataSourceManager.get_session_data()` returns it for historical/replay sources;
 `poll_live_data()` returns the same shape from the live SignalR buffers. Adding a source
@@ -91,9 +105,14 @@ means producing this dict — not touching the UI.
 ### Layering (keep these boundaries)
 
 - `app.py` — orchestration only: selection → load → process → record. No chart code.
-- `ui/layout.py` — **all** rendering. Single canonical module; earlier `layout_new.py` /
-  `layout.py.backup` variants were deleted deliberately. No data fetching.
-- `processing/` — pure transforms over DataFrames; no Streamlit, no network.
+- `ui/` — **all** rendering. `ui/layout.py` holds every Streamlit panel and Plotly chart (earlier
+  `layout_new.py` / `layout.py.backup` variants were deleted deliberately); `ui/pages.py` the
+  pages; `ui/dashboard.py` and `ui/track_map.py` the Results tower HTML and SVG map;
+  `ui/replay_view.py` plus `ui/components/replay_player/` the browser replay player. No data
+  fetching beyond `st.cache_data`-wrapped lookups.
+- `processing/` — pure transforms over DataFrames; no Streamlit, no network. `timing.py` builds
+  the tower rows, `replay_model.py` the moment-by-moment snapshots, `analysis.py` the Analysis
+  tables.
 - `data/` — adapters. Each owns one upstream API and normalizes to the dict above.
 
 ### Two-tier caching (deliberately different lifetimes)
@@ -102,8 +121,10 @@ means producing this dict — not touching the UI.
   instant re-selection. `begin_session()` must be called **once per Streamlit session**,
   guarded by `st.session_state`. Streamlit re-executes the script top-to-bottom on every
   interaction, so calling it unguarded wipes the cache on every click and defeats it entirely.
-- `processing/metrics_store.py` — **persistent** JSON (`metrics_store.json`, override with
-  `F1_METRICS_STORE`). Fastest lap / sectors / top speed survive restarts by design.
+- `processing/metrics_store.py` — **persistent** SQLite in WAL mode (`metrics_store.sqlite` at
+  `config.metrics_store_path`, override with `F1_METRICS_STORE`). Fastest lap / sectors / top
+  speed survive restarts by design; a session's records are recomputed from its *valid* laps
+  each time, written only on change, and all-time records compare a circuit only with itself.
 
 Anything in `ui/layout.py` that hits the network on a rerun (schedule lookup, race-weekend
 probe) must be wrapped in `@st.cache_data` with a TTL.
@@ -205,6 +226,6 @@ the values are in place when they read them. `DataSourceManager` takes `cache_di
 `replay_dir` defaulting to `config.fastf1_cache_dir` / `config.replay_dir`
 (`FASTF1_CACHE_DIR`, `REPLAY_DIR`).
 
-`tasks.md` is the standing audit register — findings and their fixes across four review
-rounds, plus open follow-ups. Check it before re-investigating something that looks broken.
+`tasks.md` is the standing audit register — findings and their fixes across every review
+round, plus open follow-ups. Check it before re-investigating something that looks broken.
 `IMPROVEMENTS.md` is the agent-loop plan: rules, the UI guideline and the open items.
