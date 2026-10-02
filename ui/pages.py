@@ -20,6 +20,7 @@ from ui.layout import (
     render_live_dashboard,
     render_position_changes,
     render_race_control,
+    render_race_trace,
     render_settings,
     render_telemetry_charts,
     render_tire_strategy,
@@ -57,6 +58,7 @@ ANALYSIS_SECTIONS = (
     "Telemetry",
     "Head-to-head",
     "Lap times",
+    "Race trace",
     "Positions",
     "Weather",
     "Race control",
@@ -188,6 +190,16 @@ def analysis_page() -> None:
             context["color_map"],
             marker_lap=moment.get("lap"),
             track_status=track_status,
+            uirevision=revision,
+        )
+    elif section == "Race trace":
+        render_race_trace(
+            context["laps"],
+            context["color_map"],
+            session_data.get("session_info"),
+            track_status=track_status,
+            marker_lap=moment.get("lap"),
+            key=f"trace:{context['session_key']}",
             uirevision=revision,
         )
     elif section == "Positions":

@@ -905,7 +905,7 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
 
 Still valid. Each gets `Files:` and `Acceptance:` written in as the first step of its iteration. New UI follows §5.
 
-- [ ] **FEAT-01** · M — **Race trace and gap chart:** gap to the leader or to a reference driver per lap, with SC/VSC shaded. Status: open; only the player card's 5-minute sparkline exists. Prefer the payload's `interval_s` change points (REPLAY-29) over a new sampling.
+- [x] **FEAT-01** · M — **Race trace and gap chart:** gap to the leader or to a reference driver per lap, with SC/VSC shaded. Status: open; only the player card's 5-minute sparkline exists. Prefer the payload's `interval_s` change points (REPLAY-29) over a new sampling. — done
 - [ ] **FEAT-02** · M — **Pit rejoin predictor:** current gap minus the circuit's pit loss, from a per-circuit table seeded from historical `PitInTime → PitOutTime` medians.
 - [ ] **FEAT-03** · M — **Tyre degradation and stint pace:** fuel-corrected lap time against tyre age per compound, excluding in/out laps, SC laps and `IsAccurate == False`. Status: open; the laps frame drops FastF1's `TrackStatus` column (`data/fastf1_adapter.py:491-525`), which is needed to exclude SC laps. Keep it.
 - [ ] **FEAT-05** · S — **Team radio list:** OpenF1 `team_radio` (historical, free from 2023); the live feed's `TeamRadio` is auth-gated. Respect the token rules.

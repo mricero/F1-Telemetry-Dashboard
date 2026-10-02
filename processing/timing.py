@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import to_seconds
+from processing.time_utils import seconds_series, to_seconds
 
 # Missing values in the tower read as an en dash (UI guideline 5.7).
 MISSING = "\u2013"
@@ -1121,3 +1121,68 @@ def build_timing_rows(session_data: dict) -> list[dict]:
         else:
             row["diff"] = MISSING
     return ordered
+
+
+# --- Race trace (FEAT-01) ---------------------------------------------------
+#
+# FastF1's lap ``Time`` is the session time at which the car crossed the line
+# to complete that lap, so the gap at lap *n* is a car's crossing minus the
+# first crossing of lap *n* (the leader's) - the same "time behind at the same
+# line" the timing screen shows. A lapped car's gap stays a time (it crosses
+# the line for lap *n* more than a lap after the leader did), which keeps the
+# trace continuous.
+
+LINE_COLUMNS = ["Driver", "LapNumber", "Time"]
+TRACE_COLUMNS = ["Driver", "LapNumber", "Gap"]
+
+
+def _driver_column(laps: pd.DataFrame) -> str:
+    """Processed laps carry the acronym; raw FastF1 laps carry it in ``Driver``."""
+    return "DriverAcronym" if "DriverAcronym" in laps.columns else "Driver"
+
+
+def line_times(laps: pd.DataFrame | None) -> pd.DataFrame:
+    """``Driver, LapNumber, Time``: when each car completed each lap, in session seconds.
+
+    Laps without a completion time (a car that stopped on track) are dropped.
+    """
+    if laps is None or laps.empty or not {"LapNumber", "Time"} <= set(laps.columns):
+        return pd.DataFrame(columns=LINE_COLUMNS)
+    driver = _driver_column(laps)
+    if driver not in laps.columns:
+        return pd.DataFrame(columns=LINE_COLUMNS)
+    frame = pd.DataFrame(
+        {
+            "Driver": laps[driver].astype("string"),
+            "LapNumber": pd.to_numeric(laps["LapNumber"], errors="coerce"),
+            "Time": seconds_series(laps["Time"]),
+        }
+    ).dropna()
+    if frame.empty:
+        return pd.DataFrame(columns=LINE_COLUMNS)
+    frame["Driver"] = frame["Driver"].astype(str)
+    frame["LapNumber"] = frame["LapNumber"].astype(int)
+    frame["Time"] = frame["Time"].astype(float)
+    return frame.sort_values(["LapNumber", "Time"], kind="stable").reset_index(drop=True)
+
+
+def gap_trace(laps: pd.DataFrame | None, reference: str | None = None) -> pd.DataFrame:
+    """``Driver, LapNumber, Gap`` in seconds at each lap's timing line.
+
+    Without ``reference`` the gap is to the leader of that lap (always >= 0).
+    With one it is to that driver's crossing of the same line: positive
+    behind, negative ahead; laps the reference did not complete are dropped.
+    """
+    times = line_times(laps)
+    if times.empty:
+        return pd.DataFrame(columns=TRACE_COLUMNS)
+    if reference is None:
+        base = times.groupby("LapNumber")["Time"].min()
+    else:
+        own = times[times["Driver"] == str(reference)]
+        if own.empty:
+            return pd.DataFrame(columns=TRACE_COLUMNS)
+        base = own.set_index("LapNumber")["Time"]
+    frame = times[times["LapNumber"].isin(base.index)].copy()
+    frame["Gap"] = (frame["Time"] - frame["LapNumber"].map(base)).round(3)
+    return frame[TRACE_COLUMNS].reset_index(drop=True)

@@ -22,7 +22,14 @@ from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
-from processing.timing import MISSING, format_lap, is_raining
+from processing.timing import (
+    MISSING,
+    format_delta,
+    format_lap,
+    gap_trace,
+    is_race_session,
+    is_raining,
+)
 from processing.track_periods import lap_spans, lap_states
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
@@ -1499,3 +1506,102 @@ def _speed_on_grid(df: pd.DataFrame, grid: np.ndarray | None = None):
         if grid.size < 10:
             return None, None
     return grid, np.interp(grid, distance, speed)
+
+
+# --- Analysis sections over the laps frame (IMPROVEMENTS.md 3.8) -------------
+#
+# Each section has a pure builder (a figure or an HTML string, testable without
+# a Streamlit runtime) and a ``render_*`` function that draws it. The numbers
+# come from ``processing.timing``.
+
+LEADER = "Leader"
+NOT_A_RACE = (
+    "The race trace needs a race or sprint: in other sessions the cars do not share a "
+    "start, so a gap at the timing line has no meaning."
+)
+
+
+def _line_styles(drivers, color_map: dict[str, str]) -> dict[str, dict]:
+    """Team colour per driver; the second car of a team is dashed (guideline 5.6)."""
+    seen: set[str] = set()
+    styles = {}
+    for driver in drivers:
+        colour = color_map.get(driver, NEUTRAL_GREY)
+        styles[driver] = {"color": colour, "width": 2, "dash": "dash" if colour in seen else None}
+        seen.add(colour)
+    return styles
+
+
+def race_trace_figure(
+    laps: pd.DataFrame,
+    color_map: dict[str, str],
+    reference: str | None = None,
+    track_status: pd.DataFrame | None = None,
+    marker_lap: int | None = None,
+) -> go.Figure | None:
+    """Gap at the line per lap, one line per driver; ``None`` without lap times.
+
+    The y axis runs downwards (the leader, or the cars ahead of the
+    reference, at the top), as on a timing screen. SC, VSC and red-flag laps
+    are shaded with their word.
+    """
+    trace = gap_trace(laps, reference=reference)
+    if trace.empty:
+        return None
+    last = trace.sort_values("LapNumber").groupby("Driver")[["LapNumber", "Gap"]].last()
+    # Legend and hover in running order at each driver's last lap.
+    order = last.sort_values(["LapNumber", "Gap"], ascending=[False, True]).index
+    styles = _line_styles(order, color_map)
+    fig = go.Figure()
+    for driver in order:
+        rows = trace[trace["Driver"] == driver].sort_values("LapNumber")
+        fig.add_trace(
+            go.Scatter(
+                x=rows["LapNumber"],
+                y=rows["Gap"],
+                mode="lines",
+                name=str(driver),
+                line=styles[driver],
+                customdata=[format_delta(value) for value in rows["Gap"]],
+                hovertemplate=f"{driver} %{{customdata}}<extra></extra>",
+            )
+        )
+    target = "leader" if reference is None else reference
+    fig.update_layout(
+        xaxis_title="Lap",
+        yaxis={"title": f"Gap to {target} (s)", "autorange": "reversed"},
+        height=520,
+    )
+    shade_neutral_laps(fig, laps, track_status)
+    _mark_lap(fig, marker_lap)
+    return fig
+
+
+def render_race_trace(
+    laps: pd.DataFrame,
+    color_map: dict[str, str],
+    session_info: dict | None = None,
+    track_status: pd.DataFrame | None = None,
+    marker_lap: int | None = None,
+    key: str = "race_trace",
+    uirevision: str | None = None,
+) -> None:
+    """The race trace section: gap to the leader or to a chosen driver (FEAT-01)."""
+    if not is_race_session(session_info):
+        st.info(NOT_A_RACE)
+        return
+    drivers = sorted(set(gap_trace(laps)["Driver"]))
+    if not drivers:
+        st.info("No lap completion times for this session, so there is no race trace.")
+        return
+    choice = st.selectbox("Gap to", [LEADER, *drivers], key=f"{key}_reference")
+    reference = None if choice == LEADER else choice
+    fig = race_trace_figure(laps, color_map, reference, track_status, marker_lap)
+    if fig is None:
+        st.info(f"{choice} completed no laps, so there is nothing to measure from.")
+        return
+    _plot(fig, width="stretch", uirevision=uirevision)
+    st.caption(
+        "Gap when each car crossed the timing line to complete the lap. "
+        "Shaded laps ran under a safety car, VSC or red flag."
+    )
