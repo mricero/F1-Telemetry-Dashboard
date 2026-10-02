@@ -20,16 +20,14 @@ PACKAGES = ("data", "processing")
 # Allow-list, with the reason each entry is kept. Anything not listed here and
 # not referenced anywhere is dead code and fails the test.
 KEPT_WITHOUT_CALLERS = {
-    # Jolpica is an Ergast-compatible REST adapter: these are its query
-    # surface, paged and rate-limited by HIST-07, and FEAT-06 (standings
-    # panels) is the item that consumes them. Deleting them would mean
-    # rewriting the same requests against the same endpoints.
+    # Jolpica is an Ergast-compatible REST adapter: these are the rest of
+    # its query surface, paged and rate-limited by HIST-07. The standings
+    # calls are used by FEAT-06; these stay for the results panels that
+    # would otherwise rewrite the same requests against the same endpoints.
     "data/jolpica_adapter.py": {
         "get_session_results",
         "get_qualifying_results",
         "get_practice_results",
-        "get_driver_standings",
-        "get_constructor_standings",
         "get_driver_info",
         "get_constructor_info",
     },

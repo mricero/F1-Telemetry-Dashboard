@@ -28,6 +28,7 @@ from ui.layout import (
     render_race_control,
     render_race_trace,
     render_speed_traps,
+    render_standings,
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
@@ -170,12 +171,20 @@ def replay_page() -> None:
 
 def results_page() -> None:
     """How the session ended: classification, sectors, dominance, strategy."""
+    from processing.timing import is_race_session
+
     context = _context()
-    render_dashboard(context["session_data"])
+    session_data = context["session_data"]
+    render_dashboard(session_data)
     st.subheader("Tyre strategy")
     render_tire_strategy(
-        context["stints"], context["color_map"], context["session_data"].get("compound_colors")
+        context["stints"], context["color_map"], session_data.get("compound_colors")
     )
+    info = session_data.get("session_info") or {}
+    if is_race_session(info) and info.get("year") and context.get("data_manager") is not None:
+        title = f"Championship after round {info['round']}" if info.get("round") else "Championship"
+        with st.expander(title, expanded=False):
+            render_standings(context["data_manager"], info)
 
 
 def replay_moment(context: dict) -> dict:

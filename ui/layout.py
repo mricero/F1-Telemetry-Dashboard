@@ -1598,3 +1598,32 @@ def render_deleted_laps(laps_df: pd.DataFrame):
     ).rename(columns={"LapNumber": "Lap", "LapSeconds": "Lap time"})
     st.dataframe(table, hide_index=True, width="stretch")
     st.caption(f"{len(table)} lap time(s) deleted.")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _standings_cached(_data_manager, year: int, round_num: int | None) -> dict:
+    return _data_manager.jolpica.standings(year, round_num)
+
+
+def render_standings(data_manager, session_info: dict) -> None:
+    """Both championships after this round, from Jolpica (FEAT-06)."""
+    year, round_num = session_info.get("year"), session_info.get("round")
+    if not year:
+        return
+    try:
+        tables = _standings_cached(data_manager, int(year), round_num)
+    except Exception as exc:  # network, rate limit, or an unexpected payload
+        logger.warning("Standings unavailable: %s", exc)
+        st.caption("Championship standings are unavailable right now (Jolpica).")
+        return
+    drivers, teams = tables.get("drivers"), tables.get("constructors")
+    if (drivers is None or drivers.empty) and (teams is None or teams.empty):
+        st.caption("No championship standings for this season yet.")
+        return
+    left, right = st.columns([3, 2])
+    with left:
+        st.markdown("**Drivers**")
+        st.dataframe(drivers, hide_index=True, width="stretch")
+    with right:
+        st.markdown("**Constructors**")
+        st.dataframe(teams, hide_index=True, width="stretch")

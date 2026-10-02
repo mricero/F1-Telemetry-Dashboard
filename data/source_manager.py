@@ -238,6 +238,7 @@ class DataSourceManager:
                 "session_type": session_type,
                 "session_name": session.name,
                 "country": self._event_country(session),
+                "round": self._event_round(session),
                 "date": session.date,
                 "telemetry_scope": telemetry_scope,
                 # Replay metadata (REPLAY-02), all JSON-safe for saved replays.
@@ -646,6 +647,16 @@ class DataSourceManager:
             "gp": config.default_gp,
             "session_type": config.default_session,
         }
+
+    @staticmethod
+    def _event_round(session) -> int | None:
+        """The championship round, for the standings after it (FEAT-06)."""
+        try:
+            number = int(session.event["RoundNumber"])
+        except Exception as exc:
+            logger.debug("No round number in the event schedule: %s", exc)
+            return None
+        return number if number > 0 else None
 
     @staticmethod
     def _event_country(session) -> str:

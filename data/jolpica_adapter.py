@@ -223,12 +223,30 @@ class JolpicaAdapter:
         return self._fetch(f"{year}/{round_num}/{session}/practice.json")
 
     @_instance_memo(maxsize=32)
-    def get_driver_standings(self, year: int) -> dict:
-        return self._fetch(f"{year}/driverStandings.json")
+    def get_driver_standings(self, year: int, round_num: int | None = None) -> dict:
+        """Drivers' championship, after ``round_num`` when given (else the latest)."""
+        where = f"{year}/{round_num}" if round_num else f"{year}"
+        return self._fetch(f"{where}/driverStandings.json", {"limit": self.PAGE_LIMIT})
 
     @_instance_memo(maxsize=32)
-    def get_constructor_standings(self, year: int) -> dict:
-        return self._fetch(f"{year}/constructorStandings.json")
+    def get_constructor_standings(self, year: int, round_num: int | None = None) -> dict:
+        """Constructors' championship, after ``round_num`` when given."""
+        where = f"{year}/{round_num}" if round_num else f"{year}"
+        return self._fetch(f"{where}/constructorStandings.json", {"limit": self.PAGE_LIMIT})
+
+    def standings(self, year: int, round_num: int | None = None) -> dict[str, pd.DataFrame]:
+        """Both championships as tables (FEAT-06).
+
+        ``{"drivers": Pos, Driver, Name, Team, Points, Wins;
+        "constructors": Pos, Team, Points, Wins}``; empty tables when the
+        season has no standings yet.
+        """
+        return {
+            "drivers": parse_driver_standings(self.get_driver_standings(year, round_num)),
+            "constructors": parse_constructor_standings(
+                self.get_constructor_standings(year, round_num)
+            ),
+        }
 
     @_instance_memo(maxsize=64)
     def get_driver_info(self, year: int) -> dict:
@@ -271,3 +289,52 @@ class JolpicaAdapter:
             if abs((race_date - now).total_seconds()) < 3 * 86400:
                 return True
         return False
+
+
+def _standings_list(payload: dict, key: str) -> list:
+    lists = ((payload or {}).get("MRData", {}).get("StandingsTable", {})).get("StandingsLists")
+    if not lists:
+        return []
+    return lists[0].get(key) or []
+
+
+def _number(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_driver_standings(payload: dict) -> pd.DataFrame:
+    """The drivers' standings payload as ``Pos, Driver, Name, Team, Points, Wins``."""
+    rows = []
+    for entry in _standings_list(payload, "DriverStandings"):
+        driver = entry.get("Driver") or {}
+        teams = entry.get("Constructors") or []
+        rows.append(
+            {
+                "Pos": int(_number(entry.get("position")) or 0) or None,
+                "Driver": driver.get("code") or driver.get("familyName") or "",
+                "Name": " ".join(
+                    part for part in (driver.get("givenName"), driver.get("familyName")) if part
+                ),
+                "Team": teams[-1].get("name", "") if teams else "",
+                "Points": _number(entry.get("points")),
+                "Wins": int(_number(entry.get("wins")) or 0),
+            }
+        )
+    return pd.DataFrame(rows, columns=["Pos", "Driver", "Name", "Team", "Points", "Wins"])
+
+
+def parse_constructor_standings(payload: dict) -> pd.DataFrame:
+    """The constructors' standings payload as ``Pos, Team, Points, Wins``."""
+    rows = [
+        {
+            "Pos": int(_number(entry.get("position")) or 0) or None,
+            "Team": (entry.get("Constructor") or {}).get("name", ""),
+            "Points": _number(entry.get("points")),
+            "Wins": int(_number(entry.get("wins")) or 0),
+        }
+        for entry in _standings_list(payload, "ConstructorStandings")
+    ]
+    return pd.DataFrame(rows, columns=["Pos", "Team", "Points", "Wins"])

@@ -339,3 +339,131 @@ class TestMemoAndRetryAfter:
         adapter = JolpicaAdapter()
         assert adapter._session is None
         assert adapter.session is adapter.session
+
+
+def _driver_standings_payload():
+    # The shape Jolpica returns for /2024/5/driverStandings.json.
+    return {
+        "MRData": {
+            "StandingsTable": {
+                "season": "2024",
+                "round": "5",
+                "StandingsLists": [
+                    {
+                        "season": "2024",
+                        "round": "5",
+                        "DriverStandings": [
+                            {
+                                "position": "1",
+                                "positionText": "1",
+                                "points": "110",
+                                "wins": "4",
+                                "Driver": {
+                                    "driverId": "max_verstappen",
+                                    "code": "VER",
+                                    "givenName": "Max",
+                                    "familyName": "Verstappen",
+                                },
+                                "Constructors": [{"constructorId": "red_bull", "name": "Red Bull"}],
+                            },
+                            {
+                                "position": "2",
+                                "positionText": "2",
+                                "points": "85.5",
+                                "wins": "0",
+                                "Driver": {
+                                    "code": "PER",
+                                    "givenName": "Sergio",
+                                    "familyName": "Pérez",
+                                },
+                                "Constructors": [{"name": "Red Bull"}],
+                            },
+                        ],
+                    }
+                ],
+            }
+        }
+    }
+
+
+class TestStandings:
+    """FEAT-06: both championships after a round."""
+
+    def test_drivers_parse(self):
+        from data.jolpica_adapter import parse_driver_standings
+
+        table = parse_driver_standings(_driver_standings_payload())
+
+        assert table.to_dict("records")[0] == {
+            "Pos": 1,
+            "Driver": "VER",
+            "Name": "Max Verstappen",
+            "Team": "Red Bull",
+            "Points": 110.0,
+            "Wins": 4,
+        }
+        assert table["Points"].tolist() == [110.0, 85.5]
+
+    def test_constructors_parse(self):
+        from data.jolpica_adapter import parse_constructor_standings
+
+        payload = {
+            "MRData": {
+                "StandingsTable": {
+                    "StandingsLists": [
+                        {
+                            "ConstructorStandings": [
+                                {
+                                    "position": "1",
+                                    "points": "195.5",
+                                    "wins": "4",
+                                    "Constructor": {"name": "Red Bull"},
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+
+        assert parse_constructor_standings(payload).to_dict("records") == [
+            {"Pos": 1, "Team": "Red Bull", "Points": 195.5, "Wins": 4}
+        ]
+
+    def test_an_empty_season(self):
+        from data.jolpica_adapter import parse_driver_standings
+
+        empty = {"MRData": {"StandingsTable": {"StandingsLists": []}}}
+        assert parse_driver_standings(empty).empty
+
+    def test_the_round_is_part_of_the_endpoint(self, adapter):
+        adapter.session.get.payload = _driver_standings_payload()
+
+        adapter.get_driver_standings(2024, 5)
+
+        assert adapter.session.get.calls[-1].endswith("/2024/5/driverStandings.json")
+
+
+class TestStandingsPanel:
+    def test_a_failure_is_a_caption_not_a_crash(self):
+        from streamlit.testing.v1 import AppTest
+
+        def script():
+            import streamlit as st
+
+            from ui.layout import render_standings
+
+            class Broken:
+                class jolpica:  # stands in for the adapter attribute
+                    @staticmethod
+                    def standings(year, round_num):
+                        raise ConnectionError("offline")
+
+            st.cache_data.clear()
+            render_standings(Broken(), {"year": 2024, "round": 5})
+
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+
+        assert not app_test.exception
+        assert any("unavailable" in caption.value for caption in app_test.caption)
