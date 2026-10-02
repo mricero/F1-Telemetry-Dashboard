@@ -10,6 +10,7 @@
   --text-dim: #9aa1ab;
   --accent: #e10600;
   --best: #b138dd;
+  --best-text: #c56ef0;
   --pb: #2fbf5b;
   --slower: #e6c229;
   --edge: #07080a;
@@ -33,6 +34,9 @@
 }
 .rp:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rp * { box-sizing: border-box; }
+/* The UA's [hidden] rule loses to any author display rule (.rp-chip,
+   .rp-card), which left the SC chip on the map after the period (UI-09). */
+.rp [hidden] { display: none !important; }
 .rp-num { font-variant-numeric: tabular-nums; }
 .rp-dim { color: var(--text-dim); }
 .rp-label {
@@ -108,7 +112,7 @@
 .rp-right { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rp-gap { color: var(--text-dim); }
 .rp-gap.close { color: var(--text); }
-.rp-last.sb { color: var(--best); }
+.rp-last.sb { color: var(--best-text); }
 .rp-last.pb { color: var(--pb); }
 .rp-flash-sb { animation: rp-flash-sb 600ms ease-out; }
 .rp-flash-pb { animation: rp-flash-pb 600ms ease-out; }

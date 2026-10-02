@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from processing.replay import ReplayClock, format_clock, replay_clock
-from processing.time_utils import seconds_series, to_seconds
+from processing.time_utils import is_leader_cell, seconds_series, to_seconds
 from processing.timing import (
     LEADER,
     MISSING,
@@ -1070,6 +1070,14 @@ def _race_from_stream(stream: pd.DataFrame, codes: list[str]) -> dict[str, dict[
         position = _series(_settled_positions(own))
         gap_s, gap_laps = column("GapSeconds"), column("GapLapsDown")
         int_s, int_laps = column("IntervalSeconds"), column("IntervalLapsDown")
+        # The leader's interval cell is "LAP n", which parses to 0.0: as a
+        # number that drew the leader as "within a second" and its trend as
+        # 0.000 s. Leading means no car ahead, so no interval (REPLAY-21).
+        raw_int = column("IntervalToPositionAhead")
+        int_s = [
+            None if is_leader_cell(cell) or position.at(t) == 1 else value
+            for t, value, cell in zip(times.tolist(), int_s, raw_int, strict=True)
+        ]
         fields[code] = {
             "position": position,
             "gap": _stream_display(position, times, gap_s, gap_laps, column("GapToLeader")),

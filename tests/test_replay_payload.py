@@ -365,3 +365,27 @@ class TestCompactEncoding:
         assert trend["samples"] == 6
         assert values["A"] == [None, None, 1.23, 1.23, None, None]
         assert values["B"][0] == 655.34  # clipped, never mistaken for missing
+
+
+class TestTheLeaderIsNotClose:
+    """REPLAY-21: the leader's "LAP n" interval cell is not a 0.000 s gap."""
+
+    def test_the_leader_is_never_close_and_has_no_trend_value(self, race, built):
+        from processing.replay_payload import decode_trend
+
+        payload, series = built
+        trend = decode_trend(payload["trend"])
+        clock = session_clock(race)
+        for code in series.drivers:
+            fields = series.fields[code]
+            for t in np.arange(clock.lights_out, clock.end, 5.0):
+                if fields["position"].at(float(t)) != 1:
+                    continue
+                assert fields["interval_s"].at(float(t)) is None, (code, t)
+                close = payload["tower"][code].get("close")
+                if close:
+                    index = np.searchsorted(close[0], t, side="right") - 1
+                    assert index < 0 or not close[1][index], (code, t)
+                sample = int((t - payload["trend"]["t0"]) // payload["trend"]["step"])
+                if code in trend:
+                    assert trend[code][sample] is None, (code, t)

@@ -110,6 +110,11 @@ _LAPS_DOWN_RE = re.compile(r"^\+?(\d+)\s*(?:L|LAP|LAPS)$", re.IGNORECASE)
 _GAP_SECONDS_RE = re.compile(r"^\+?(\d+(?:\.\d+)?)$")
 
 
+def is_leader_cell(value) -> bool:
+    """Whether a gap/interval cell is the leader's ``"LAP n"``."""
+    return isinstance(value, str) and bool(_LEADER_RE.match(value.strip()))
+
+
 def parse_gap(value) -> tuple[float | None, int | None]:
     """A gap or interval cell -> ``(seconds, laps_down)``.
 

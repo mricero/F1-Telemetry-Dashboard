@@ -38,7 +38,9 @@ const rowFor = (player, code) =>
 const card = (player) => player.root.querySelector(".rp-card");
 const mapChip = (player) => player.root.querySelector(".rp-track-chip");
 const button = (player, label) =>
-  [...player.root.querySelectorAll("button")].find((node) => node.textContent === label);
+  [...player.root.querySelectorAll("button")].find(
+    (node) => node.textContent === label || node.getAttribute("aria-label") === label,
+  );
 const focusReports = (player) => player.state.filter(([name]) => name === "focus");
 
 describe("mounting", () => {
