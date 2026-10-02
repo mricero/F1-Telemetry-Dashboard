@@ -134,3 +134,69 @@ class TestDependabot:
         ecosystems = {update["package-ecosystem"] for update in config["updates"]}
 
         assert {"pip", "github-actions", "pre-commit"} <= ecosystems
+
+
+@pytest.fixture(scope="module")
+def release() -> dict:
+    path = WORKFLOWS / "release.yml"
+    assert path.is_file(), "the release workflow is missing (DIST-06)"
+    return _load(path)
+
+
+class TestReleaseWorkflow:
+    """DIST-06: a v* tag builds, checks the version, smoke-installs on both
+    platforms and publishes the Release."""
+
+    def test_it_runs_on_version_tags_only(self, release):
+        assert release["on"] == {"push": {"tags": ["v*"]}}
+
+    def test_the_tag_is_checked_against_pyproject(self, release):
+        text = _steps_text(release["jobs"]["build"])
+
+        assert "pyproject.toml" in text
+        assert "GITHUB_REF_NAME" in text
+        assert "uv build" in text
+
+    def test_the_wheel_is_smoke_installed_on_windows_and_ubuntu(self, release):
+        smoke = release["jobs"]["smoke"]
+        text = _steps_text(smoke)
+
+        assert {"windows-latest", "ubuntu-latest"} <= set(smoke["strategy"]["matrix"]["os"])
+        assert "uv tool install" in text
+        assert "dist/*.whl" in text
+        assert "f1dash --version" in text
+
+    def test_the_release_waits_for_the_smoke_install(self, release):
+        job = release["jobs"]["github-release"]
+        text = _steps_text(job)
+
+        assert "smoke" in job["needs"]
+        assert job["permissions"] == {"contents": "write"}
+        assert "gh release create" in text
+        for asset in ("dist/*.whl", "dist/*.tar.gz", "install.ps1", "install.sh"):
+            assert asset in text
+        assert "--notes-file" in text
+
+    def test_the_notes_come_from_the_changelog(self, release):
+        assert "CHANGELOG.md" in _steps_text(release["jobs"]["build"])
+
+    def test_pypi_is_opt_in_and_uses_trusted_publishing(self, release):
+        job = release["jobs"]["pypi"]
+
+        assert "vars.PUBLISH_PYPI" in job["if"]
+        assert job["permissions"] == {"id-token": "write"}
+        assert "uv publish" in _steps_text(job)
+
+    def test_permissions_are_read_only_by_default(self, release):
+        assert release["permissions"] == {"contents": "read"}
+
+    def test_every_job_has_a_timeout(self, release):
+        for name, job in release["jobs"].items():
+            assert job.get("timeout-minutes"), f"{name} has no timeout"
+
+    def test_actions_are_pinned_to_a_major(self, release):
+        for job in release["jobs"].values():
+            for step in job["steps"]:
+                uses = step.get("uses")
+                if uses:
+                    assert re.fullmatch(r"[\w./-]+@v\d+", uses), uses

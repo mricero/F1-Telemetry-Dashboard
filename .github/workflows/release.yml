@@ -1,0 +1,156 @@
+name: Release
+
+# A pushed v* tag builds the wheel and sdist, checks the tag against the
+# package version, installs the wheel as a uv tool on Windows and Ubuntu,
+# and publishes a GitHub Release with the CHANGELOG section as notes
+# (DIST-06). Publishing to PyPI is opt-in: set the repository variable
+# PUBLISH_PYPI to "true" and register this workflow as a trusted publisher
+# for the f1dash project (environment "pypi").
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+
+      - name: The tag equals the version in pyproject.toml
+        id: version
+        shell: bash
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${version} (expected v${version})"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: uv build
+
+      - name: Release notes from CHANGELOG.md
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p notes
+          awk -v heading="## [${VERSION}]" '
+            index($0, heading) == 1 { found = 1; next }
+            # The next version heading, or the link definitions at the end.
+            found && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+            found { print }
+          ' CHANGELOG.md > notes/notes.md
+          if ! grep -q '[^[:space:]]' notes/notes.md; then
+            echo "::error::CHANGELOG.md has no '## [${VERSION}]' section"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes/notes.md
+          if-no-files-found: error
+
+  smoke:
+    # The built wheel installs as a tool and starts, on both platforms.
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the wheel as a tool
+        shell: bash
+        run: |
+          uv tool install --python 3.12 dist/*.whl
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - name: f1dash --version
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          cd "$RUNNER_TEMP"
+          printed=$(f1dash --version)
+          echo "$printed"
+          if [ "$printed" != "f1dash ${VERSION}" ]; then
+            echo "::error::f1dash --version printed '$printed', expected 'f1dash ${VERSION}'"
+            exit 1
+          fi
+          f1dash paths
+
+  github-release:
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes
+          path: notes
+      - name: Create the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "${GITHUB_REF_NAME}" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.whl dist/*.tar.gz install.ps1 install.sh \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes/notes.md \
+            $prerelease
+
+  pypi:
+    # Opt-in: the repository variable PUBLISH_PYPI must be "true". Trusted
+    # publishing, so no API token is stored anywhere.
+    needs: [build, smoke]
+    if: vars.PUBLISH_PYPI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/f1dash/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: astral-sh/setup-uv@v6
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always dist/*

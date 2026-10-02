@@ -229,7 +229,13 @@ equals `[project] dependencies` in `pyproject.toml`. `requirements.lock` and
 - `audit` - `pip-audit` over the runtime lock.
 
 `.github/workflows/network.yml` runs the opt-in network tests nightly and
-opens an issue when they fail.
+opens an issue when they fail. `.github/workflows/release.yml` runs on a
+pushed `v*` tag: `uv build`, a check that the tag equals the version in
+`pyproject.toml`, a smoke install of the wheel (`uv tool install`, then
+`f1dash --version`) on Ubuntu and Windows, and a GitHub Release with the wheel,
+the sdist, both installers and the `CHANGELOG.md` section as notes. Publishing
+to PyPI (trusted publishing, `uv publish`) runs only when the repository
+variable `PUBLISH_PYPI` is `true`.
 
 ## Project tree
 
@@ -299,7 +305,7 @@ opens an issue when they fail.
 │   └── js/                     # the player's JavaScript tests
 └── .github/
     ├── dependabot.yml
-    └── workflows/              # ci.yml, network.yml
+    └── workflows/              # ci.yml, network.yml, release.yml
 ```
 
 Generated and ignored: `ff1_cache/`, `replay_sessions/`,
