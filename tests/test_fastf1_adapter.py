@@ -729,7 +729,9 @@ class TestSessionNotArchived:
 
             @property
             def laps(self):
-                raise DataNotLoadedError("The data you are trying to access has not been loaded yet.")
+                raise DataNotLoadedError(
+                    "The data you are trying to access has not been loaded yet."
+                )
 
         return Unloaded()
 

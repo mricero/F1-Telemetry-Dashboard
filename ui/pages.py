@@ -202,7 +202,9 @@ def records_page() -> None:
     circuit = context.get("metrics_circuit")
     all_time = store.summary_lines(store.all_time(circuit=circuit))
     if all_time:
-        st.markdown(f"**All sessions viewed at {circuit}**" if circuit else "**All sessions viewed**")
+        st.markdown(
+            f"**All sessions viewed at {circuit}**" if circuit else "**All sessions viewed**"
+        )
         st.markdown("\n".join(f"- {line}" for line in all_time))
 
     with st.expander("Diagnostics", expanded=False):

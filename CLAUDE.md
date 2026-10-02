@@ -80,7 +80,7 @@ them. This is the single most important thing to preserve:
 }
 ```
 
-Replay files carry a `schema` version (currently **7**); `_load_replay` accepts older files
+Replay files carry a `schema` version (currently **8**); `_load_replay` accepts older files
 by defaulting the keys they lack, and rejects newer ones with a clear message. Bump
 `REPLAY_SCHEMA_VERSION` whenever this dict gains or changes a persisted key.
 

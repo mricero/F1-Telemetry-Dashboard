@@ -168,14 +168,15 @@ class TestLegacyPickles:
         assert loaded["session_info"]["gp"] == "Old GP"
         assert loaded["source"] == "replay"
 
-    def test_available_replays_lists_both_formats(self, manager):
+    def test_available_replays_offer_only_what_loads(self, manager):
+        """SEC-02: no UI path may load a pickle, so none is offered."""
         self._write_legacy(manager)
         manager.save_replay(_session(), "Monza_R")
 
         names = manager.get_available_replays()
 
-        assert any(name.endswith(".pkl") for name in names)
-        assert any(not name.endswith(".pkl") for name in names)
+        assert not any(name.endswith(".pkl") for name in names)
+        assert len(names) == 1
 
 
 class TestSchemaGuard:
@@ -241,3 +242,123 @@ class TestReplayStreams:
         assert loaded["track_status"].empty
         assert loaded["session_info"]["segment_starts"] == []
         assert loaded["session_info"]["replay_clock"] is None  # no positions to replay
+
+
+class TestCircuitCorners:
+    """REPLAY-19: corners survive a save, and old string corners do not crash."""
+
+    @staticmethod
+    def _with_corners() -> dict:
+        session = _session()
+        session["session_info"]["date"] = pd.Timestamp("2026-09-06 13:00:00")
+        session["circuit_info"] = {
+            "rotation": 92.0,
+            "corners": pd.DataFrame(
+                {"X": [100.0, 250.0], "Y": [50.0, -20.0], "Number": [1, 2], "Letter": ["", "A"]}
+            ),
+        }
+        return session
+
+    def test_corners_round_trip_as_a_table(self, manager):
+        session = self._with_corners()
+        path = manager.save_replay(session, "Monza_R")
+
+        loaded = manager._load_replay(path)
+
+        pd.testing.assert_frame_equal(
+            loaded["circuit_info"]["corners"], session["circuit_info"]["corners"]
+        )
+        assert loaded["circuit_info"]["rotation"] == 92.0
+        assert loaded["session_info"]["date"] == pd.Timestamp("2026-09-06 13:00:00")
+
+    def test_the_map_builds_from_a_saved_replay(self, manager):
+        import numpy as np
+
+        from processing.track_geometry import track_geometry
+
+        path = manager.save_replay(self._with_corners(), "Monza_R")
+        loaded = manager._load_replay(path)
+        angle = np.linspace(0, 2 * np.pi, 80)
+        trace = pd.DataFrame(
+            {
+                "Distance": np.linspace(0.0, 5000.0, 80),
+                "X": np.cos(angle) * 1000,
+                "Y": np.sin(angle) * 600,
+            }
+        )
+
+        geometry = track_geometry({"VER": trace}, loaded["circuit_info"])
+
+        assert len(geometry.corners(loaded["circuit_info"])) == 2
+
+    def test_a_schema_7_string_value_loads_without_corners(self, manager):
+        from pathlib import Path
+
+        path = Path(manager.save_replay(_session(), "Old_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        meta["schema"] = 7
+        meta["values"]["circuit_info"] = {"rotation": 3.0, "corners": "   X  Y\n0  1  2"}
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        loaded = manager._load_replay(str(path))
+
+        assert isinstance(loaded["circuit_info"]["corners"], pd.DataFrame)
+        assert loaded["circuit_info"]["corners"].empty
+
+    def test_the_app_version_is_stamped(self, manager):
+        from pathlib import Path
+
+        from config import __version__
+
+        path = Path(manager.save_replay(_session(), "Monza_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+
+        assert meta["app_version"] == __version__
+        assert meta["schema"] == 8
+
+    def test_a_value_json_cannot_hold_is_refused(self, manager):
+        session = _session()
+        session["session_info"]["oops"] = object()
+
+        with pytest.raises(ValueError, match="not JSON data"):
+            manager.save_replay(session, "Bad_R")
+        assert manager.get_available_replays() == []
+
+
+class TestUntrustedMeta:
+    """SEC-02: a crafted meta.json cannot reach outside the bundle or go live."""
+
+    @staticmethod
+    def _tamper(manager, change):
+        from pathlib import Path
+
+        path = Path(manager.save_replay(_session(), "Monza_R"))
+        meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        change(meta)
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return str(path)
+
+    def test_a_path_in_the_frames_is_refused(self, manager):
+        path = self._tamper(manager, lambda meta: meta["frames"].append("../evil"))
+        with pytest.raises(ValueError, match="unknown table"):
+            manager._load_replay(path)
+
+    def test_a_path_in_a_driver_name_is_refused(self, manager):
+        path = self._tamper(manager, lambda meta: meta["frame_dicts"]["telemetry"].append("../x"))
+        with pytest.raises(ValueError, match="is a path"):
+            manager._load_replay(path)
+
+    def test_a_live_replay_is_refused(self, manager):
+        path = self._tamper(manager, lambda meta: meta["values"].update(is_live=True))
+        with pytest.raises(ValueError, match="cannot be live"):
+            manager._load_replay(path)
+
+    def test_an_unknown_value_is_refused(self, manager):
+        path = self._tamper(manager, lambda meta: meta["values"].update(live_client="x"))
+        with pytest.raises(ValueError, match="unknown value"):
+            manager._load_replay(path)
+
+    def test_a_replay_is_never_live(self, manager):
+        loaded = manager._load_replay(manager.save_replay(_session(), "Monza_R"))
+        assert loaded["is_live"] is False
+        assert loaded["source"] == "replay"
