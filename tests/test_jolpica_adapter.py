@@ -26,6 +26,8 @@ def _schedule_payload(races):
 
 @pytest.fixture
 def adapter(monkeypatch):
+    # The throttle really sleeps (4 requests a second); tests need not wait.
+    monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda seconds: None)
     a = JolpicaAdapter()
     calls = []
 
@@ -291,3 +293,62 @@ class TestRateLimiting:
             adapter.get_seasons()
 
         assert sleeps == sorted(sleeps) and len(sleeps) >= 2  # exponential backoff
+
+
+class TestMemoAndRetryAfter:
+    """HIST-10 / HIST-11."""
+
+    def test_keyword_arguments_are_part_of_the_cache_key(self, adapter, monkeypatch):
+        seen = []
+
+        def server(url, params=None, timeout=None):
+            seen.append(url)
+            return FakeResponse({"MRData": {"RaceTable": {"Races": []}}})
+
+        monkeypatch.setattr(adapter.session, "get", server)
+        adapter.get_practice_results(2024, 1, session="2")
+        adapter.get_practice_results(2024, 1, session="2")
+        adapter.get_practice_results(2024, 1, session="3")
+
+        assert len(seen) == 2
+
+    def test_a_long_retry_after_fails_fast(self, adapter, monkeypatch):
+        slept = []
+        monkeypatch.setattr("data.jolpica_adapter.time.sleep", slept.append)
+
+        def limited(url, params=None, timeout=None):
+            response = FakeResponse({}, status_error=requests.exceptions.HTTPError("429"))
+            response.status_code = 429
+            response.headers = {"Retry-After": "3600"}
+            return response
+
+        monkeypatch.setattr(adapter.session, "get", limited)
+        with pytest.raises(ConnectionError, match="asked to wait 3600 s"):
+            adapter.get_seasons()
+        assert 3600.0 not in slept
+
+    def test_the_http_session_is_built_on_first_use(self):
+        fresh = JolpicaAdapter()
+        assert fresh._session is None
+        assert fresh.session is fresh.session
+
+
+class TestFastF1CacheOncePerProcess:
+    """HIST-10: every tab's manager re-enabled FastF1's cache, building a new
+    HTTP cache session each time, possibly mid-load in another tab."""
+
+    def test_two_managers_enable_the_cache_once(self, tmp_path, monkeypatch):
+        import fastf1
+
+        from data import fastf1_adapter
+        from data.source_manager import DataSourceManager
+
+        calls = []
+        monkeypatch.setattr(fastf1.Cache, "enable_cache", lambda path, *a, **kw: calls.append(path))
+        monkeypatch.setattr(fastf1_adapter, "_enabled_cache_dir", None)
+        cache = str(tmp_path / "ff1")
+
+        DataSourceManager(cache_dir=cache, replay_dir=str(tmp_path))
+        DataSourceManager(cache_dir=cache, replay_dir=str(tmp_path))
+
+        assert calls == [cache]
