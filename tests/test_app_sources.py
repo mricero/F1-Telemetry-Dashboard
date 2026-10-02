@@ -291,7 +291,8 @@ class TestPages:
         app_test = _run_for("fastf1")
 
         telemetry = _open(app_test, "analysis", analysis_section="Telemetry")
-        assert len(telemetry.get("plotly_chart")) == 6  # one per channel
+        # One per channel; a 2026 session has no DRS channel (FEAT-12).
+        assert len(telemetry.get("plotly_chart")) == 5
         lap_times = _open(app_test, "analysis", analysis_section="Lap times")
         assert len(lap_times.get("plotly_chart")) == 1
 
