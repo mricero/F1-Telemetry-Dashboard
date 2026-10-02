@@ -17,6 +17,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+LAP_CURSOR = 1200.0
+
+
 def payload_for(session: dict, key: str) -> dict:
     from processing.replay_model import session_clock, tower_series
     from processing.replay_payload import build_replay_payload
@@ -45,6 +48,17 @@ def write_payloads(out_dir: Path) -> None:
         "lights_out": fx.LIGHTS_OUT,
         "sc_start": fx.SC_START,
         "sc_end": fx.SC_END,
+    }
+    # Lap fractions the player must draw at LAP_CURSOR, decoded here (FEAT-07).
+    from processing.replay_payload import decode_lap_fractions
+
+    pos = payloads["race"]["pos"]
+    frame = round((LAP_CURSOR - pos["t0"]) / pos["step"])
+    row = decode_lap_fractions(pos)[frame]
+    meta["lap_cursor"] = LAP_CURSOR
+    meta["lap_fractions"] = {
+        code: None if value != value else float(value)
+        for code, value in zip(pos["codes"], row, strict=True)
     }
     (out_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8", newline="\n")
 

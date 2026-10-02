@@ -74,6 +74,9 @@
 .rp-map { position: relative; flex: 1 1 auto; background: var(--surface); min-height: 240px; }
 .rp-map svg { display: block; width: 100%; height: auto; }
 .rp-map-note { padding: 24px; color: var(--text-dim); }
+/* ---------- linear track-position strip (FEAT-07) ---------- */
+.rp-strip { border-top: 1px solid var(--line); background: var(--surface); padding: 2px 0; }
+.rp-strip svg { display: block; width: 100%; height: auto; }
 .rp-track-chip { position: absolute; top: 8px; left: 8px; }
 
 /* ---------- tower ---------- */

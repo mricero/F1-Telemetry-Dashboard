@@ -26,6 +26,15 @@ const DEGREE = String.fromCharCode(0xb0);
 const STATUS_CHIPS = { "IN PIT": "PIT", OUT: "OUT", FIN: "FIN", KO: "KO" };
 const SHADED = { "SAFETY CAR": true, VSC: true, RED: true };
 const MAP_CHIPS = { "SAFETY CAR": "SC", VSC: "VSC", RED: "RED" };
+// The track-position strip (FEAT-07): label font, lane height, line padding,
+// label width, lanes above and below, and the width used before it is measured.
+const STRIP_FONT = 10;
+const STRIP_LANE = 12;
+const STRIP_PAD = 14;
+const STRIP_LABEL = 26;
+const STRIP_LEVELS = 3;
+const STRIP_LANES = STRIP_LEVELS * 2;
+const STRIP_FALLBACK_WIDTH = 600;
 const CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 
 function el(tag, className, text) {
@@ -158,6 +167,27 @@ function unpackPositions(pos, raw) {
   return xy;
 }
 
+// processing/replay_payload._pack_lap_fractions reversed: low bytes then high
+// bytes of zigzag steps (driver, frame), summed modulo pos.lap_scale into
+// frame-major whole thousandths of a lap. Absent frames come from the xy data.
+function unpackLaps(pos, raw) {
+  const frames = pos.frames;
+  const drivers = pos.drivers;
+  const count = frames * drivers;
+  if (raw.length !== 2 * count) throw new Error("unexpected lap fraction data length");
+  const scale = pos.lap_scale;
+  const laps = new Uint16Array(count);
+  for (let d = 0; d < drivers; d += 1) {
+    let value = 0;
+    for (let f = 0; f < frames; f += 1) {
+      const code = raw[d * frames + f] | (raw[count + d * frames + f] << 8);
+      value = (((value + ((code >>> 1) ^ -(code & 1))) % scale) + scale) % scale;
+      laps[f * drivers + d] = value;
+    }
+  }
+  return laps;
+}
+
 // The interval trend: little-endian UInt16 hundredths, one row per driver,
 // trend.missing for "no interval" (NaN here).
 function unpackTrend(trend, raw) {
@@ -209,6 +239,7 @@ class Player {
     for (const [code, laps] of Object.entries(data.laps || {})) this.lapTimes[code] = laps.map((lap) => lap[0]);
     this.xy = null;
     this.trend = null;
+    this.laps = null;
     this.carIndex = {};
     (data.pos ? data.pos.codes : []).forEach((code, index) => {
       this.carIndex[code] = index;
@@ -241,13 +272,15 @@ class Player {
       this.mapNote("This browser cannot unpack the car positions; a current Chrome, Edge, Firefox or Safari can.");
       return;
     }
-    const [xy, values] = await Promise.all([
+    const [xy, values, laps] = await Promise.all([
       pos ? inflate(pos.xy_z).then((raw) => unpackPositions(pos, raw)) : null,
       trend && trend.z ? inflate(trend.z).then((raw) => unpackTrend(trend, raw)) : null,
+      pos && pos.lap_z ? inflate(pos.lap_z).then((raw) => unpackLaps(pos, raw)) : null,
     ]);
     if (this.destroyed) return;
     this.xy = xy;
     this.trend = values;
+    this.laps = laps;
   }
 
   mapNote(text) {
@@ -281,6 +314,19 @@ class Player {
       (xy[a] + (xy[b] - xy[a]) * w) / pos.scale,
       (xy[a + 1] + (xy[b + 1] - xy[a + 1]) * w) / pos.scale,
     ];
+  }
+
+  // How far round the lap a car is at ``t``, 0 at the line: the payload's
+  // value (computed in Python) for the nearest frame, null without a sample.
+  lapAt(code, t) {
+    const pos = this.data.pos;
+    const d = this.carIndex[code];
+    if (!pos || !this.xy || !this.laps || d === undefined) return null;
+    const f = Math.round((t - pos.t0) / pos.step);
+    if (f < -1 || f > pos.frames) return null;
+    const frame = Math.min(Math.max(f, 0), pos.frames - 1);
+    if (this.xy[(frame * pos.drivers + d) * 2] === pos.absent) return null;
+    return this.laps[frame * pos.drivers + d] / pos.lap_scale;
   }
 
   towerAt(t) {
@@ -380,6 +426,7 @@ class Player {
     this.mapNode = el("div", "rp-map");
     side.append(this.mapNode);
     this.buildMap();
+    this.buildStrip(side);
     this.card = el("div", "rp-card");
     this.card.hidden = true;
     this.card.setAttribute("aria-label", "Focused driver");
@@ -636,6 +683,151 @@ class Player {
     }
   }
 
+  // The linear track-position strip (FEAT-07): every car on a straight
+  // line from the start/finish line (left, 0) round one lap. Cars close
+  // together fan out over lanes above and below the line so each 3-letter
+  // label stays readable; a cluster of cars is a train.
+  buildStrip(side) {
+    this.strip = null;
+    const pos = this.data.pos;
+    if (!this.data.track || !pos || !pos.lap_z) return;
+    const node = el("div", "rp-strip");
+    const svg = svgEl("svg", { role: "img", "aria-label": "Cars along one lap, start and finish at the left" });
+    this.stripLine = svgEl("line", { stroke: "var(--text-dim)", "stroke-width": 2 });
+    this.stripEnds = [0, 1].map(() => svgEl("line", { stroke: "var(--white)", "stroke-width": 2 }));
+    this.stripNote = svgEl("text", {
+      fill: "var(--text-dim)",
+      "font-size": STRIP_FONT,
+      "font-family": "var(--font-label)",
+      "text-anchor": "middle",
+    });
+    this.stripNote.textContent = "START / FINISH";
+    const stems = svgEl("g");
+    const marks = svgEl("g");
+    const labels = svgEl("g");
+    svg.append(this.stripLine, ...this.stripEnds, this.stripNote, stems, marks, labels);
+    this.stripCars = {};
+    for (const driver of this.data.drivers) {
+      const team = this.style.teams[driver.code] || {};
+      const fill = team.fill || "var(--text-dim)";
+      const stem = svgEl("line", { stroke: fill, "stroke-width": 1, visibility: "hidden" });
+      const dot = svgEl("circle", { r: 4, fill, stroke: "var(--bg)", "stroke-width": 1.5, visibility: "hidden" });
+      const text = svgEl("text", {
+        fill: "var(--text)",
+        "font-size": STRIP_FONT,
+        "font-weight": 600,
+        "font-family": "var(--font-label)",
+        stroke: "var(--surface)",
+        "stroke-width": 3,
+        "paint-order": "stroke",
+        visibility: "hidden",
+      });
+      text.textContent = driver.code;
+      const tip = svgEl("title");
+      tip.textContent = driver.name;
+      text.append(tip);
+      this.on(text, "click", () => this.setFocus(driver.code));
+      this.on(dot, "click", () => this.setFocus(driver.code));
+      text.style.cursor = "pointer";
+      dot.style.cursor = "pointer";
+      stems.append(stem);
+      marks.append(dot);
+      labels.append(text);
+      this.stripCars[driver.code] = { stem, dot, text };
+    }
+    node.append(svg);
+    side.append(node);
+    this.strip = svg;
+    this.stripWidth = STRIP_FALLBACK_WIDTH;
+    this.layoutStrip();
+    if (typeof ResizeObserver !== "undefined") {
+      this.stripResize = new ResizeObserver(() => {
+        const width = Math.floor(node.clientWidth);
+        if (width > 0 && width !== this.stripWidth) {
+          this.stripWidth = width;
+          this.layoutStrip();
+          this.drawStrip(this.cursor);
+        }
+      });
+      this.stripResize.observe(node);
+    }
+  }
+
+  layoutStrip() {
+    const width = this.stripWidth;
+    const mid = (STRIP_LEVELS - 1) * STRIP_LANE + 17;
+    const height = mid + 16 + (STRIP_LEVELS - 1) * STRIP_LANE + 4;
+    this.stripMid = mid;
+    this.strip.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    this.strip.setAttribute("height", height);
+    const left = STRIP_PAD;
+    // Labels start at the car, so keep the last one on screen.
+    const right = width - STRIP_PAD - STRIP_LABEL / 2;
+    this.stripLeft = left;
+    this.stripSpan = right - left;
+    this.stripLine.setAttribute("x1", left);
+    this.stripLine.setAttribute("x2", right);
+    this.stripLine.setAttribute("y1", mid);
+    this.stripLine.setAttribute("y2", mid);
+    this.stripEnds.forEach((end, index) => {
+      const x = index ? right : left;
+      end.setAttribute("x1", x);
+      end.setAttribute("x2", x);
+      end.setAttribute("y1", mid - 7);
+      end.setAttribute("y2", mid + 7);
+    });
+    this.stripNote.setAttribute("x", (left + right) / 2);
+    this.stripNote.setAttribute("y", mid + 4);
+  }
+
+  drawStrip(t) {
+    if (!this.strip) return;
+    const cars = [];
+    for (const driver of this.data.drivers) {
+      const lap = this.lapAt(driver.code, t);
+      if (lap !== null) cars.push([lap, driver.code]);
+    }
+    cars.sort((a, b) => a[0] - b[0]);
+    const taken = [];
+    const seen = new Set();
+    for (const [lap, code] of cars) {
+      const x = this.stripLeft + lap * this.stripSpan;
+      let lane = taken.findIndex((edge) => x >= edge);
+      if (lane < 0) lane = taken.length < STRIP_LANES ? taken.length : STRIP_LANES - 1;
+      taken[lane] = x + STRIP_LABEL;
+      // Lane 0 above the line, 1 below, 2 above further out, and so on.
+      const up = lane % 2 === 0;
+      const level = Math.floor(lane / 2) * STRIP_LANE;
+      // The label's baseline: clear of the marker above or below the line.
+      const edge = up ? this.stripMid - 6 - level : this.stripMid + 16 + level;
+      const focused = this.focus === code;
+      const car = this.stripCars[code];
+      seen.add(code);
+      const dim = this.focus && !focused ? 0.45 : 1;
+      for (const part of [car.stem, car.dot, car.text]) {
+        part.setAttribute("visibility", "visible");
+        part.setAttribute("opacity", dim);
+      }
+      const px = x.toFixed(1);
+      car.dot.setAttribute("cx", px);
+      car.dot.setAttribute("cy", this.stripMid);
+      car.dot.setAttribute("r", focused ? 6 : 4);
+      car.stem.setAttribute("x1", px);
+      car.stem.setAttribute("x2", px);
+      car.stem.setAttribute("y1", this.stripMid);
+      car.stem.setAttribute("y2", up ? edge - STRIP_FONT + 1 : edge);
+      car.text.setAttribute("x", (x + 3).toFixed(1));
+      car.text.setAttribute("y", edge);
+      car.text.setAttribute("font-weight", focused ? 700 : 600);
+      car.text.setAttribute("fill", focused ? "var(--accent)" : "var(--text)");
+    }
+    for (const driver of this.data.drivers) {
+      if (seen.has(driver.code)) continue;
+      const car = this.stripCars[driver.code];
+      for (const part of [car.stem, car.dot, car.text]) part.setAttribute("visibility", "hidden");
+    }
+  }
+
   drawTimeline() {
     const node = this.timelineNode;
     const width = Math.max(node.clientWidth || 800, 100);
@@ -720,6 +912,7 @@ class Player {
     this.order = [];
     this.drawTower(t, force);
     this.drawMap(t);
+    this.drawStrip(t);
     this.drawRaceControl(t);
     this.drawCard(t);
     this.drawPlayhead();
@@ -1152,6 +1345,7 @@ class Player {
     this.playing = false;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     if (this.resize) this.resize.disconnect();
+    if (this.stripResize) this.stripResize.disconnect();
     for (const [target, type, handler] of this.listeners) target.removeEventListener(type, handler);
     this.listeners = [];
   }

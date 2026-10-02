@@ -76,6 +76,74 @@ describe("mounting", () => {
   });
 });
 
+describe("FEAT-07: the linear track-position strip", () => {
+  const strip = (player) => player.root.querySelector(".rp-strip svg");
+  const shown = (nodes) => [...nodes].filter((node) => node.getAttribute("visibility") === "visible");
+
+  test("every car with a sample is a marker and a label on the line", async () => {
+    const player = await open(race, { cursor: 1200 });
+    const dots = shown(strip(player).querySelectorAll("circle"));
+    const labels = shown(strip(player).querySelectorAll("text")).map((node) => node.firstChild.textContent);
+
+    assert.ok(dots.length > 0, "no car is on the strip");
+    assert.equal(labels.length, dots.length);
+    assert.ok(labels.every((code) => race.drivers.some((driver) => driver.code === code)));
+    assert.match(strip(player).textContent, /START \/ FINISH/);
+    const line = strip(player).querySelector("line");
+    const [x1, x2] = [line.getAttribute("x1"), line.getAttribute("x2")].map(Number);
+    for (const dot of dots) {
+      const x = Number(dot.getAttribute("cx"));
+      assert.ok(x >= x1 && x <= x2, `${x} outside ${x1}..${x2}`);
+    }
+  });
+
+  test("each car sits where Python put it round the lap", async () => {
+    const player = await open(race, { cursor: meta.lap_cursor });
+    const line = strip(player).querySelector("line");
+    const left = Number(line.getAttribute("x1"));
+    const span = Number(line.getAttribute("x2")) - left;
+    const drawn = {};
+    for (const text of shown(strip(player).querySelectorAll("text"))) {
+      drawn[text.firstChild.textContent] = Number(text.getAttribute("x")) - 3;
+    }
+
+    const expected = Object.entries(meta.lap_fractions).filter(([, fraction]) => fraction !== null);
+    assert.ok(expected.length > 1);
+    assert.deepEqual(Object.keys(drawn).sort(), expected.map(([code]) => code).sort());
+    for (const [code, fraction] of expected) {
+      assert.ok(Math.abs(drawn[code] - (left + fraction * span)) < 0.2, code);
+    }
+  });
+
+  test("labels in one lane never overlap", async () => {
+    const player = await open(race, { cursor: 1200 });
+    const lanes = {};
+    for (const text of shown(strip(player).querySelectorAll("text"))) {
+      const y = text.getAttribute("y");
+      (lanes[y] ||= []).push(Number(text.getAttribute("x")));
+    }
+
+    for (const xs of Object.values(lanes)) {
+      xs.sort((a, b) => a - b);
+      for (let i = 1; i < xs.length; i += 1) assert.ok(xs[i] - xs[i - 1] >= 26 - 1e-6);
+    }
+  });
+
+  test("a payload without lap fractions has no strip", async () => {
+    const bare = { ...race, pos: { ...race.pos, lap_z: undefined } };
+    const player = await open(bare);
+
+    assert.equal(player.root.querySelector(".rp-strip"), null);
+  });
+
+  test("a car with no sample is not drawn", async () => {
+    const player = await open(race, { cursor: meta.lights_out + 5000 });
+    const gone = shown(strip(player).querySelectorAll("circle")).length;
+
+    assert.ok(gone < race.drivers.length);
+  });
+});
+
 describe("UI-09: hidden things are not rendered", () => {
   test("the map's SC chip shows under the safety car and goes after it", async () => {
     const player = await open(race);

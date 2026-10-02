@@ -34,7 +34,8 @@ from processing.timing import is_raining
 from processing.track_geometry import VIEW_H, VIEW_W, path_from, track_geometry
 
 # 2: packed positions (``xy_z``) and interval trend (``trend.z``), REPLAY-29.
-PAYLOAD_VERSION = 2
+# 3: each car's lap fraction (``pos.lap_z``), FEAT-07.
+PAYLOAD_VERSION = 3
 
 # Car positions are quantised to 1/POSITION_SCALE viewBox units (0.2 units:
 # a fifth of a pixel on a 1000-unit-wide map, under 2 % of a car marker's
@@ -46,6 +47,9 @@ POSITION_LIMIT = 6000
 # A car with no sample in the decoded Int16 frames (never a real value).
 POSITION_ABSENT = -32768
 POSITION_ENCODING = "dd-zigzag-shuffle-deflate"
+# Lap fractions are whole 1/LAP_SCALE of a lap (FEAT-07): 0.1 % of a lap is a
+# third of a pixel on a 343 px strip.
+LAP_SCALE = 1000
 
 # Series field name in the model -> short name in the payload.
 TOWER_FIELDS = {
@@ -120,6 +124,8 @@ def _positions(session_data: dict, geometry, clock: ReplayClock) -> dict | None:
     projected = geometry.project(np.nan_to_num(flat)) * POSITION_SCALE
     quantised = np.clip(np.rint(projected), -POSITION_LIMIT, POSITION_LIMIT).astype(np.int64)
     frames, drivers = cube.frames, len(cube.codes)
+    lap = np.rint(geometry.lap_fraction(projected / POSITION_SCALE) * LAP_SCALE)
+    lap = np.nan_to_num(lap).astype(np.int64) % LAP_SCALE
     return {
         "t0": round(cube.t0, 3),
         "step": cube.step,
@@ -132,7 +138,46 @@ def _positions(session_data: dict, geometry, clock: ReplayClock) -> dict | None:
         "xy_z": _pack_positions(
             quantised.reshape(frames, drivers, 2), absent.reshape(frames, drivers)
         ),
+        "lap_scale": LAP_SCALE,
+        "lap_z": _pack_lap_fractions(lap.reshape(frames, drivers), absent.reshape(frames, drivers)),
     }
+
+
+def _pack_lap_fractions(lap: np.ndarray, absent: np.ndarray) -> str:
+    """``(F, D)`` lap fractions in ``0..LAP_SCALE-1`` -> the compact ``lap_z`` string.
+
+    A car moves a few thousandths of a lap per frame, so the change from the
+    last frame is what is stored: wrapped into ``[-LAP_SCALE/2, LAP_SCALE/2)``
+    (crossing the line costs nothing), zigzagged to 16 bits, low bytes then
+    high bytes, driver-major (driver, frame), raw DEFLATE. An absent frame
+    repeats the car's last value; the absent flags are ``xy_z``'s.
+    """
+    frames = lap.shape[0]
+    index = np.where(~absent, np.arange(frames)[:, None], 0)
+    held = np.take_along_axis(lap, np.maximum.accumulate(index, axis=0), axis=0)
+    planar = np.ascontiguousarray(held.T)  # driver, frame
+    step = np.diff(planar, axis=1, prepend=0)
+    step = (step + LAP_SCALE // 2) % LAP_SCALE - LAP_SCALE // 2
+    codes = ((step << 1) ^ (step >> 63)).astype("<u2").reshape(-1)
+    low = (codes & 0xFF).astype(np.uint8)
+    high = (codes >> 8).astype(np.uint8)
+    return _deflate(low.tobytes() + high.tobytes())
+
+
+def decode_lap_fractions(pos: dict) -> np.ndarray:
+    """``lap_z`` back to an ``(F, D)`` array of lap fractions (NaN where absent).
+
+    What the player's JavaScript does, for tests and tools.
+    """
+    frames, drivers = pos["frames"], pos["drivers"]
+    count = frames * drivers
+    raw = np.frombuffer(_inflate(pos["lap_z"]), dtype=np.uint8).astype(np.int64)
+    codes = raw[:count] | (raw[count : 2 * count] << 8)
+    step = (codes >> 1) ^ -(codes & 1)
+    planar = np.cumsum(step.reshape(drivers, frames), axis=1) % pos["lap_scale"]
+    fraction = planar.T / pos["lap_scale"]
+    fraction[np.isnan(decode_positions(pos)[..., 0])] = np.nan
+    return fraction
 
 
 def _deflate(raw: bytes) -> str:
