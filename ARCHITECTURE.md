@@ -87,6 +87,7 @@ producing that dict, not touching `ui/`.
 | `processing/track_periods.py` | Safety car, VSC and red-flag periods on the session clock and per lap, for chart shading and the degradation fit. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
+| `processing/pit_loss.py` | Pit rejoin predictor: green-flag pit lane times from `PitInTime -> PitOutTime`, a per-circuit seed table, and where a car would rejoin given the gaps to the leader. |
 | `processing/replay.py` | `ReplayClock` (start, lights out, end) and the `PositionCube`: every car's position on one regular time grid. |
 | `processing/replay_model.py` | `tower_series()` change-point series and `snapshot_at(t)`: the session as it stood at `t`, never reading rows stamped after it; `events()` for jump targets. |
 | `processing/replay_payload.py` | `build_replay_payload()`: the JSON-safe dict the browser player animates (clock, track, packed positions, tower series with display strings, flags, race control, weather, lap marks). |
@@ -277,6 +278,7 @@ variable `PUBLISH_PYPI` is `true`.
 ├── processing/
 │   ├── metrics_store.py
 │   ├── pace.py
+│   ├── pit_loss.py
 │   ├── replay.py
 │   ├── replay_model.py
 │   ├── replay_payload.py

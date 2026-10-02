@@ -18,6 +18,7 @@ from ui.layout import (
     render_lap_times,
     render_live_controls,
     render_live_dashboard,
+    render_pit_rejoin,
     render_position_changes,
     render_race_control,
     render_race_trace,
@@ -61,6 +62,7 @@ ANALYSIS_SECTIONS = (
     "Lap times",
     "Race trace",
     "Tyre pace",
+    "Pit rejoin",
     "Positions",
     "Weather",
     "Race control",
@@ -211,6 +213,15 @@ def analysis_page() -> None:
             track_status=track_status,
             compound_colors=session_data.get("compound_colors"),
             uirevision=revision,
+        )
+    elif section == "Pit rejoin":
+        render_pit_rejoin(
+            context["laps"],
+            session_data.get("session_info"),
+            track_status=track_status,
+            focus=moment.get("focus"),
+            lap=moment.get("lap"),
+            key=f"rejoin:{context['session_key']}",
         )
     elif section == "Positions":
         render_position_changes(

@@ -161,13 +161,69 @@ class TestTyrePace:
         assert not app_test.exception, app_test.exception
 
 
+class TestPitRejoin:
+    def test_the_sentence_names_the_cars_either_side(self):
+        from ui.layout import rejoin_sentence
+
+        result = {
+            "position": 4,
+            "ahead": "HAM",
+            "gap_ahead": 2.3,
+            "behind": "NOR",
+            "gap_behind": 1.1,
+        }
+
+        assert rejoin_sentence("VER", 23, result) == (
+            "If VER pitted at the end of lap 23, it would rejoin in P4, "
+            "2.300 s behind HAM, 1.100 s ahead of NOR."
+        )
+
+    def test_the_sentence_has_no_clause_for_a_missing_neighbour(self):
+        from ui.layout import rejoin_sentence
+
+        result = {"position": 1, "ahead": None, "gap_ahead": None, "behind": "B", "gap_behind": 4.0}
+
+        assert rejoin_sentence("A", 3, result) == (
+            "If A pitted at the end of lap 3, it would rejoin in P1, 4.000 s ahead of B."
+        )
+
+    def test_a_race_draws_a_prediction_and_says_where_the_loss_comes_from(self):
+        def render():
+            from tests.replay_fixtures import race_session
+            from ui.layout import render_pit_rejoin
+
+            session = race_session()
+            render_pit_rejoin(
+                session["laps"], session["session_info"], session["track_status"], "B", 3
+            )
+
+        app_test = AppTest.from_function(render).run()
+
+        assert not app_test.exception, app_test.exception
+        assert app_test.markdown[0].value.startswith("If B pitted at the end of lap 3")
+        assert "default" in app_test.caption[0].value
+
+    def test_another_session_says_why(self):
+        def render():
+            from tests.replay_fixtures import qualifying_session
+            from ui.layout import render_pit_rejoin
+
+            session = qualifying_session()
+            render_pit_rejoin(session["laps"], session["session_info"], session["track_status"])
+
+        app_test = AppTest.from_function(render).run()
+
+        assert not app_test.exception, app_test.exception
+        assert len(app_test.info) == 1
+
+
 def test_qualifying_fixture_is_not_a_race():
     from processing.timing import is_race_session
 
     assert not is_race_session(qualifying_session()["session_info"])
 
 
-NEW_SECTIONS = ["Race trace", "Tyre pace"]
+NEW_SECTIONS = ["Race trace", "Tyre pace", "Pit rejoin"]
 
 
 class TestSectionsInTheApp:

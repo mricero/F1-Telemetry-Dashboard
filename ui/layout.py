@@ -1692,3 +1692,72 @@ def render_tyre_pace(
         + " In-laps, out-laps, the first lap, safety car, VSC and red-flag laps and "
         "inaccurately timed laps are left out."
     )
+
+
+def rejoin_sentence(driver: str, lap: int, result: dict) -> str:
+    """One literal sentence for a predicted rejoin (FEAT-02)."""
+    parts = [
+        f"If {driver} pitted at the end of lap {lap}, it would rejoin in P{result['position']}"
+    ]
+    if result["ahead"] is not None:
+        parts.append(f"{result['gap_ahead']:.3f} s behind {result['ahead']}")
+    if result["behind"] is not None:
+        parts.append(f"{result['gap_behind']:.3f} s ahead of {result['behind']}")
+    return ", ".join(parts) + "."
+
+
+def render_pit_rejoin(
+    laps: pd.DataFrame,
+    session_info: dict | None = None,
+    track_status: pd.DataFrame | None = None,
+    focus: str | None = None,
+    lap: int | None = None,
+    key: str = "pit_rejoin",
+) -> None:
+    """Pit rejoin predictor: current gap plus the circuit's pit loss (FEAT-02)."""
+    from processing.pit_loss import pit_loss_for, rejoin_after_lap
+
+    if not is_race_session(session_info):
+        st.info(
+            "The pit rejoin predictor needs a race or sprint: it works from the gap to the leader."
+        )
+        return
+    trace = gap_trace(laps)
+    if trace.empty:
+        st.info("No lap completion times for this session, so a rejoin cannot be predicted.")
+        return
+    drivers = sorted(set(trace["Driver"]))
+    last_lap = int(trace["LapNumber"].max())
+    loss, source = pit_loss_for((session_info or {}).get("gp"), laps, track_status)
+    left, middle, right = st.columns(3)
+    driver = left.selectbox(
+        "Driver",
+        drivers,
+        index=drivers.index(focus) if focus in drivers else 0,
+        key=f"{key}_driver",
+    )
+    at_lap = middle.number_input(
+        "After lap",
+        min_value=1,
+        max_value=last_lap,
+        value=min(max(int(lap or last_lap), 1), last_lap),
+        step=1,
+        key=f"{key}_lap",
+    )
+    seconds = right.number_input(
+        "Pit loss (s)",
+        min_value=5.0,
+        max_value=60.0,
+        value=float(loss),
+        step=0.5,
+        key=f"{key}_loss:{loss}",
+    )
+    result = rejoin_after_lap(laps, driver, int(at_lap), float(seconds))
+    if result is None:
+        st.info(f"{driver} has no timed lap {int(at_lap)}, so there is no gap to start from.")
+        return
+    st.markdown(rejoin_sentence(driver, int(at_lap), result))
+    st.caption(
+        f"Pit loss {loss:.1f} s: {source}. It is the pit lane time from pit entry to pit exit; "
+        "the other cars are assumed to stay out at their gaps to the leader at the end of that lap."
+    )
