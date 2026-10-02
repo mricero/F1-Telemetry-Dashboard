@@ -26,6 +26,7 @@ from processing.timing import MISSING, format_lap, is_raining
 from processing.track_periods import lap_spans, lap_states
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
+from ui.preferences import sync_preference_params
 from ui.status import DataStatus, show
 from ui.theme import (
     ACCENT,
@@ -296,6 +297,8 @@ def render_header():
         menu_items=menu_items(),
     )
     st.html(f"<style>{font_face_css()}{CSS_TOKENS}{APP_CSS}</style>")
+    # Favourites (UX-03) stay in a copied link after a session load rewrote it.
+    sync_preference_params()
 
 
 # Both helpers below hit the network. Streamlit re-runs this module top to
@@ -1158,8 +1161,12 @@ def render_position_changes(
     marker_lap: int | None = None,
     track_status: pd.DataFrame | None = None,
     uirevision: str | None = None,
+    drivers=None,
 ):
-    """Lap-by-lap running order - who gained and lost places, and when."""
+    """Lap-by-lap running order - who gained and lost places, and when.
+
+    ``drivers`` limits the lines to the Analysis selection (UX-03).
+    """
     if laps_df.empty or "Position" not in laps_df.columns:
         st.info("No position data available for this session")
         return
@@ -1179,6 +1186,8 @@ def render_position_changes(
     # Order the legend by final classification rather than alphabetically.
     final = work.dropna(subset=["_pos"]).sort_values("LapNumber").groupby(driver_col)["_pos"].last()
     for driver in final.sort_values().index:
+        if drivers is not None and driver not in drivers:
+            continue
         driver_laps = work[work[driver_col] == driver].sort_values("LapNumber")
         fig.add_trace(
             go.Scatter(
