@@ -118,6 +118,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      # The harness builds the payloads with the real Python code
+      # (tests/js/build_payloads.py), so the job needs the app's packages.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
       - uses: actions/setup-node@v5
         if: hashFiles('tests/js/package.json') != ''
         with:

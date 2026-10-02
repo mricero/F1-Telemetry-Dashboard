@@ -1168,6 +1168,23 @@ def _race_from_stream(stream: pd.DataFrame, codes: list[str]) -> dict[str, dict[
         position = _series(_settled_positions(own))
         gap_s, gap_laps = column("GapSeconds"), column("GapLapsDown")
         int_s, int_laps = column("IntervalSeconds"), column("IntervalLapsDown")
+        int_raw = column("IntervalToPositionAhead")
+        # The leader's cell reads "LAP n", which parses to 0.0: there is no
+        # car ahead, so no interval - not a 0.000 s one that drew the leader
+        # as "within a second" all race (REPLAY-21).
+        int_cells = _series(
+            zip(
+                times,
+                [
+                    None if str(raw or "").upper().startswith("LAP") else seconds
+                    for seconds, raw in zip(int_s, int_raw, strict=True)
+                ],
+                strict=True,
+            )
+        )
+        interval_s = _combine(
+            position, int_cells, lambda place, seconds: None if place == 1 else seconds
+        )
         fields[code] = {
             "position": position,
             "gap": _stream_display(position, times, gap_s, gap_laps, column("GapToLeader")),
@@ -1176,7 +1193,7 @@ def _race_from_stream(stream: pd.DataFrame, codes: list[str]) -> dict[str, dict[
             "interval": _stream_display(
                 position, times, int_s, int_laps, column("IntervalToPositionAhead")
             ),
-            "interval_s": _series(zip(times, int_s, strict=True)),
+            "interval_s": interval_s,
         }
     return fields
 

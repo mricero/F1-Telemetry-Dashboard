@@ -413,7 +413,9 @@ class Player {
     const icon = svgEl("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
     this.playUse = svgEl("use", { href: "#rp-icon-play" });
     icon.append(this.playUse);
-    this.playButton.append(icon);
+    // The name screen readers (and the tests) find it by; hidden visually.
+    this.playLabel = el("span", "rp-sr", "Play");
+    this.playButton.append(icon, this.playLabel);
     this.on(this.playButton, "click", () => this.toggle());
     controls.append(this.playButton);
     for (const [label, delta] of [
@@ -707,10 +709,18 @@ class Player {
   }
 
   drawPlayhead() {
+    if (this.timelineNode) {
+      // The slider's value for keyboards and screen readers (UI-15), in
+      // whole seconds so playing changes it at most once a second.
+      const elapsed = Math.round(this.cursor - this.clock.lights_out);
+      setAttr(this.timelineNode, "aria-valuenow", elapsed);
+      const lap = valueAt(this.data.leader_laps, this.cursor, null);
+      setAttr(this.timelineNode, "aria-valuetext", `${lap ? `Lap ${lap}, ` : ""}${clockText(elapsed)}`);
+    }
     if (!this.playhead) return;
     const px = this.timelineX(this.cursor);
-    this.playhead.setAttribute("x1", px);
-    this.playhead.setAttribute("x2", px);
+    setAttr(this.playhead, "x1", px);
+    setAttr(this.playhead, "x2", px);
   }
 
   // ---------------------------------------------------------------- draw
@@ -762,6 +772,8 @@ class Player {
 
   drawTower(t, force) {
     const ranked = this.towerAt(t);
+    // Running order, for moving the keyboard focus between rows (UI-15).
+    this.order = ranked.map((data) => data.code);
     const stepped = this.lastDrawn === null ? Infinity : t - this.lastDrawn;
     let y = 0;
     ranked.forEach((data, rank) => {
@@ -780,6 +792,7 @@ class Player {
       y += ROW;
       setClass(row, "odd", rank % 2 === 1);
       setClass(row, "focused", this.focus === data.code);
+      setAttr(row, "aria-pressed", this.focus === data.code ? "true" : "false");
       setClass(row, "out", data.status === "OUT" || data.status === "KO");
       setClass(cells.code, "flying", Boolean(data.flying));
       cells.code.title = data.flying ? "On a flying lap" : "";
@@ -833,7 +846,7 @@ class Player {
     const state = this.flagAt(t);
     const colour = (this.style.flags[state] || [])[0];
     this.tint.setAttribute("stroke", SHADED[state] && colour ? colour : "transparent");
-    this.mapChip.hidden = !MAP_CHIPS[state];
+    setHidden(this.mapChip, !MAP_CHIPS[state]);
     if (MAP_CHIPS[state]) {
       const [bg, fg] = this.style.flags[state] || ["var(--line)", "var(--text)"];
       this.mapChip.style.background = bg;
@@ -861,9 +874,9 @@ class Player {
     if (this.follow && focusedAt) {
       const zw = w * 0.4;
       const zh = h * 0.4;
-      this.mapSvg.setAttribute("viewBox", `${focusedAt[0] - zw / 2} ${focusedAt[1] - zh / 2} ${zw} ${zh}`);
+      setAttr(this.mapSvg, "viewBox", `${focusedAt[0] - zw / 2} ${focusedAt[1] - zh / 2} ${zw} ${zh}`);
     } else {
-      this.mapSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      setAttr(this.mapSvg, "viewBox", `0 0 ${w} ${h}`);
     }
     const lap = valueAt(this.data.leader_laps, t, null);
     const lapText = lap ? `lap ${lap}, ` : "";
@@ -872,8 +885,12 @@ class Player {
 
   drawCard(t) {
     const code = this.focus;
-    this.card.hidden = !code;
-    if (!code) return;
+    setHidden(this.card, !code);
+    if (!code) {
+      setDisabled(this.analyseButton, true);
+      this.cardKey = null;
+      return;
+    }
     const driver = this.data.drivers.find((entry) => entry.code === code) || { code, name: code };
     setText(this.cardTitle, driver.team ? `${driver.code} ${DOT} ${driver.name} ${DOT} ${driver.team}` : driver.code);
     const fields = this.data.tower[code] || {};
@@ -884,7 +901,17 @@ class Player {
     const pits = valueAt(fields.pits, t, defaults.pits);
     const tyreText = tyre ? `${tyre.toLowerCase()}${age === null ? "" : `, ${age} laps`}${fresh === false ? ", used" : ""}` : DASH;
     setText(this.cardFacts, `Tyre ${tyreText}   Pits ${pits ?? DASH}`);
-    const laps = (this.data.laps[code] || []).filter((lap) => lap[0] <= t).slice(-5);
+    const completed = bisect(this.lapTimes[code] || [], t) + 1;
+    const trend = this.data.trend || {};
+    const step = trend.step || 5;
+    const last = Math.floor((t - (trend.t0 ?? this.clock.start)) / step);
+    // The laps list and the sparkline change only with a new lap or a new
+    // trend sample: rebuilding them every animation frame was ~60 DOM
+    // rebuilds a second while a driver was focused (UI-23).
+    const cardKey = `${code}|${completed}|${last}|${this.trend ? 1 : 0}`;
+    if (cardKey === this.cardKey) return;
+    this.cardKey = cardKey;
+    const laps = (this.data.laps[code] || []).slice(Math.max(0, completed - 5), completed);
     this.cardLaps.textContent = "";
     for (const [, number, text, flag] of laps) {
       const line = el("div", flag === "sb" ? "rp-last sb" : flag === "pb" ? "rp-last pb" : "");
@@ -892,15 +919,15 @@ class Player {
       this.cardLaps.append(line);
     }
     this.cardLap = laps.length ? laps[laps.length - 1][1] : null;
-    this.analyseButton.disabled = this.cardLap === null;
+    setDisabled(this.analyseButton, this.cardLap === null);
     // Sparkline of the interval to the car ahead over the last five minutes.
-    const trend = this.data.trend;
-    const values = (trend.values || {})[code] || [];
-    const last = Math.floor((t - trend.t0) / trend.step);
-    const first = Math.max(0, last - Math.round(300 / trend.step));
+    // The unpacked trend holds NaN where there is no interval (leading, or
+    // no timing yet - REPLAY-21).
+    const values = (this.trend || {})[code] || [];
+    const first = Math.max(0, last - Math.round(300 / step));
     const points = [];
     for (let i = first; i <= last && i < values.length; i += 1) {
-      if (values[i] !== null && values[i] !== undefined) points.push([i - first, values[i]]);
+      if (Number.isFinite(values[i])) points.push([i - first, values[i]]);
     }
     this.cardTrend.textContent = "";
     if (points.length > 1) {
@@ -942,6 +969,14 @@ class Player {
   toggleLabels() {
     this.labels = !this.labels;
     setClass(this.labelButton, "on", this.labels);
+    setAttr(this.labelButton, "aria-pressed", this.labels ? "true" : "false");
+    this.draw(true);
+  }
+
+  toggleFollow() {
+    this.follow = !this.follow;
+    setClass(this.followButton, "on", this.follow);
+    setAttr(this.followButton, "aria-pressed", this.follow ? "true" : "false");
     this.draw(true);
   }
 
@@ -949,6 +984,8 @@ class Player {
     this.mode = mode;
     setClass(this.gapButton, "on", mode === "gap");
     setClass(this.intervalButton, "on", mode === "int");
+    setAttr(this.gapButton, "aria-pressed", mode === "gap" ? "true" : "false");
+    setAttr(this.intervalButton, "aria-pressed", mode === "int" ? "true" : "false");
     setText(this.gapHeading, mode === "gap" ? "Gap" : "Interval");
     this.draw(true);
   }
@@ -1014,6 +1051,7 @@ class Player {
     this.playing = true;
     this.playUse.setAttribute("href", "#rp-icon-pause");
     this.playButton.setAttribute("aria-label", "Pause");
+    setText(this.playLabel, "Pause");
     this.playButton.title = "Pause (Space)";
     this.lastTick = null;
     const tick = (now) => {
@@ -1039,13 +1077,41 @@ class Player {
     this.frame = null;
     this.playUse.setAttribute("href", "#rp-icon-play");
     this.playButton.setAttribute("aria-label", "Play");
+    setText(this.playLabel, "Play");
     this.playButton.title = "Play (Space)";
     this.report("cursor", this.cursor);
   }
 
+  // Enter or Space on a tower row focuses that driver; the up and down
+  // arrows move the keyboard focus through the running order without
+  // reporting anything (each report reruns the Python script) - UI-15.
+  onRowKey(event, code) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "Enter" || event.key === " " || event.code === "Space") {
+      event.preventDefault();
+      this.setFocus(code);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const order = this.order.length ? this.order : this.data.drivers.map((driver) => driver.code);
+      const at = order.indexOf(code);
+      const next = order[at + (event.key === "ArrowDown" ? 1 : -1)];
+      if (next !== undefined && this.rows[next]) this.rows[next].row.focus();
+    }
+  }
+
   onKey(event) {
+    // Browser and OS shortcuts (Ctrl/Cmd+F, Cmd+1..8, Alt+Arrow) are not
+    // the player's (UI-16), and a key a row already handled is done.
+    if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
     const target = event.target;
     if (target && target.tagName === "SELECT") return;
+    // Space and Enter on a button press that button, not a player shortcut.
+    if (target && target.tagName === "BUTTON" && (event.code === "Space" || event.key === "Enter")) return;
+    if (target === this.timelineNode && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      this.seek(event.key === "Home" ? this.clock.start : this.clock.end);
+      return;
+    }
     if (event.code === "Space") {
       event.preventDefault();
       this.toggle();
@@ -1065,8 +1131,7 @@ class Player {
     } else if (event.key === "l" || event.key === "L") {
       this.toggleLabels();
     } else if (event.key === "f" || event.key === "F") {
-      this.follow = !this.follow;
-      this.draw(true);
+      this.toggleFollow();
     }
   }
 
@@ -1081,6 +1146,7 @@ class Player {
         this.frame = null;
         this.playUse.setAttribute("href", "#rp-icon-play");
         this.playButton.setAttribute("aria-label", "Play");
+        setText(this.playLabel, "Play");
         this.playButton.title = "Play (Space)";
       }
       this.cursor = this.clamp(data.cursor ?? this.cursor);
