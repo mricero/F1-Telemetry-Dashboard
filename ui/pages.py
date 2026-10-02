@@ -198,7 +198,14 @@ def analysis_page() -> None:
         )
     elif section == "Head-to-head":
         pair = tuple(code for code in (moment.get("focus"), moment.get("ahead")) if code)
-        render_driver_comparison(context["telemetry"](), context["color_map"], preselect=pair)
+        render_driver_comparison(
+            context["telemetry"](),
+            context["color_map"],
+            key_prefix=f"cmp:{context['session_key']}",
+            preselect=pair,
+            session_data=session_data,
+            laps=context["laps"],
+        )
     elif section == "Lap times":
         render_lap_times(
             context["laps"],
