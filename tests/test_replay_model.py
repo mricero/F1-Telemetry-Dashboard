@@ -19,7 +19,7 @@ from processing.replay_model import (
     MISSING,
     ON_TRACK,
     OUT,
-    OUT_AFTER_SECONDS,
+    RACE_OUT_AFTER_SECONDS,
     events,
     flag_state,
     flag_timeline,
@@ -145,12 +145,87 @@ class TestPitStop:
 
 
 class TestRetirementAndFinish:
-    def test_a_is_on_track_until_its_last_sample_plus_five_seconds(self, race, race_series):
+    def test_a_is_on_track_until_its_last_sample_plus_the_race_silence(self, race, race_series):
+        # REPLAY-23: a race car is OUT only after RACE_OUT_AFTER_SECONDS
+        # without a position sample or a timing stamp (A's last sector
+        # stamp, 1391, precedes its last sample).
         last = fx.RACE_END_BY["A"]
 
         assert race_series.value("A", "status", fx.LIGHTS_OUT + 10) == ON_TRACK
-        assert race_series.value("A", "status", last + OUT_AFTER_SECONDS - 0.1) == ON_TRACK
-        assert race_series.value("A", "status", last + OUT_AFTER_SECONDS) == OUT
+        assert race_series.value("A", "status", last + RACE_OUT_AFTER_SECONDS - 0.1) == ON_TRACK
+        assert race_series.value("A", "status", last + RACE_OUT_AFTER_SECONDS) == OUT
+
+    def test_a_car_that_stops_for_good_gives_one_retirement(self, race, race_series):
+        found = [item for item in events(race, race_series) if item[1] == "out"]
+
+        assert found == [(fx.RACE_END_BY["A"] + RACE_OUT_AFTER_SECONDS, "out", "Retirement - A")]
+
+
+def _without_samples(session: dict, code: str, start: float, end: float) -> dict:
+    """A copy where ``code`` sends no position strictly between start and end."""
+    copy = dict(session)
+    positions = session["positions"]
+    gap = (positions["Driver"] == code) & (positions["Time"] > start) & (positions["Time"] < end)
+    copy["positions"] = positions[~gap].reset_index(drop=True)
+    return copy
+
+
+class TestGpsDropouts:
+    """REPLAY-23: a feed dropout is not a retirement."""
+
+    def test_a_seven_second_gap_mid_race_is_not_out(self, race):
+        session = _without_samples(race, "B", 1200.0, 1207.0)
+        series = tower_series(session)
+
+        for moment in np.arange(1200.0, 1212.0, 0.5):
+            assert series.value("B", "status", moment) == ON_TRACK
+        assert not [e for e in events(session, series) if e[2] == "Retirement - B"]
+
+    def test_a_gap_with_a_sector_stamp_inside_is_not_out(self, race):
+        # B's lap 3 sector 1 ends at 1211: the car is plainly moving.
+        session = _without_samples(race, "B", 1190.0, 1225.0)
+        series = tower_series(session)
+
+        for moment in np.arange(1190.0, 1226.0, 0.5):
+            assert series.value("B", "status", moment) == ON_TRACK
+
+    def test_a_long_silent_gap_is_out_only_while_it_lasts_and_no_event(self, race):
+        # Between B's sector stamps at 1211 and 1241: 28 s with no sign of life.
+        session = _without_samples(race, "B", 1212.0, 1240.0)
+        series = tower_series(session)
+
+        assert series.value("B", "status", 1212.0 + RACE_OUT_AFTER_SECONDS - 0.1) == ON_TRACK
+        assert series.value("B", "status", 1212.0 + RACE_OUT_AFTER_SECONDS) == OUT
+        assert series.value("B", "status", 1240.0) == ON_TRACK
+        assert not [e for e in events(session, series) if e[2] == "Retirement - B"]
+
+    def test_a_silence_that_starts_under_a_red_flag_is_not_out(self, race):
+        session = _without_samples(race, "B", 1212.0, 1240.0)
+        session["track_status"] = pd.DataFrame(
+            {
+                "Time": [fx.LIGHTS_OUT - 10.0, 1205.0, 1300.0],
+                "Status": ["1", "5", "1"],
+                "Message": ["AllClear", "Red", "AllClear"],
+            }
+        )
+        series = tower_series(session)
+
+        for moment in np.arange(1212.0, 1241.0, 0.5):
+            assert series.value("B", "status", moment) == ON_TRACK
+
+    def test_a_car_already_stopped_when_the_red_flag_comes_stays_out(self, race):
+        session = dict(race)
+        session["track_status"] = pd.DataFrame(
+            {
+                "Time": [fx.LIGHTS_OUT - 10.0, 1410.0, 1440.0],
+                "Status": ["1", "5", "1"],
+                "Message": ["AllClear", "Red", "AllClear"],
+            }
+        )
+        series = tower_series(session)
+
+        assert series.value("A", "status", fx.RACE_END_BY["A"] + RACE_OUT_AFTER_SECONDS) == OUT
+        assert series.value("A", "status", 1439.0) == OUT
 
     def test_cars_finish_when_they_cross_after_the_flag(self, race, race_series):
         assert race_series.value("B", "status", 1449.0) == ON_TRACK
