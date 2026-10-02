@@ -171,11 +171,14 @@ def analysis_page() -> None:
             "Section",
             ANALYSIS_SECTIONS,
             default=ANALYSIS_SECTIONS[0],
-            key="analysis_section",
+            key="section",
             label_visibility="collapsed",
             # Kept across page switches: Weather -> Replay -> Analysis comes
             # back on Weather instead of resetting to Telemetry (UI-21).
             persist_state="session",
+            # The section travels in the link as ``?section=Lap times``; an
+            # unknown value is dropped by Streamlit (FEAT-14).
+            bind="query-params",
         )
         or ANALYSIS_SECTIONS[0]
     )

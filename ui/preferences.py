@@ -28,7 +28,7 @@ _CODE = re.compile(r"^[A-Z]{3}$")
 MAX_FAVOURITES = 6
 
 
-def _mirror(name: str, value: str | None) -> None:
+def mirror_param(name: str, value: str | None) -> None:
     """Write ``name=value`` to the URL, or remove it when ``value`` is None."""
     if value is None:
         if name in st.query_params:
@@ -88,7 +88,7 @@ def render_driver_picker(session_key: str, order: list[str]) -> list[str]:
         help="The drivers the telemetry, lap time and position charts plot.",
     )
     chosen = selected_drivers(session_key, order)
-    _mirror(DRIVERS_PARAM, None if chosen == default_drivers(order) else format_codes(chosen))
+    mirror_param(DRIVERS_PARAM, None if chosen == default_drivers(order) else format_codes(chosen))
     if not chosen:
         st.info("No drivers selected. Choose at least one above.")
     return chosen
@@ -160,4 +160,4 @@ def sync_preference_params() -> None:
     """
     params = preference_params()
     for name in (FAVOURITES_PARAM,):
-        _mirror(name, params.get(name))
+        mirror_param(name, params.get(name))

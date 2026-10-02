@@ -57,7 +57,7 @@ def _param(app_test: AppTest, name: str):
 
 class TestDriverSelection:
     def test_the_default_is_the_classification_top_five_or_everyone(self):
-        app_test = _open(_loaded(), "analysis", analysis_section="Telemetry")
+        app_test = _open(_loaded(), "analysis", section="Telemetry")
 
         picker = app_test.multiselect(key=f"analysis_drivers_pick:{_session_key(app_test)}")
         # The stub session has two drivers, fewer than five: both.
@@ -67,7 +67,7 @@ class TestDriverSelection:
         assert _param(app_test, "drivers") is None
 
     def test_a_selection_filters_the_charts_and_is_mirrored_in_the_url(self):
-        app_test = _open(_loaded(), "analysis", analysis_section="Lap times")
+        app_test = _open(_loaded(), "analysis", section="Lap times")
         key = _session_key(app_test)
 
         app_test.multiselect(key=f"analysis_drivers_pick:{key}").set_value(["HAM"]).run()
@@ -78,22 +78,22 @@ class TestDriverSelection:
         assert app_test.session_state[f"analysis_drivers:{key}"] == ["HAM"]
 
     def test_the_selection_survives_another_section(self):
-        app_test = _open(_loaded(), "analysis", analysis_section="Lap times")
+        app_test = _open(_loaded(), "analysis", section="Lap times")
         key = _session_key(app_test)
         app_test.multiselect(key=f"analysis_drivers_pick:{key}").set_value(["HAM"]).run()
 
-        _open(app_test, "analysis", analysis_section="Weather")
-        _open(app_test, "analysis", analysis_section="Positions")
+        _open(app_test, "analysis", section="Weather")
+        _open(app_test, "analysis", section="Positions")
 
         assert _trace_names(app_test) == ["HAM"]
 
     def test_a_link_names_the_drivers(self):
-        app_test = _open(_shared_link(drivers="HAM"), "analysis", analysis_section="Telemetry")
+        app_test = _open(_shared_link(drivers="HAM"), "analysis", section="Telemetry")
 
         assert _trace_names(app_test) == ["HAM"]
 
     def test_unknown_codes_in_a_link_are_ignored(self):
-        app_test = _open(_shared_link(drivers="XXX,<b>"), "analysis", analysis_section="Telemetry")
+        app_test = _open(_shared_link(drivers="XXX,<b>"), "analysis", section="Telemetry")
 
         assert set(_trace_names(app_test)) == {"VER", "HAM"}
 

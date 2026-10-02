@@ -27,8 +27,10 @@ from processing.replay_model import (
 )
 from processing.replay_payload import build_replay_payload
 from processing.timing import build_timing_rows, sector_leaders
+from processing.view_params import CURSOR_PARAM, format_cursor, parse_cursor
 from ui.components.replay_player import player_style, render_replay_player
 from ui.dashboard import render_dashboard, sector_cards_html
+from ui.preferences import mirror_param
 from ui.theme import DASHBOARD_CSS
 
 # How much session time one second of playback covers, per speed setting.
@@ -77,6 +79,30 @@ def session_key(session_data: dict, selection: dict | None = None) -> str:
 def cursor_key(key: str) -> str:
     """Where the authoritative replay cursor for one session lives."""
     return f"{CURSOR_PREFIX}:{key}"
+
+
+def initial_cursor(clock: ReplayClock) -> float:
+    """Where a session's replay opens: ``t=`` from a shared link, else lights out.
+
+    ``t`` is seconds after lights out; anything unreadable is ignored and a
+    number outside the session is clamped to its ends (FEAT-14).
+    """
+    wanted = parse_cursor(
+        st.query_params.get_all(CURSOR_PARAM) or None,
+        clock.start - clock.lights_out,
+        clock.end - clock.lights_out,
+    )
+    return clock.lights_out if wanted is None else clock.lights_out + wanted
+
+
+def mirror_cursor(cursor: float, clock: ReplayClock) -> None:
+    """Write the cursor to the URL as ``t=``; at lights out the parameter is removed.
+
+    Called once per script run, never from the playback loop: the cursor
+    only changes the URL when the player reports it (pause, release, end of
+    a key burst) or Python moves it.
+    """
+    mirror_param(CURSOR_PARAM, format_cursor(cursor - clock.lights_out))
 
 
 def clock_for(session_data: dict) -> ReplayClock:
@@ -214,7 +240,7 @@ def _analyse_from_player(key: str) -> None:
     lap = _player_state(key, "analyse")
     if lap is None:
         return
-    st.session_state["analysis_section"] = "Lap times"
+    st.session_state["section"] = "Lap times"
     st.session_state[f"{ANALYSE_PREFIX}:{key}"] = int(lap)
 
 
@@ -278,11 +304,14 @@ def render_session_replay(session_data: dict, key: str | None = None, on_final=N
     series, found = replay_model(session_data, key)
     marks = lap_marks(session_data, series)
     cursor, playing, speed = cursor_key(key), f"{PLAYING_PREFIX}:{key}", f"{SPEED_PREFIX}:{key}"
-    st.session_state.setdefault(cursor, clock.lights_out)
+    if cursor not in st.session_state:
+        st.session_state[cursor] = initial_cursor(clock)
     st.session_state.setdefault(playing, False)
     st.session_state.setdefault(speed, "5x")
     st.session_state[cursor] = clock.clamp(st.session_state[cursor])
     is_playing = st.session_state[playing]
+    if not is_playing:
+        mirror_cursor(st.session_state[cursor], clock)
 
     if player_mode() == "browser":
         _browser_view(session_data, key, series, found, clock, on_final)

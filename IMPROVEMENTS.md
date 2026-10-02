@@ -915,7 +915,7 @@ Still valid. Each gets `Files:` and `Acceptance:` written in as the first step o
 - [ ] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params.
 - [ ] **FEAT-11** · S — **Track limits / deleted laps view** from race control and FastF1 `Deleted`/`DeletedReason`. Status: `DeletedReason` is not kept. REPLAY-18 and REPLAY-20 lay the groundwork.
 - [ ] **FEAT-12** · S — **2026 regulation context:** hide the DRS channel for 2026+ instead of plotting a flat zero (the DRS tab is always rendered, `ui/layout.py:388-397`); label active aero and overtake mode where data exists.
-- [ ] **FEAT-14** · S — **Share links.** Status: partly done; year/gp/session and the page are in the URL. Still missing: the drivers, the analysis section and the replay cursor. Streamlit 1.59's widget `bind="query-params"` can carry them (with UI-21).
+- [x] **FEAT-14** · S — **Share links.** Status: partly done; year/gp/session and the page are in the URL. Still missing: the drivers, the analysis section and the replay cursor. Streamlit 1.59's widget `bind="query-params"` can carry them (with UI-21). — done
 
 ---
 

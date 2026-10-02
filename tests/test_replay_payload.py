@@ -360,7 +360,7 @@ def test_analyse_this_lap_opens_the_lap_chart():
 
     assert app.session_state["asked"] == 3
     assert app.session_state["again"] is None  # asked once, then forgotten
-    assert app.session_state["analysis_section"] == "Lap times"
+    assert app.session_state["section"] == "Lap times"
 
 
 class TestCompactEncoding:
