@@ -31,7 +31,12 @@ from ui.layout import (
     render_tyre_pace,
     render_weather,
 )
-from ui.preferences import only_drivers, render_driver_picker, render_favourites_picker
+from ui.preferences import (
+    only_drivers,
+    render_driver_picker,
+    render_favourites_picker,
+    render_layout_pickers,
+)
 from ui.replay_view import (
     FOCUS_PREFIX,
     cursor_key,
@@ -330,6 +335,7 @@ def settings_page() -> None:
     session_data = context.get("session_data") or {}
     st.subheader("Preferences")
     render_favourites_picker(classification_order(session_data, context.get("laps")))
+    render_layout_pickers()
     render_settings()
 
 

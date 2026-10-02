@@ -171,6 +171,14 @@
 .rp-timeline { height: 28px; border-top: 1px solid var(--line); cursor: pointer; background: var(--surface); }
 .rp-timeline svg { display: block; width: 100%; height: 28px; }
 
+/* ---------- layout chosen by the viewer (FEAT-10) ---------- */
+.rp .rp-off { display: none; }
+.rp.rp-hide-map .rp-map,
+.rp.rp-hide-strip .rp-strip,
+.rp.rp-hide-card .rp-card,
+.rp.rp-hide-rc .rp-rc,
+.rp.rp-hide-rc .rp-rc-toggle { display: none !important; }
+
 /* ---------- responsive (layout.md section 9.6) ---------- */
 @container (max-width: 1199px) {
   .rp-main { grid-template-columns: 45% 55%; }

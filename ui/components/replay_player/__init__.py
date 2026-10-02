@@ -95,6 +95,7 @@ def render_replay_player(
     on_focus_change,
     on_analyse_change=None,
     focus: str | None = None,
+    layout: dict | None = None,
 ):
     """Mount the player.
 
@@ -106,8 +107,17 @@ def render_replay_player(
     ``focus`` is read only when the player mounts, so pass the focus as of
     the last seek, not the live one: any change to ``data`` re-sends the
     whole payload (UI-11).
+
+    ``layout`` is the viewer's choice of hidden tower columns and panels
+    (FEAT-10); it changes only when they edit it on the Settings page.
     """
-    data = {**payload, "cursor": cursor, "seek": seek, "focus": focus}
+    data = {
+        **payload,
+        "cursor": cursor,
+        "seek": seek,
+        "focus": focus,
+        "layout": layout or {"hide_cols": [], "hide_panels": []},
+    }
     return _player()(
         key=key,
         data=data,

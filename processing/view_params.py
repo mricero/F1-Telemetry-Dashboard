@@ -45,3 +45,47 @@ def format_cursor(seconds: float, default: float = 0.0) -> str | None:
     if abs(seconds - default) < 0.05:
         return None
     return f"{seconds:.1f}".rstrip("0").rstrip(".")
+
+
+# FEAT-10: the layout a viewer can change. Each entry is (name in the link,
+# label). The defaults are today's layout (everything shown), so a link only
+# ever names what is *hidden*: ``hide_cols=tyres,pit&hide_panels=map``.
+HIDE_COLUMNS_PARAM = "hide_cols"
+HIDE_PANELS_PARAM = "hide_panels"
+
+TOWER_COLUMN_CHOICES = (
+    ("status", "Status"),
+    ("last", "Last lap"),
+    ("best", "Best lap"),
+    ("gap", "Gap and interval"),
+    ("sectors", "Sectors"),
+    ("tyres", "Tyres"),
+    ("pit", "Pit stops"),
+    ("diff", "Diff to ideal"),
+    ("speed", "Speed"),
+)
+PANEL_CHOICES = (
+    ("map", "Track map"),
+    ("strip", "Track position strip"),
+    ("card", "Driver card"),
+    ("rc", "Race control"),
+    ("sectors", "Sector leaders"),
+)
+
+
+def parse_tokens(raw, choices) -> list[str]:
+    """``"tyres,pit"`` (or a list of them) -> the names in ``choices``, in their order.
+
+    Unknown names are dropped and duplicates removed; matching ignores case.
+    """
+    if raw is None:
+        return []
+    parts = raw if isinstance(raw, list | tuple) else [raw]
+    wanted = {token.strip().lower() for part in parts for token in str(part).split(",")}
+    return [name for name, _ in choices if name in wanted]
+
+
+def format_tokens(names) -> str | None:
+    """The URL form of a hidden set, or ``None`` when nothing is hidden."""
+    text = ",".join(names)
+    return text or None

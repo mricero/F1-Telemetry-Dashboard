@@ -29,7 +29,7 @@ from processing.timing import (
     sector_leaders,
     theoretical_best,
 )
-from ui.preferences import favourite_drivers
+from ui.preferences import favourite_drivers, hidden_columns, hidden_panels
 from ui.theme import (
     COMPOUND_LETTER,
     COMPOUND_RING,
@@ -65,6 +65,22 @@ TOWER_COLUMNS = [
     "Diff",
     "Speed km/h",
 ]
+
+# The layout toggle each column belongs to (FEAT-10); Pos and Driver are
+# always shown. Interval and Gap share one switch, so do the three sectors.
+COLUMN_KEYS = {
+    "Status": "status",
+    "Last lap": "last",
+    "Best lap": "best",
+    "Interval": "gap",
+    "Gap": "gap",
+    "Sector 1": "sectors",
+    "Sector 2": "sectors",
+    "Sector 3": "sectors",
+    "Tyre history": "tyres",
+    "Diff": "diff",
+    "Speed km/h": "speed",
+}
 
 # Columns dropped below 1200 px (guideline 5.5: low-priority columns first).
 COLUMN_CLASSES = {"Tyre history": "col-compact", "Diff": "col-compact", "Speed km/h": "col-compact"}
@@ -365,17 +381,22 @@ def _speed_text(speed, word: str) -> str:
     return f"{float(speed):.0f}"
 
 
-def tower_html(rows: Sequence[dict], favourites: Sequence[str] = ()) -> str:
+def tower_html(
+    rows: Sequence[dict], favourites: Sequence[str] = (), hidden: Sequence[str] = ()
+) -> str:
     """The driver leaderboard matrix (spec section 3).
 
     A favourite driver's code is underlined and titled (UX-03): a shape and a
-    word, so the mark does not depend on colour.
+    word, so the mark does not depend on colour. ``hidden`` names the layout
+    toggles (``COLUMN_KEYS`` values) to leave out (FEAT-10).
     """
     favourite = set(favourites or ())
     if not rows:
         return '<div class="f1-empty">No timing data for this session.</div>'
 
-    head = "".join(f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(c)}</th>' for c in TOWER_COLUMNS)
+    off = set(hidden or ())
+    shown = [c for c in TOWER_COLUMNS if COLUMN_KEYS.get(c) not in off]
+    head = "".join(f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(c)}</th>' for c in shown)
     body: list[str] = []
 
     for row in rows:
@@ -384,8 +405,7 @@ def tower_html(rows: Sequence[dict], favourites: Sequence[str] = ()) -> str:
         partition = row.get("partition")
         if partition:
             body.append(
-                f'<tr><td colspan="{len(TOWER_COLUMNS)}" class="f1-split">'
-                f"{_esc(partition)}</td></tr>"
+                f'<tr><td colspan="{len(shown)}" class="f1-split">' f"{_esc(partition)}</td></tr>"
             )
 
         accent = team_color(row.get("team_name"), row.get("team_colour"))
@@ -408,33 +428,43 @@ def tower_html(rows: Sequence[dict], favourites: Sequence[str] = ()) -> str:
             else "No personal ideal lap yet"
         )
 
-        sector_cells = "".join(
+        sector_cells = [
             f'<td><span class="f1-time f1-num">{_esc(s["display"])}</span>'
             f'{_segments_html(s["segments"], number)}</td>'
             for number, s in enumerate(row["sectors"], start=1)
-        )
+        ]
 
         is_favourite = row["code"] in favourite
         row_classes = " ".join(
             name for name, on in (("ko", row.get("knocked_out")), ("fav", is_favourite)) if on
         )
         code_title = ' title="Favourite driver"' if is_favourite else ""
+        cells = {
+            "Pos": f'<td class="f1-pos" style="--team:{accent}">{row["position"]}</td>',
+            "Driver": (
+                f'<td><div class="f1-code"{code_title}>{_esc(row["code"])}</div>'
+                f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
+            ),
+            "Status": f"<td>{_status_html(status or '')}</td>",
+            "Last lap": f'<td><span class="{last_class} f1-num">{_esc(row["last_lap"])}</span></td>',
+            "Best lap": f'<td><span class="{best_class} f1-num">{_esc(row["best_lap"])}</span></td>',
+            "Interval": (
+                f'<td><span class="f1-time f1-num f1-dim">{_esc(row["interval"])}</span></td>'
+            ),
+            "Gap": f'<td><span class="f1-time f1-num f1-dim">{_esc(row["gap"])}</span></td>',
+            "Tyre history": f'<td class="col-compact">{_tyres_html(row["tyre_history"])}</td>',
+            "Diff": (
+                f'<td class="col-compact"><span class="f1-time f1-num f1-dim" '
+                f'title="{_esc(ideal_hint)}">{_esc(row["diff"])}</span></td>'
+            ),
+            "Speed km/h": (
+                f'<td class="col-compact"><span class="f1-time f1-num">{_esc(speed_text)}</span></td>'
+            ),
+        }
+        for number, cell in enumerate(sector_cells, start=1):
+            cells[f"Sector {number}"] = cell
         body.append(
-            f'<tr class="{row_classes}">'
-            f'<td class="f1-pos" style="--team:{accent}">{row["position"]}</td>'
-            f'<td><div class="f1-code"{code_title}>{_esc(row["code"])}</div>'
-            f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
-            f"<td>{_status_html(status or '')}</td>"
-            f'<td><span class="{last_class} f1-num">{_esc(row["last_lap"])}</span></td>'
-            f'<td><span class="{best_class} f1-num">{_esc(row["best_lap"])}</span></td>'
-            f'<td><span class="f1-time f1-num f1-dim">{_esc(row["interval"])}</span></td>'
-            f'<td><span class="f1-time f1-num f1-dim">{_esc(row["gap"])}</span></td>'
-            f"{sector_cells}"
-            f'<td class="col-compact">{_tyres_html(row["tyre_history"])}</td>'
-            f'<td class="col-compact"><span class="f1-time f1-num f1-dim" '
-            f'title="{_esc(ideal_hint)}">{_esc(row["diff"])}</span></td>'
-            f'<td class="col-compact"><span class="f1-time f1-num">{_esc(speed_text)}</span></td>'
-            "</tr>"
+            f'<tr class="{row_classes}">' + "".join(cells.get(c, "") for c in shown) + "</tr>"
         )
 
     return (
@@ -635,18 +665,33 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
 def render_dashboard(session_data: dict, favourites: Sequence[str] | None = None) -> None:
     """Render the full timing dashboard on the spec's 60/40 grid.
 
-    ``favourites`` defaults to the viewer's favourite drivers (UX-03).
+    ``favourites`` defaults to the viewer's favourite drivers (UX-03); the
+    columns and panels the viewer hid (FEAT-10) are left out, and the tower
+    takes the full width when both side panels are hidden.
     """
     st.html(DASHBOARD_CSS)
     if favourites is None:
         favourites = favourite_drivers()
+    columns_off, panels_off = hidden_columns(), hidden_panels()
 
     rows = build_timing_rows(session_data)
     st.html(f'<div class="f1-dash">{header_html(session_data)}</div>')
 
+    side = [
+        (name, build)
+        for name, build in (
+            ("sectors", lambda: sector_cards_html(sector_leaders(rows))),
+            ("map", lambda: map_panel_html(session_data, rows)),
+        )
+        if name not in panels_off
+    ]
+    tower = f'<div class="f1-dash">{tower_html(rows, favourites, columns_off)}</div>'
+    if not side:
+        st.html(tower)
+        return
     left, right = st.columns([6, 4], gap="small")
     with left:
-        st.html(f'<div class="f1-dash">{tower_html(rows, favourites)}</div>')
+        st.html(tower)
     with right:
-        st.html(f'<div class="f1-dash">{sector_cards_html(sector_leaders(rows))}</div>')
-        st.html(f'<div class="f1-dash">{map_panel_html(session_data, rows)}</div>')
+        for _, build in side:
+            st.html(f'<div class="f1-dash">{build()}</div>')

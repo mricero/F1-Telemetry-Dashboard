@@ -536,6 +536,7 @@ The contract the browser replay player (`ui/components/replay_player/`, IMPROVEM
 
 - Only play/pause is an icon (inline SVG `<symbol>` from guideline 5.8, with `aria-label` and `title`); every other control is text: `-30s`, `-5s`, `+5s`, `+30s`, `Previous lap`, `Next lap`, and a speed select `0.5x 1x 2x 4x 8x 16x 32x 64x`.
 - Keyboard: Space play/pause, ←/→ ±5 s, Shift+←/→ ±30 s, `[`/`]` previous/next lap, `1`–`8` speed, `F` follow the focused driver. Clicking a tower row or a car focuses that driver (others dimmed, the focused car larger with a halo). The focus ring is `--accent`, 2 px.
+- Layout (FEAT-10): the component's data carries `layout = {hide_cols, hide_panels}` beside the payload. `hide_cols` names tower columns (`status last best gap sectors tyres pit`), `hide_panels` names `map strip card rc`; the player hides those cells and panels and rebuilds the grid template per breakpoint, so the remaining columns keep their widths. A new `layout` applies without remounting.
 
 ### 9.5 Flag chip words
 

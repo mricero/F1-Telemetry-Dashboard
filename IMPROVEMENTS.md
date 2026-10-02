@@ -912,7 +912,7 @@ Still valid. Each gets `Files:` and `Acceptance:` written in as the first step o
 - [ ] **FEAT-06** · S — **Standings panels** via Jolpica (`get_driver_standings` / `get_constructor_standings` exist with no callers), with a points-after-this-race projection for live races.
 - [x] **FEAT-07** · S — **Linear track-position strip:** every car on a straight 0 → lap-length line, readable on mobile, good for spotting overtake-mode trains. — done
 - [ ] **FEAT-09** · S — **Speed-trap and sector ranking panel.** Status: partly done (sector top-3 cards and a top-speed column exist); still missing the I1/I2/FL/ST ranking.
-- [ ] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params.
+- [x] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params. — done
 - [ ] **FEAT-11** · S — **Track limits / deleted laps view** from race control and FastF1 `Deleted`/`DeletedReason`. Status: `DeletedReason` is not kept. REPLAY-18 and REPLAY-20 lay the groundwork.
 - [ ] **FEAT-12** · S — **2026 regulation context:** hide the DRS channel for 2026+ instead of plotting a flat zero (the DRS tab is always rendered, `ui/layout.py:388-397`); label active aero and overtake mode where data exists.
 - [x] **FEAT-14** · S — **Share links.** Status: partly done; year/gp/session and the page are in the URL. Still missing: the drivers, the analysis section and the replay cursor. Streamlit 1.59's widget `bind="query-params"` can carry them (with UI-21). — done

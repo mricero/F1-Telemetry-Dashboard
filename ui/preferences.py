@@ -15,6 +15,14 @@ import pandas as pd
 import streamlit as st
 
 from processing.driver_selection import default_drivers, format_codes, parse_codes
+from processing.view_params import (
+    HIDE_COLUMNS_PARAM,
+    HIDE_PANELS_PARAM,
+    PANEL_CHOICES,
+    TOWER_COLUMN_CHOICES,
+    format_tokens,
+    parse_tokens,
+)
 
 DRIVERS_PARAM = "drivers"
 DRIVERS_PREFIX = "analysis_drivers"
@@ -143,12 +151,89 @@ def render_favourites_picker(order: list[str]) -> list[str]:
     return favourite_drivers()
 
 
+# ----------------------------------------------------------------- layout
+
+HIDDEN_COLUMNS_KEY = "layout_hidden_columns"
+HIDDEN_PANELS_KEY = "layout_hidden_panels"
+COLUMNS_WIDGET = "layout_columns_shown"
+PANELS_WIDGET = "layout_panels_shown"
+
+
+def _hidden(state: str, param: str, choices) -> list[str]:
+    """What the viewer hid, seeded once from the URL (unknown names dropped)."""
+    if state not in st.session_state:
+        st.session_state[state] = parse_tokens(_url_value(param), choices)
+    return list(st.session_state[state])
+
+
+def hidden_columns() -> list[str]:
+    """Tower columns the viewer hid (FEAT-10); nothing hidden is today's layout."""
+    return _hidden(HIDDEN_COLUMNS_KEY, HIDE_COLUMNS_PARAM, TOWER_COLUMN_CHOICES)
+
+
+def hidden_panels() -> list[str]:
+    """Panels the viewer hid (FEAT-10)."""
+    return _hidden(HIDDEN_PANELS_KEY, HIDE_PANELS_PARAM, PANEL_CHOICES)
+
+
+def _shown_picker(label, choices, hidden, state, widget, help_text) -> None:
+    names = [name for name, _ in choices]
+    labels = dict(choices)
+
+    def _changed() -> None:
+        shown = set(st.session_state.get(widget) or [])
+        st.session_state[state] = [name for name in names if name not in shown]
+
+    st.multiselect(
+        label,
+        names,
+        default=[name for name in names if name not in hidden],
+        key=widget,
+        on_change=_changed,
+        format_func=lambda name: labels[name],
+        help=help_text,
+    )
+
+
+def render_layout_pickers() -> None:
+    """The Settings checklists: which tower columns and panels are shown."""
+    _shown_picker(
+        "Tower columns shown",
+        TOWER_COLUMN_CHOICES,
+        hidden_columns(),
+        HIDDEN_COLUMNS_KEY,
+        COLUMNS_WIDGET,
+        "Applies to the replay and results towers; a column a view does not have is ignored.",
+    )
+    _shown_picker(
+        "Panels shown",
+        PANEL_CHOICES,
+        hidden_panels(),
+        HIDDEN_PANELS_KEY,
+        PANELS_WIDGET,
+        "Applies to the replay and results pages.",
+    )
+    sync_preference_params()
+
+
+def layout_for_player() -> dict:
+    """The layout the browser player receives."""
+    return {"hide_cols": hidden_columns(), "hide_panels": hidden_panels()}
+
+
 def preference_params() -> dict[str, str]:
     """The viewer-wide preferences as URL parameters (empty when default)."""
     params: dict[str, str] = {}
     favourites = favourite_drivers()
     if favourites:
         params[FAVOURITES_PARAM] = format_codes(favourites)
+    for name, hidden in (
+        (HIDE_COLUMNS_PARAM, hidden_columns()),
+        (HIDE_PANELS_PARAM, hidden_panels()),
+    ):
+        text = format_tokens(hidden)
+        if text:
+            params[name] = text
     return params
 
 
@@ -159,5 +244,5 @@ def sync_preference_params() -> None:
     preferences back, so a copied link always carries them.
     """
     params = preference_params()
-    for name in (FAVOURITES_PARAM,):
+    for name in (FAVOURITES_PARAM, HIDE_COLUMNS_PARAM, HIDE_PANELS_PARAM):
         mirror_param(name, params.get(name))

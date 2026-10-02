@@ -389,3 +389,50 @@ describe("timed sessions", () => {
     assert.equal(rows(player).length, qualifying.drivers.length);
   });
 });
+
+describe("layout chosen by the viewer (FEAT-10)", () => {
+  const hiddenCells = (player) =>
+    [...player.root.querySelector(".rp-thead").children].filter((cell) => cell.classList.contains("rp-off"));
+
+  test("the default layout hides nothing", async () => {
+    const player = await open(race);
+
+    assert.equal(hiddenCells(player).length, 0);
+    assert.equal(player.root.className.includes("rp-hide-"), false);
+  });
+
+  test("a hidden column is hidden in the header and every row, and leaves the template", async () => {
+    const player = await open(race, { layout: { hide_cols: ["tyres", "pit"], hide_panels: [] } });
+
+    assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["Tyre", "Pit"]);
+    const row = rows(player)[0];
+    assert.equal([...row.children].filter((cell) => cell.classList.contains("rp-off")).length, 2);
+    const css = [...player.root.querySelectorAll("style")].map((node) => node.textContent).join("");
+    assert.match(css, /\.rp \.rp-cols-race \{ grid-template-columns: 28px 8px minmax\(64px, 1fr\) 76px 76px 44px; \}/);
+  });
+
+  test("hidden panels become classes on the root", async () => {
+    const player = await open(race, { layout: { hide_cols: [], hide_panels: ["map", "rc"] } });
+
+    assert.ok(player.root.classList.contains("rp-hide-map"));
+    assert.ok(player.root.classList.contains("rp-hide-rc"));
+    assert.equal(player.root.classList.contains("rp-hide-card"), false);
+  });
+
+  test("a new layout from Python applies without remounting", async () => {
+    const player = await open(race);
+
+    await player.rerun({ layout: { hide_cols: ["last"], hide_panels: ["strip"] } });
+
+    assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["Last"]);
+    assert.ok(player.root.classList.contains("rp-hide-strip"));
+    await player.rerun({ layout: { hide_cols: [], hide_panels: [] } });
+    assert.equal(hiddenCells(player).length, 0);
+  });
+
+  test("timed sessions treat the three sectors as one column", async () => {
+    const player = await open(qualifying, { layout: { hide_cols: ["sectors"], hide_panels: [] } });
+
+    assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["S1", "S2", "S3"]);
+  });
+});

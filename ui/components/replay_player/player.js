@@ -206,6 +206,37 @@ function unpackTrend(trend, raw) {
   return values;
 }
 
+// Tower tracks per view, in cell order (FEAT-10). `pref` is the column name
+// the layout toggles use; `narrow` marks the tracks the stylesheet drops in a
+// narrow container (race: below 1200 px, timed sessions: below 900 px), so the
+// generated templates keep the same breakpoints as player.css.
+const TOWER_TRACKS = {
+  race: [
+    { w: "28px" },
+    { w: "8px" },
+    { w: "minmax(64px, 1fr)" },
+    { pref: "gap", w: "76px" },
+    { pref: "last", w: "76px", narrow: true },
+    { pref: "tyres", w: "52px" },
+    { pref: "pit", w: "28px", narrow: true },
+    { pref: "status", w: "44px" },
+  ],
+  timed: [
+    { w: "28px" },
+    { w: "8px" },
+    { w: "minmax(64px, 1fr)" },
+    { pref: "best", w: "72px" },
+    { pref: "gap", w: "68px" },
+    { pref: "last", w: "72px", narrow: true },
+    { pref: "sectors", w: "46px", narrow: true },
+    { pref: "sectors", w: "46px", narrow: true },
+    { pref: "sectors", w: "46px", narrow: true },
+    { pref: "tyres", w: "44px" },
+  ],
+};
+const NARROW_BREAKPOINT = { race: 1199, timed: 899 };
+const PANEL_NAMES = ["map", "strip", "card", "rc"];
+
 class Player {
   constructor(root, data, setStateValue) {
     this.root = root;
@@ -222,6 +253,7 @@ class Player {
     this.playing = false;
     this.speed = 1;
     this.focus = data.focus || null;
+    this.layout = data.layout || {};
     this.follow = false;
     this.labels = false;
     this.mode = "gap";
@@ -405,6 +437,7 @@ class Player {
           ["", ""],
         ];
     for (const [text, className] of columns) head.append(el("span", className, text));
+    this.headNode = head;
     this.gapHeading = head.children[timed ? 4 : 3];
     this.rowsNode = el("div", "rp-rows");
     tower.append(head, this.rowsNode);
@@ -418,9 +451,11 @@ class Player {
       this.on(this.intervalButton, "click", () => this.setMode("int"));
       toggle.setAttribute("aria-label", "Gap column shows");
       toggle.append(this.gapButton, this.intervalButton);
+      this.toggleNode = toggle;
       tower.append(toggle);
     }
     this.buildRows(cols);
+    this.applyLayout();
 
     const side = el("section", "rp-side");
     this.mapNode = el("div", "rp-map");
@@ -1166,6 +1201,38 @@ class Player {
     this.draw(true);
   }
 
+  // The layout the viewer chose (FEAT-10): hidden tower columns and panels.
+  // A hidden column is taken out of the grid template as well as hidden, so
+  // the others keep their widths; the template is generated per breakpoint
+  // because an inline template would override the stylesheet's media rules.
+  applyLayout() {
+    const hiddenColumns = new Set(this.layout.hide_cols || []);
+    const hiddenPanels = new Set(this.layout.hide_panels || []);
+    for (const name of PANEL_NAMES) setClass(this.root, `rp-hide-${name}`, hiddenPanels.has(name));
+    const kind = this.timed ? "timed" : "race";
+    const tracks = TOWER_TRACKS[kind];
+    const rows = [this.headNode, ...Object.values(this.rows || {}).map((entry) => entry.row)];
+    for (const node of rows) {
+      tracks.forEach((track, index) => {
+        const cell = node.children[index];
+        if (cell) setClass(cell, "rp-off", Boolean(track.pref) && hiddenColumns.has(track.pref));
+      });
+    }
+    const shown = tracks.filter((track) => !(track.pref && hiddenColumns.has(track.pref)));
+    const template = (list) => list.map((track) => track.w).join(" ");
+    const cls = this.timed ? "rp-cols-timed" : "rp-cols-race";
+    if (!this.layoutStyle) {
+      this.layoutStyle = document.createElement("style");
+      this.root.append(this.layoutStyle);
+    }
+    this.layoutStyle.textContent =
+      `.rp .${cls} { grid-template-columns: ${template(shown)}; }` +
+      `@container (max-width: ${NARROW_BREAKPOINT[kind]}px) { .rp .${cls} { grid-template-columns: ${template(
+        shown.filter((track) => !track.narrow),
+      )}; } }`;
+    if (this.toggleNode) this.toggleNode.hidden = hiddenColumns.has("gap");
+  }
+
   setMode(mode) {
     this.mode = mode;
     setClass(this.gapButton, "on", mode === "gap");
@@ -1322,6 +1389,11 @@ class Player {
 
   update(data, setStateValue) {
     this.setStateValue = setStateValue;
+    const layout = data.layout || {};
+    if (JSON.stringify(layout) !== JSON.stringify(this.layout)) {
+      this.layout = layout;
+      this.applyLayout();
+    }
     // Python moved the cursor (a jump from outside the player).
     if ((data.seek ?? 0) !== this.seekSeen) {
       this.seekSeen = data.seek ?? 0;

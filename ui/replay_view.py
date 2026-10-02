@@ -30,7 +30,7 @@ from processing.timing import build_timing_rows, sector_leaders
 from processing.view_params import CURSOR_PARAM, format_cursor, parse_cursor
 from ui.components.replay_player import player_style, render_replay_player
 from ui.dashboard import render_dashboard, sector_cards_html
-from ui.preferences import mirror_param
+from ui.preferences import hidden_panels, layout_for_player, mirror_param
 from ui.theme import DASHBOARD_CSS
 
 # How much session time one second of playback covers, per speed setting.
@@ -422,6 +422,7 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
         on_cursor_change=lambda: _from_player(key, clock),
         on_focus_change=lambda: _focus_from_player(key),
         on_analyse_change=lambda: _analyse_from_player(key),
+        layout=layout_for_player(),
     )
 
     moment = st.session_state[cursor_key(key)]
@@ -439,6 +440,8 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
     )
     if on_final is not None and final.button("Final result", width="stretch"):
         on_final()
+    if "sectors" in hidden_panels():
+        return
     readout.caption(f"Sector leaders at {format_clock(moment - clock.lights_out)} (paused)")
     st.html(DASHBOARD_CSS)
     st.html(f'<div class="f1-dash">{_sector_cards(session_data, key, series, moment)}</div>')
