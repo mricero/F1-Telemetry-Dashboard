@@ -12,6 +12,7 @@ import streamlit as st
 from data.runtime_cache import runtime_cache
 from processing.driver_selection import classification_order
 from ui.dashboard import render_dashboard
+from ui.lap_panels import render_deleted_laps, render_rankings
 from ui.layout import (
     render_delay_input,
     render_driver_comparison,
@@ -66,6 +67,8 @@ ANALYSIS_SECTIONS = (
     "Race trace",
     "Tyre pace",
     "Pit rejoin",
+    "Rankings",
+    "Deleted laps",
     "Positions",
     "Weather",
     "Race control",
@@ -249,6 +252,12 @@ def analysis_page() -> None:
             focus=moment.get("focus"),
             lap=moment.get("lap"),
             key=f"rejoin:{context['session_key']}",
+        )
+    elif section == "Rankings":
+        render_rankings(context["laps"])
+    elif section == "Deleted laps":
+        render_deleted_laps(
+            context["laps"], session_data.get("race_control"), session_data.get("drivers")
         )
     elif section == "Positions":
         render_position_changes(
