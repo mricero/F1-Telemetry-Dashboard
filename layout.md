@@ -513,6 +513,7 @@ The contract the browser replay player (`ui/components/replay_player/`, IMPROVEM
 | Header | 48 high, full width | Event name (Titillium 700, 22, uppercase) · session · `LAP n/N` · race time `H:MM:SS` from lights out (segment time `Q2 12:04` in qualifying) · flag chip · weather as text (`AIR 26° TRACK 31° DRY`, wind `12 km/h NE`) |
 | Tower | 40 % of the width, 22 rows × 30 | See 9.2 |
 | Map | 60 % of the width | Track ribbon 14 wide in `--surface-2` with a 1 px darker edge; start/finish a short white line; corner numbers 10 in `--text-dim`, no circles; cars 9 px team-colour circles with a 1 px `--bg` stroke and optional 3-letter labels; the focused car 12 px with an `--accent` ring; no shadows, no glow; `role="img"` and a `<title>` naming the session and moment |
+| Position strip | Under the map, full width of the map column, 85 high | The linear track-position strip (FEAT-07): a 2 px line from the start/finish line (left, 0, a white tick) to one lap (right, 1, a white tick), a 4 px team-colour marker per car on it, 3-letter label (Titillium 600, 10) with a 1 px team-colour stem; cars within 26 px of the previous label in a lane go to the next of six lanes (above, below, above further out ...), so a train of cars stays legible at 375 px. The focused car is a 6 px marker with an `--accent` label, others dimmed to 45 %. Reads `pos.lap_z` (see 9.8); `role="img"`, a `title` per label |
 | Race control | 3 lines under the map | The last messages at or before the cursor: `L22 14:02 TRACK LIMITS CAR 16 T4` |
 | Controls | 36 high, full width | See 9.4 |
 | Timeline | 28 high, full width | See 9.3 |
@@ -554,3 +555,7 @@ No horizontal page scroll at any width from 360 px.
 
 - Motion only when data moves: rows sliding to a new position (350 ms ease-out), cars moving continuously (interpolated), the playhead, and a 600 ms flash (`--best` / `--pb` at 25 %) on a lap-time cell when a session-best or personal-best lap completes. `prefers-reduced-motion: reduce` turns the row transitions and flashes off; positions still update.
 - Contrast: body text at least 4.5:1, large text and UI boundaries at least 3:1. Every coloured state has a text equivalent (chip text, compound letter, `title`). No information only on hover.
+
+### 9.8 Payload: lap fractions (FEAT-07)
+
+`pos.lap_z` (payload `v` 3) carries each car's distance round the lap beside `pos.xy_z`, in whole `pos.lap_scale` (1000) ths of a lap, `[0, 1)`, 0 at the start/finish line (`outline[0]`). Python computes it per frame from that frame's own projected position (`TrackGeometry.lap_fraction`: the nearest point on the closed outline, arc length over lap length), so it never reads another frame. Packed as the step from the previous frame wrapped into `[-500, 500)` (crossing the line is a small step), zigzag 16-bit, low bytes then high bytes, driver-major (driver, frame), raw DEFLATE, base64. A frame where `xy_z` flags the car absent has no fraction (the player reads the xy absent marker). `processing.replay_payload.decode_lap_fractions` is the Python reader; the player only looks the value up and lays the labels out.

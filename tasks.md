@@ -330,3 +330,7 @@ IMPROVEMENTS.md revision 3 (2026-09-24, Azerbaijan GP weekend). Offline gates: 9
 - **REPLAY-15** — Only the current session's replay model and payload stay in `st.session_state`; sector cards are memoised per moment.
 - **REPLAY-16** — Snapshot + tower 173 ms → ~130 ms (per-column writes, vectorised sector bests); the seconds-series perf test takes the best of three runs with 25 % slack.
 - **UI-08** — `baseRadius = "4px"` so Streamlit's own widgets follow guideline 5.6.
+
+## Round 9 — revision 4 review
+
+- **FEAT-07** — Linear track-position strip under the replay map: each car's lap fraction is computed in Python (`TrackGeometry.lap_fraction`, nearest point on the outline, 0 at the start/finish line), packed as `pos.lap_z` (payload v3, ~13 % more payload on a noisy 22-car race) and drawn by the player as team-colour markers with 3-letter labels fanned over six lanes so it reads at 375 px.

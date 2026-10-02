@@ -24,6 +24,12 @@ PADDING = 62
 # shape while bounding the SVG the browser has to parse.
 MAX_OUTLINE_POINTS = 1500
 
+# ``TrackGeometry.lap_fraction`` searches every LAP_COARSE_STEP-th vertex,
+# then the segments within LAP_WINDOW of the best one, LAP_CHUNK points at a time.
+LAP_COARSE_STEP = 5
+LAP_WINDOW = 12
+LAP_CHUNK = 4000
+
 
 def rotate_points(xy: np.ndarray, angle_degrees: float) -> np.ndarray:
     """Rotate an (N, 2) array of coordinates about the origin.
@@ -114,6 +120,50 @@ class TrackGeometry:
         out[:, 0] += self.dx
         out[:, 1] = VIEW_H - (out[:, 1] + self.dy)
         return out
+
+    def lap_fraction(self, points) -> np.ndarray:
+        """How far round the lap each viewBox point is: ``[0, 1)``, the line at 0.
+
+        Each point is snapped to the nearest spot on the closed outline (the
+        outline starts at the start/finish line) and its arc length there,
+        over the whole lap's, is returned; NaN stays NaN. Pure per point, so a
+        car's fraction at a moment never depends on any other moment.
+        """
+        pts = np.asarray(points, dtype=float).reshape(-1, 2)
+        fractions = np.full(len(pts), np.nan)
+        ok = np.isfinite(pts).all(axis=1)
+        ring = np.vstack([self.outline, self.outline[:1]])
+        seg = np.diff(ring, axis=0)
+        length = np.hypot(seg[:, 0], seg[:, 1])
+        total = float(length.sum())
+        if not ok.any() or total <= 0 or len(seg) == 0:
+            return fractions
+        start = np.concatenate([[0.0], np.cumsum(length)[:-1]])
+        count = len(seg)
+        # Coarse pass: the nearest of every ``COARSE``-th vertex, then only
+        # the segments around it are measured (the whole search would be
+        # points x segments).
+        coarse = np.arange(0, count, LAP_COARSE_STEP)
+        found = np.empty(int(ok.sum()), dtype=float)
+        good = pts[ok]
+        window = np.arange(-LAP_WINDOW, LAP_WINDOW + 1)
+        for lo in range(0, len(good), LAP_CHUNK):
+            chunk = good[lo : lo + LAP_CHUNK]
+            gap = chunk[:, None, :] - ring[coarse][None, :, :]
+            near = coarse[np.argmin((gap**2).sum(axis=2), axis=1)]
+            index = (near[:, None] + window[None, :]) % count
+            origin = ring[index]
+            along = seg[index]
+            sq = np.maximum((along**2).sum(axis=2), 1e-12)
+            t = np.clip(((chunk[:, None, :] - origin) * along).sum(axis=2) / sq, 0.0, 1.0)
+            foot = origin + along * t[..., None]
+            best = np.argmin(((chunk[:, None, :] - foot) ** 2).sum(axis=2), axis=1)
+            rows = np.arange(len(chunk))
+            found[lo : lo + len(chunk)] = start[index[rows, best]] + (
+                t[rows, best] * length[index[rows, best]]
+            )
+        fractions[ok] = (found / total) % 1.0
+        return fractions
 
     def start_finish(self, half_length: float = 13.0) -> tuple[float, float, float, float]:
         """A short line across the track at the start of the outline."""

@@ -17,6 +17,7 @@ from processing.replay_model import session_clock, snapshot_at, tower_series
 from processing.replay_payload import (
     POSITION_ABSENT,
     build_replay_payload,
+    decode_lap_fractions,
     decode_positions,
     tower_at,
 )
@@ -108,6 +109,76 @@ class TestPositions:
 
         assert np.isnan(xy[after_a_stopped, a]).all()
         assert payload["pos"]["absent"] == POSITION_ABSENT
+
+
+class TestLapFractions:
+    """FEAT-07: how far round the lap each car is, computed here, drawn by the player."""
+
+    def test_a_car_gains_distance_and_wraps_at_the_line(self, built):
+        payload, _ = built
+        pos = payload["pos"]
+        lap = decode_lap_fractions(pos)[:, pos["codes"].index("C")]
+        live = lap[~np.isnan(lap)]
+        steps = (np.diff(live) + 0.5) % 1.0 - 0.5  # a wrap is a small step, not -1
+
+        assert (steps >= -0.003).all()  # never backwards beyond quantisation
+        assert (np.diff(live) < -0.9).sum() >= 1  # crossed the line
+        assert live.min() < 0.05 and live.max() > 0.95
+        assert ((live >= 0) & (live < 1)).all()
+
+    def test_the_fraction_is_the_arc_length_round_the_outline(self, built, race):
+        payload, _ = built
+        pos = payload["pos"]
+        geometry = track_geometry(race["location"], race["circuit_info"])
+        ring = np.vstack([geometry.outline, geometry.outline[:1]])
+        pieces = np.hypot(*np.diff(ring, axis=0).T)
+        ahead = np.concatenate([[0.0], np.cumsum(pieces)]) / pieces.sum()
+        xy = decode_positions(pos)
+        lap = decode_lap_fractions(pos)
+        index = pos["codes"].index("A")
+        frames = np.flatnonzero(~np.isnan(lap[:, index]))[::17]
+
+        for frame in frames:
+            nearest = np.argmin(np.hypot(*(ring - xy[frame, index]).T))
+            gap = abs(lap[frame, index] - ahead[nearest])
+            assert min(gap, 1 - gap) < 0.02, frame
+
+    def test_a_car_without_a_sample_has_no_fraction(self, built):
+        payload, _ = built
+        pos = payload["pos"]
+        a = pos["codes"].index("A")
+        after_a_stopped = int((fx.RACE_END_BY["A"] + 20 - pos["t0"]) / pos["step"])
+
+        assert np.isnan(decode_lap_fractions(pos)[after_a_stopped, a])
+
+    def test_a_frame_never_reads_the_future(self, race, built):
+        payload, _ = built
+        pos = payload["pos"]
+        cut = pos["t0"] + 100.0
+        early = {**race, "positions": race["positions"][race["positions"]["Time"] <= cut]}
+        short, _ = _payload(early)
+        frames = short["pos"]["frames"]
+
+        assert 0 < frames < pos["frames"]
+        assert short["pos"]["t0"] == pos["t0"]
+        assert np.array_equal(
+            decode_lap_fractions(short["pos"]),
+            decode_lap_fractions(pos)[:frames],
+            equal_nan=True,
+        )
+
+    def test_the_geometry_handles_nan_and_a_point_on_the_line(self, race):
+        geometry = track_geometry(race["location"], race["circuit_info"])
+        found = geometry.lap_fraction([geometry.outline[0], [np.nan, 5.0]])
+
+        assert found[0] < 0.005 or found[0] > 0.995
+        assert np.isnan(found[1])
+
+    def test_packing_costs_little(self, built):
+        pos = built[0]["pos"]
+
+        assert pos["lap_scale"] == 1000
+        assert len(pos["lap_z"]) < 0.5 * len(pos["xy_z"])
 
 
 class TestTheTowerMatchesTheModel:
