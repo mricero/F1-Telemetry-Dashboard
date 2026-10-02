@@ -108,7 +108,7 @@ Below is an overview of the key directories and files in this repository:
 ├── requirements-dev.txt       # Development and testing dependencies
 ├── pytest.ini                 # Pytest configuration (tests live in tests/)
 ├── ARCHITECTURE.md            # In-depth architectural breakdown & data flows
-├── PHASE1_RESEARCH_SUMMARY.md # Research notes on Free APIs vs Paid APIs
+├── docs/history/              # Superseded research notes (Free vs Paid APIs)
 ├── LICENSE                    # MIT license
 ├── data/                      # Data Ingestion Layer
 │   ├── __init__.py

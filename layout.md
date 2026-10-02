@@ -1,5 +1,18 @@
 # Telemetry & Live Timing Dashboard Specification
 
+> **Which sections bind.**
+>
+> - **Section 9 (Replay screen) is binding.** It is the contract the browser
+>   replay player (`ui/components/replay_player/`) implements; a change to the
+>   player changes this section in the same commit.
+> - **Sections 2-5 are reference.** They describe what `ui/dashboard.py`,
+>   `ui/track_map.py` and `processing/timing.py` draw. Where they disagree with
+>   section 9 or with the UI guideline (`IMPROVEMENTS.md` section 5), those win.
+> - **Sections 1, 6, 7 and 8 are historical** and not binding: the colour
+>   tokens live in `ui/theme.py` (guideline 5.4), and the app has no WebSocket
+>   push to the browser, React/Vue list or canvas renderer - the replay
+>   player's payload is built by `processing/replay_payload.py`.
+
 ## 1. System Architecture & Layout Grid
 
 The telemetry dashboard follows a two-column responsive grid system optimized for ultra-wide continuous data streaming displays (16:9 or 21:9 aspect ratios).

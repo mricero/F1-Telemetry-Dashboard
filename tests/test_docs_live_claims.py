@@ -50,3 +50,47 @@ class TestEndpointClaims:
     def test_ip_blocking_risk_is_mentioned(self):
         assert "ip" in _text("readme.md").lower()
         assert "block" in _text("readme.md").lower()
+
+
+class TestArchitectureMatchesTheCode:
+    """DOC-06: ARCHITECTURE.md listed 5 of the data/ modules, 4 of processing/
+    and 1 of ui/, and described replays as pickles."""
+
+    @staticmethod
+    def _modules() -> list[str]:
+        return sorted(
+            path.relative_to(PROJECT_ROOT).as_posix()
+            for package in ("data", "processing", "ui")
+            for path in (PROJECT_ROOT / package).rglob("*.py")
+            if path.name != "__init__.py"
+        )
+
+    def test_every_module_is_described(self):
+        text = _text("ARCHITECTURE.md")
+        missing = [module for module in self._modules() if module not in text]
+
+        assert missing == [], f"ARCHITECTURE.md does not mention: {missing}"
+
+    def test_replays_are_not_described_as_pickles(self):
+        for line in _text("ARCHITECTURE.md").splitlines():
+            lowered = line.lower()
+            if ".pkl" in lowered or "pickled" in lowered:
+                assert "legacy" in lowered, f"pickle replay claim: {line.strip()}"
+
+    def test_the_replay_format_is_parquet_with_meta_json(self):
+        text = _text("ARCHITECTURE.md")
+
+        assert "Parquet" in text
+        assert "meta.json" in text
+
+    def test_config_fields_that_do_not_exist_are_not_documented(self):
+        text = _text("ARCHITECTURE.md")
+
+        for stale in ("distance_step", "cache_ttl_seconds", "metrics_store.json"):
+            assert stale not in text
+
+    def test_the_superseded_research_note_lives_under_docs_history(self):
+        assert not (PROJECT_ROOT / "PHASE1_RESEARCH_SUMMARY.md").exists()
+        note = _text("docs/history/PHASE1_RESEARCH_SUMMARY.md")
+
+        assert "superseded" in note.splitlines()[0].lower()
