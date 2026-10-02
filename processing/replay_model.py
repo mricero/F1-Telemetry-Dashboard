@@ -917,7 +917,30 @@ def _running_best(laps: pd.DataFrame) -> list[tuple[float, Any]]:
     return points
 
 
-def _lap_fields(kind: str, own: pd.DataFrame, total_laps: int | None) -> dict[str, FieldSeries]:
+def _pit_stop_entries(
+    own: pd.DataFrame, suspensions: Iterable[tuple[float, float]] = ()
+) -> list[float]:
+    """Pit-lane entries that count as pit stops, in time order (REPLAY-25).
+
+    Under a red flag every car is called into the pit lane; those entries
+    are not stops, so they are neither counted nor offered as events (the
+    red flag event already marks the moment). Whether an entry is under a
+    red flag is known when it happens, so no snapshot sees the future.
+    """
+    spans = list(suspensions)
+    return [
+        moment
+        for moment in sorted(own["pit_in"].dropna().tolist())
+        if not any(begin <= moment < end for begin, end in spans)
+    ]
+
+
+def _lap_fields(
+    kind: str,
+    own: pd.DataFrame,
+    total_laps: int | None,
+    suspensions: Iterable[tuple[float, float]] = (),
+) -> dict[str, FieldSeries]:
     """Fields that change only with the driver's own laps."""
     completed = own[own["end"].notna()].sort_values("end", kind="stable")
     lap_points: list[tuple[float, object]] = [(BEFORE_EVERYTHING, 1 if kind == "race" else 0)]
@@ -993,7 +1016,7 @@ def _lap_fields(kind: str, own: pd.DataFrame, total_laps: int | None) -> dict[st
         fields["flying"] = _flying_series(own)
 
     if kind == "race":
-        entries = sorted(own["pit_in"].dropna().tolist())
+        entries = _pit_stop_entries(own, suspensions)
         pit_points = [(BEFORE_EVERYTHING, 0), *((m, n) for n, m in enumerate(entries, start=1))]
         fields["pits"] = _series(pit_points)
     return fields
@@ -1354,12 +1377,13 @@ def tower_series(session_data: dict) -> TowerSeries:
     segment_starts = [float(s) for s in (info.get("segment_starts") or [])]
     names = segment_names(info)
     samples = _sample_times(session_data.get("positions"))
+    suspensions = red_flag_windows(session_data)
 
     fields: dict[str, dict[str, FieldSeries]] = {code: {} for code in codes}
     by_driver = {str(code): group for code, group in table.groupby("Driver", sort=False)}
     empty = table.iloc[0:0]
     for code in codes:
-        fields[code].update(_lap_fields(kind, by_driver.get(code, empty), total_laps))
+        fields[code].update(_lap_fields(kind, by_driver.get(code, empty), total_laps, suspensions))
     for code, flags in _last_flags(table).items():
         if code in fields:
             fields[code]["last_flag"] = flags
@@ -1379,7 +1403,6 @@ def tower_series(session_data: dict) -> TowerSeries:
         for code, timed_points in timed.items():
             fields[code].update({name: _series(p) for name, p in timed_points.items()})
 
-    suspensions = red_flag_windows(session_data)
     flags_down = chequered_times(session_data) if kind == "race" else []
     chequered = flags_down[0] if flags_down else None
     for code in codes:
@@ -1691,10 +1714,11 @@ def events(session_data: dict, series: TowerSeries | None = None) -> list[tuple[
 
     table = session_lap_table(session_data)
     if series.kind == "race":
-        found.extend(
-            (float(lap.pit_in), "pit", f"Pit stop - {lap.Driver}")
-            for lap in table[table["pit_in"].notna()].itertuples()
-        )
+        for code, own in table.groupby("Driver", sort=False):
+            found.extend(
+                (float(moment), "pit", f"Pit stop - {code}")
+                for moment in _pit_stop_entries(own, series.suspensions)
+            )
 
     # A retirement is an OUT that never ends; a shorter silence is a feed
     # dropout, not an event (REPLAY-23).

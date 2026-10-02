@@ -474,6 +474,62 @@ class TestPractice:
         assert _order(session, 600.0)[0] == "E"  # E's 90.5 comes last
 
 
+RED_START, RED_END = 1215.0, 1290.0
+
+
+def _red_flag_race() -> dict:
+    """The race with a red flag on lap 3: every car enters the pit lane.
+
+    Each car crosses the pit-entry line during lap 3 (PitInTime, as FastF1
+    stamps it on the in-lap) and leaves on lap 4 (PitOutTime on the out-lap).
+    C's real stop on lap 4 is kept. Positions are untouched: GPS keeps
+    reporting in the pit lane.
+    """
+    session = fx.race_session()
+    laps = session["laps"].copy()
+    for offset, code in enumerate(("A", "B", "C")):
+        own = laps["Driver"] == code
+        lap3, lap4 = own & (laps["LapNumber"] == 3), own & (laps["LapNumber"] == 4)
+        laps.loc[lap3, "PitInTime"] = pd.Timedelta(seconds=1220.0 + offset)
+        start4 = laps.loc[lap4, "LapStartTime"].iloc[0]
+        laps.loc[lap4, "PitOutTime"] = start4 + pd.Timedelta(seconds=3.0)
+    laps["IsPitOutLap"] = laps["PitOutTime"].notna()
+    session["laps"] = laps
+    session["track_status"] = pd.DataFrame(
+        {
+            "Time": [fx.LIGHTS_OUT - 10.0, RED_START, RED_END],
+            "Status": ["1", "5", "1"],
+            "Message": ["AllClear", "Red", "AllClear"],
+        }
+    )
+    return session
+
+
+class TestRedFlagPitLane:
+    """REPLAY-25: entering the pit lane under a red flag is not a pit stop."""
+
+    def test_pits_is_unchanged_by_the_red_flag(self):
+        session = _red_flag_race()
+        series = tower_series(session)
+
+        for code in ("A", "B", "C"):
+            assert series.value(code, "pits", RED_END + 5) == 0
+        assert series.value("C", "pits", fx.C_PIT_IN) == 1
+
+    def test_no_pit_stop_events_under_the_red_flag(self):
+        session = _red_flag_race()
+        found = events(session, tower_series(session))
+        stops = [item for item in found if item[1] == "pit"]
+
+        assert stops == [(fx.C_PIT_IN, "pit", "Pit stop - C")]
+        assert (RED_START, "red", "Red flag") in found
+
+    def test_the_cars_are_still_shown_in_the_pit_lane(self):
+        series = tower_series(_red_flag_race())
+
+        assert series.value("A", "status", 1240.0) == IN_PIT
+
+
 class TestEvents:
     def test_the_race_events(self, race, race_series):
         found = events(race, race_series)
