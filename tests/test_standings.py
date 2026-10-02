@@ -9,6 +9,7 @@ from processing.standings import (
     points_for,
     project_standings,
     round_for_event,
+    unplaced_drivers,
 )
 from ui.standings import live_order
 
@@ -178,3 +179,59 @@ def test_live_order_skips_stopped_cars():
     )
     assert live_order({"standings": table}) == ["VER", "LEC"]
     assert live_order({}) == []
+
+
+ENTRANTS = pd.DataFrame(
+    {
+        "name_acronym": ["BEA", "COL", "ANT"],
+        "full_name": ["Oliver Bearman", "Franco Colapinto", "Kimi Antonelli"],
+        "team_name": ["Red Bull Racing", "Alpine", "Mercedes"],
+    }
+)
+
+
+def test_a_driver_missing_from_the_standings_starts_at_zero_in_a_known_team():
+    drivers = parse_driver_standings(DRIVERS)
+    teams = parse_constructor_standings(CONSTRUCTORS)
+    # BEA replaces Perez at "Red Bull Racing" (Jolpica: "Red Bull") and wins.
+    new_drivers, new_teams = project_standings(drivers, teams, ["BEA", "VER"], entrants=ENTRANTS)
+
+    bea = new_drivers.set_index("Code").loc["BEA"]
+    assert (bea["Points"], bea["Gain"], bea["Projected"]) == (0, 25, 25)
+    assert bea["Driver"] == "Oliver Bearman"
+    assert bea["ConstructorId"] == "red_bull"
+    assert new_teams.set_index("Team").loc["Red Bull", "Gain"] == 43  # BEA 25 + VER 18
+    assert len(new_teams) == 3  # no duplicate team
+    assert unplaced_drivers(new_drivers) == []
+
+
+def test_a_team_missing_from_the_standings_is_added_at_zero():
+    drivers = parse_driver_standings(DRIVERS)
+    teams = parse_constructor_standings(CONSTRUCTORS)
+    new_drivers, new_teams = project_standings(drivers, teams, ["COL"], entrants=ENTRANTS)
+
+    alpine = new_teams.set_index("Team").loc["Alpine"]
+    assert (alpine["Points"], alpine["Gain"], alpine["Projected"]) == (0, 25, 25)
+    assert len(new_teams) == 4
+    assert new_drivers.set_index("Code").loc["COL", "ConstructorId"] == alpine["ConstructorId"]
+    assert unplaced_drivers(new_drivers) == []
+
+
+def test_a_driver_with_no_known_team_stays_out_of_the_constructor_table():
+    drivers = parse_driver_standings(DRIVERS)
+    teams = parse_constructor_standings(CONSTRUCTORS)
+    for entrants in (None, ENTRANTS[ENTRANTS["name_acronym"] != "ANT"]):
+        new_drivers, new_teams = project_standings(drivers, teams, ["ANT"], entrants=entrants)
+        ant = new_drivers.set_index("Code").loc["ANT"]
+        assert (ant["Projected"], ant["ConstructorId"]) == (25, "")
+        assert len(new_teams) == 3
+        assert new_teams["Gain"].sum() == 0
+        assert unplaced_drivers(new_drivers) == ["ANT"]
+
+
+def test_missing_drivers_outside_the_points_are_not_added():
+    drivers = parse_driver_standings(DRIVERS)
+    teams = parse_constructor_standings(CONSTRUCTORS)
+    order = ["VER", "PER", "LEC", "NOR"] + [f"X{i:02d}" for i in range(7)] + ["BEA"]
+    new_drivers, _ = project_standings(drivers, teams, order, entrants=ENTRANTS)
+    assert "BEA" not in set(new_drivers["Code"])

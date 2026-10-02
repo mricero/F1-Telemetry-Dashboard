@@ -117,23 +117,94 @@ def project_standings(
     constructors: pd.DataFrame,
     order: list[str],
     sprint: bool = False,
+    entrants: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Both championships if the race ended in ``order`` (driver codes, P1 first).
 
     Adds ``Gain`` (points this race), ``Projected``, ``ProjectedPosition`` and
     ``Change`` (places gained, negative when lost). A team scores what its
-    drivers score; a driver missing from ``drivers`` (no points yet this
-    season) is not placed and scores nothing for any team.
+    drivers score.
+
+    A driver who scores but is absent from ``drivers`` (a replacement or a
+    rookie with no points yet) starts from 0 points. ``entrants`` is the
+    session's driver table (``name_acronym``, ``team_name``, ``full_name``): it
+    names the driver's team, and a team missing from ``constructors`` is added
+    with 0 points. With no team known the driver stays in the driver table with
+    an empty ``ConstructorId`` and scores for no constructor (see
+    :func:`unplaced_drivers`).
     """
     gain_by_code = {code: points_for(place, sprint) for place, code in enumerate(order, 1)}
+    drv, con = _with_newcomers(drivers, constructors, gain_by_code, order, entrants)
 
-    drv = drivers.copy()
     drv["Gain"] = drv["Code"].map(gain_by_code).fillna(0).astype(int)
     team_gain = drv.groupby("ConstructorId")["Gain"].sum()
-    con = constructors.copy()
     con["Gain"] = con["ConstructorId"].map(team_gain).fillna(0).astype(int)
 
     return _rank(drv), _rank(con)
+
+
+def unplaced_drivers(projected_drivers: pd.DataFrame) -> list[str]:
+    """Codes that score in the projection but belong to no known constructor."""
+    scoring = projected_drivers[projected_drivers["Gain"] > 0]
+    return [str(code) for code in scoring.loc[scoring["ConstructorId"] == "", "Code"]]
+
+
+def _with_newcomers(
+    drivers: pd.DataFrame,
+    constructors: pd.DataFrame,
+    gain_by_code: dict[str, int],
+    order: list[str],
+    entrants: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The two tables with every scoring driver the standings lack added at 0."""
+    drv = drivers.copy()
+    con = constructors.copy()
+    known = set(drv["Code"])
+    info = {}
+    if entrants is not None and not entrants.empty and "name_acronym" in entrants.columns:
+        info = {str(row["name_acronym"]): row for _, row in entrants.iterrows()}
+
+    for code in order:
+        if code in known or gain_by_code.get(code, 0) <= 0:
+            continue
+        known.add(code)
+        row = info.get(code)
+        team = str((row.get("team_name") if row is not None else "") or "").strip()
+        name = str((row.get("full_name") if row is not None else "") or "").strip()
+        team_id = ""
+        if team:
+            match = [
+                cid
+                for cid, name_ in zip(con["ConstructorId"], con["Team"], strict=True)
+                if _same_team(name_, team)
+            ]
+            if match:
+                team_id = match[0]
+            else:
+                team_id = f"team:{_normal(team)}"
+                con.loc[len(con)] = {
+                    "Position": len(con) + 1,
+                    "Team": team,
+                    "ConstructorId": team_id,
+                    "Points": 0,
+                    "Wins": 0,
+                }
+        drv.loc[len(drv)] = {
+            "Position": len(drv) + 1,
+            "Code": code,
+            "Driver": name or code,
+            "Team": team,
+            "ConstructorId": team_id,
+            "Points": 0,
+            "Wins": 0,
+        }
+    return drv, con
+
+
+def _same_team(first: str, second: str) -> bool:
+    """Jolpica says "Red Bull", the timing feed "Red Bull Racing"."""
+    a, b = _normal(first), _normal(second)
+    return bool(a) and bool(b) and (a == b or a in b or b in a)
 
 
 def _rank(frame: pd.DataFrame) -> pd.DataFrame:
