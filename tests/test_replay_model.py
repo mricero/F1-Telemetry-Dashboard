@@ -833,6 +833,22 @@ class TestLateDeletions:
         # FastF1's reason minus the local clock time.
         assert e_after["last_deleted_reason"] == "TRACK LIMITS"
 
+    def test_late_deletion_matches_via_the_drivers_table_without_a_car_number(self):
+        # get_laps output of a replay saved before DriverNumber was kept.
+        session = _late_deleted_practice()
+        session["laps"] = session["laps"].drop(columns=["DriverNumber"])
+        # The fixture's drivers table numbers cars 10..; the message says car 4.
+        session["drivers"] = session["drivers"].assign(
+            driver_number=[str(i) for i in range(len(session["drivers"]))]
+        )
+        series = tower_series(session)
+
+        before = build_timing_rows(snapshot_at(session, E_LAP_END + 30.0, series))
+        after = build_timing_rows(snapshot_at(session, E_LAP_END + 120.0, series))
+
+        assert before[0]["code"] == "E" and before[0]["is_overall_best"]
+        assert after[0]["code"] == "A" and after[0]["is_overall_best"]
+
     def test_the_message_reason_is_used_when_the_laps_have_none(self):
         session = _late_deleted_practice()
         session["laps"] = session["laps"].drop(columns=["DeletedReason"])

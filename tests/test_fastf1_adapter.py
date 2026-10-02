@@ -504,6 +504,23 @@ class TestLapTimeColumns:
         assert "Time" in laps.columns and "LapStartTime" in laps.columns
         assert laps["Time"].iloc[-1].total_seconds() == pytest.approx(209.0)
 
+    def test_get_laps_keeps_the_car_number(self):
+        # FastF1's session.laps carries DriverNumber as a string next to Driver.
+        session = Mock()
+        session.laps = pd.DataFrame(
+            {
+                "Driver": ["VER", "HAM"],
+                "DriverNumber": ["1", "44"],
+                "LapNumber": [1.0, 1.0],
+                "LapTime": pd.to_timedelta(["00:01:30", "00:01:29"]),
+                "Deleted": [False, True],
+            }
+        )
+
+        laps = FastF1Adapter().get_laps(session)
+
+        assert laps["DriverNumber"].tolist() == ["1", "44"]
+
     def test_get_laps_keeps_the_track_status_string(self):
         session = Mock()
         session.laps = pd.DataFrame(

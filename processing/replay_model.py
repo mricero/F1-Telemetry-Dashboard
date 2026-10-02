@@ -485,8 +485,31 @@ def _deletion_messages(
     return deleted, reinstated
 
 
+def _car_numbers(work: pd.DataFrame, drivers: pd.DataFrame | None) -> list[str] | None:
+    """Each lap's car number as text: ``DriverNumber``, else via the drivers table.
+
+    Replays saved before ``get_laps`` kept ``DriverNumber`` only have the
+    three-letter ``Driver``; the session's ``drivers`` frame maps it back.
+    """
+    if "DriverNumber" in work.columns:
+        return work["DriverNumber"].astype(str).tolist()
+    if drivers is None or not {"driver_number", "name_acronym"} <= set(drivers.columns):
+        return None
+    by_code: dict[str, str] = {}
+    for number, code in zip(drivers["driver_number"], drivers["name_acronym"], strict=True):
+        if pd.notna(number) and pd.notna(code):
+            by_code[str(code)] = str(number)
+    if "Driver" not in work.columns:
+        return None
+    return [by_code.get(str(code), "") for code in work["Driver"].tolist()]
+
+
 def _deletion_windows(
-    work: pd.DataFrame, end: np.ndarray, lap_s: np.ndarray, control: pd.DataFrame | None
+    work: pd.DataFrame,
+    end: np.ndarray,
+    lap_s: np.ndarray,
+    control: pd.DataFrame | None,
+    drivers: pd.DataFrame | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list]:
     """When each lap was deleted and reinstated (``inf`` = never).
 
@@ -505,11 +528,7 @@ def _deletion_windows(
             if isinstance(reason, str) and reason.strip():
                 reasons[index] = " ".join(reason.split())
     messages, reinstatements = _deletion_messages(control)
-    numbers = (
-        work["DriverNumber"].astype(str).tolist()
-        if messages and "DriverNumber" in work.columns
-        else None
-    )
+    numbers = _car_numbers(work, drivers) if messages else None
     for index in range(count):
         found = None
         if numbers is not None and not np.isnan(lap_s[index]):
@@ -536,10 +555,16 @@ def valid_at(lap, moment: float) -> bool:
 
 def session_lap_table(session_data: dict) -> pd.DataFrame:
     """:func:`lap_table` with the deletion times from the session's race control."""
-    return lap_table(session_data.get("laps"), session_data.get("race_control"))
+    return lap_table(
+        session_data.get("laps"), session_data.get("race_control"), session_data.get("drivers")
+    )
 
 
-def lap_table(laps: pd.DataFrame | None, race_control: pd.DataFrame | None = None) -> pd.DataFrame:
+def lap_table(
+    laps: pd.DataFrame | None,
+    race_control: pd.DataFrame | None = None,
+    drivers: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Laps with every time as float session seconds, sorted per driver.
 
     ``row`` is the lap's position in the frame passed in. Sector session
@@ -581,7 +606,7 @@ def lap_table(laps: pd.DataFrame | None, race_control: pd.DataFrame | None = Non
     table["s3_at"] = table["s3_at"].fillna(table["end"])
     base_valid = _flags(work, "IsAccurate", True) & table["lap_s"].notna().to_numpy()
     del_at, reinst_at, reasons = _deletion_windows(
-        work, table["end"].to_numpy(float), table["lap_s"].to_numpy(float), race_control
+        work, table["end"].to_numpy(float), table["lap_s"].to_numpy(float), race_control, drivers
     )
     table["base_valid"] = base_valid
     table["del_at"] = del_at
