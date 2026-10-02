@@ -16,12 +16,22 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from config import config
 from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from data.openf1_adapter import FIRST_YEAR as OPENF1_FIRST_YEAR
 from data.openf1_adapter import get_team_radio
+from processing.lap_compare import SCOPE_SESSION as COMPARE_SESSION_SCOPE
+from processing.lap_compare import (
+    available_laps,
+    corner_markers,
+    fastest_lap_number,
+    lap_telemetry,
+    lap_times,
+    shared_grid,
+)
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
 from processing.timing import (
@@ -1384,18 +1394,63 @@ def render_race_control(
         st.caption(f"Showing the {limit} most recent of {len(df)} messages.")
 
 
+# Stacked channels of the head-to-head, top to bottom: (title, column, unit).
+COMPARISON_PANELS = (
+    ("Speed", "Speed", "km/h"),
+    ("Throttle", "Throttle", "%"),
+    ("Brake", "Brake", "%"),
+    ("Gear", "nGear", ""),
+)
+
+
+def _lap_label(lap: int, seconds: float | None = None) -> str:
+    return f"Lap {lap} ({format_lap(seconds)})" if seconds else f"Lap {lap}"
+
+
+def _lap_picker(column, label: str, key: str, driver: str, laps_df, frame, scope):
+    """A lap selectbox for one driver; returns (lap number or None, frame of that lap)."""
+    options = available_laps(frame, laps_df, driver, scope)
+    if not options:
+        # No lap table (or a live feed): the frame itself is the lap.
+        with column:
+            st.caption(f"{driver}: lap number unknown")
+        return None, lap_telemetry(frame, laps_df, driver, None, scope)
+    times = lap_times(laps_df, driver)
+    fastest = fastest_lap_number(laps_df, driver)
+    index = options.index(fastest) if fastest in options else 0
+    with column:
+        lap = st.selectbox(
+            label,
+            options,
+            index=index,
+            format_func=lambda n: _lap_label(n, times.get(n)),
+            key=f"{key}_lap_{driver}",
+        )
+    return lap, lap_telemetry(frame, laps_df, driver, lap, scope)
+
+
 def render_driver_comparison(
     telemetry_data: dict[str, pd.DataFrame],
     color_map: dict[str, str],
     key_prefix: str = "cmp",
     preselect: tuple = (),
+    session_data: dict | None = None,
+    laps: pd.DataFrame | None = None,
 ):
-    """Head-to-head speed trace plus cumulative time delta between two drivers.
+    """Head-to-head: Speed, Throttle, Brake, Gear and the time delta, stacked.
 
-    The delta is integrated from the speed traces on the shared distance grid
-    rather than via ``fastf1.utils.delta_time``, which is deprecated since
-    FastF1 3.0 and emits a FutureWarning.
+    The panels share one distance axis and carry the circuit's corner numbers
+    when known. Each driver has a lap picker; with the fastest-lap scope only
+    that lap is loaded, with the full-session scope any timed lap can be
+    chosen (cut out of the run by its time window). The delta is integrated
+    from the speed traces on the shared distance grid rather than via
+    ``fastf1.utils.delta_time``, which is deprecated since FastF1 3.0 and
+    emits a FutureWarning. DRS is not plotted, so 2026+ needs no special case.
     """
+    session_data = session_data or {}
+    scope = (session_data.get("session_info") or {}).get("telemetry_scope")
+    raw = session_data.get("telemetry") or telemetry_data
+    laps_df = laps if laps is not None else session_data.get("laps")
     usable = sorted(
         d
         for d, df in telemetry_data.items()
@@ -1405,64 +1460,122 @@ def render_driver_comparison(
         st.info("Need telemetry for at least two drivers to compare")
         return
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         preferred = preselect or ()
         first = usable.index(preferred[0]) if preferred and preferred[0] in usable else 0
         reference = st.selectbox("Reference driver", usable, index=first, key=f"{key_prefix}_ref")
-    with col2:
+    with col3:
         others = [d for d in usable if d != reference]
         second = others.index(preferred[1]) if len(preferred) > 1 and preferred[1] in others else 0
         compare = st.selectbox("Compared with", others, index=second, key=f"{key_prefix}_cmp")
 
-    ref_df, cmp_df = telemetry_data[reference], telemetry_data[compare]
-    delta_distance, delta_seconds = _time_delta(ref_df, cmp_df)
+    ref_frame = raw.get(reference, telemetry_data[reference])
+    cmp_frame = raw.get(compare, telemetry_data[compare])
+    ref_lap, ref_df = _lap_picker(
+        col2, "Reference lap", key_prefix, reference, laps_df, ref_frame, scope
+    )
+    cmp_lap, cmp_df = _lap_picker(
+        col4, "Compared lap", key_prefix, compare, laps_df, cmp_frame, scope
+    )
+    if scope != COMPARE_SESSION_SCOPE:
+        st.caption(
+            "Only each driver's fastest lap is loaded. Choose 'Full session' under "
+            "Telemetry scope (sidebar, Advanced) to pick other laps."
+        )
 
-    fig = go.Figure()
-    for driver, df in ((reference, ref_df), (compare, cmp_df)):
+    if ref_df.empty or cmp_df.empty:
+        st.info("No telemetry for the chosen lap")
+        return
+    ref_g, cmp_g = shared_grid(ref_df, cmp_df)
+    if len(ref_g) < 10 or not {"Distance", "Speed"}.issubset(ref_g.columns):
+        st.info("Not enough telemetry on the chosen laps to compare")
+        return
+    delta_distance, delta_seconds = _time_delta(ref_g, cmp_g)
+
+    panels = [p for p in COMPARISON_PANELS if p[1] in ref_g.columns and p[1] in cmp_g.columns]
+    rows = len(panels) + (1 if delta_seconds is not None else 0)
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.025)
+    names = {
+        reference: f"{reference} {_lap_label(ref_lap)}" if ref_lap else reference,
+        compare: f"{compare} {_lap_label(cmp_lap)}" if cmp_lap else compare,
+    }
+    for row, (title, col, unit) in enumerate(panels, start=1):
+        for driver, frame in ((reference, ref_g), (compare, cmp_g)):
+            line = dict(color=color_map.get(driver, NEUTRAL_GREY), width=2)
+            if driver == compare and col != "Speed":
+                line["dash"] = "dot"
+            if col == "nGear":
+                line["shape"] = "hv"
+            fig.add_trace(
+                go.Scatter(
+                    x=frame["Distance"],
+                    y=frame[col],
+                    mode="lines",
+                    name=names[driver],
+                    legendgroup=driver,
+                    showlegend=row == 1,
+                    line=line,
+                    hovertemplate=f"{driver} {title}: %{{y:.0f}} {unit}<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+        fig.update_yaxes(title_text=f"{title} ({unit})" if unit else title, row=row, col=1)
+        if col == "nGear":
+            fig.update_yaxes(
+                range=[0.5, 8.5], tickmode="array", tickvals=list(range(1, 9)), row=row, col=1
+            )
+    if delta_seconds is not None:
         fig.add_trace(
             go.Scatter(
-                x=df["Distance"],
-                y=df["Speed"],
+                x=delta_distance,
+                y=delta_seconds,
                 mode="lines",
-                name=driver,
-                line=dict(color=color_map.get(driver, NEUTRAL_GREY), width=2),
-                hovertemplate=f"{driver}: %{{y}} km/h<br>%{{x:.0f}} m<extra></extra>",
-            )
+                name="Delta",
+                showlegend=False,
+                line=dict(color=TEXT, width=2),
+                hovertemplate="%{y:+.3f} s<extra></extra>",
+            ),
+            row=rows,
+            col=1,
         )
+        fig.add_hline(y=0, line=dict(color=NEUTRAL_GREY, width=1, dash="dot"), row=rows, col=1)
+        fig.update_yaxes(title_text=f"Δt (s), below 0 = {compare} ahead", row=rows, col=1)
+
+    corners = corner_markers(session_data.get("circuit_info"), float(ref_g["Distance"].iloc[-1]))
+    for distance, label in corners:
+        fig.add_vline(x=distance, line=dict(color=TEXT_DIM, width=1, dash="dot"), opacity=0.4)
+        fig.add_annotation(
+            x=distance,
+            y=1,
+            yref="paper",
+            text=label,
+            showarrow=False,
+            yshift=8,
+            font=dict(size=10, color=TEXT_DIM),
+        )
+    axis = chart_layout(0)["xaxis"]
+    fig.update_xaxes(**axis)
+    fig.update_yaxes(**axis)
+    fig.update_xaxes(title_text="Distance (m)", row=rows, col=1)
     fig.update_layout(
-        xaxis_title="Distance (m)",
-        yaxis_title="Speed (km/h)",
-        hovermode="x unified",
-        height=380,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=140 * rows + 120,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="right", x=1),
+        margin=dict(l=56, r=16, t=40, b=40),
     )
-    _plot(fig, width="stretch")
+    _plot(
+        fig,
+        width="stretch",
+        uirevision=f"{key_prefix}:{reference}:{ref_lap}:{compare}:{cmp_lap}",
+    )
+    if not corners:
+        st.caption("No corner positions for this circuit.")
 
     if delta_seconds is None:
         st.caption("Not enough overlapping distance to compute a time delta.")
         return
-
-    delta_fig = go.Figure()
-    delta_fig.add_trace(
-        go.Scatter(
-            x=delta_distance,
-            y=delta_seconds,
-            mode="lines",
-            name="Delta",
-            line=dict(color=TEXT, width=2),
-            hovertemplate="%{y:+.3f} s at %{x:.0f} m<extra></extra>",
-        )
-    )
-    delta_fig.add_hline(y=0, line=dict(color=NEUTRAL_GREY, width=1, dash="dot"))
-    delta_fig.update_layout(
-        xaxis_title="Distance (m)",
-        yaxis_title=f"Δ time (s) — below 0 = {compare} ahead",
-        hovermode="x unified",
-        height=320,
-        showlegend=False,
-    )
-    _plot(delta_fig, width="stretch")
 
     gained = float(delta_seconds[-1])
     verdict = f"{compare} is {abs(gained):.3f} s " + ("behind" if gained > 0 else "ahead")
