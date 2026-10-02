@@ -236,12 +236,12 @@ class TestHeaderAndSectors:
         assert "21.6 km/h E" in html
         # The clock slot is the session duration, and without laps there is
         # nothing to measure - the weather window is not a session clock.
-        assert "–" in html and "Duration" in html
+        assert "\u2013" in html and "Duration" in html
 
     def test_header_without_weather_uses_placeholders(self):
         html = header_html({"session_info": {"gp": "Test GP"}, "is_live": False})
 
-        assert "–" in html and "ENDED" in html
+        assert "\u2013" in html and "ENDED" in html
 
     def test_header_flags_rain(self):
         weather = pd.DataFrame({"Time": pd.to_timedelta([0], unit="s"), "Rainfall": [True]})
@@ -665,7 +665,7 @@ class TestHeaderClock:
         assert self._clock(laps=self._laps(42.5)) == "0:42:30"
 
     def test_no_laps_leaves_a_placeholder(self):
-        assert self._clock() == "–"
+        assert self._clock() == "\u2013"
 
     def test_live_counts_down_the_extrapolated_clock(self):
         state = self._clock(session_info={"extrapolated_clock": "0:32:15"}, is_live=True)
@@ -673,7 +673,7 @@ class TestHeaderClock:
         assert state == "0:32:15"
 
     def test_live_without_a_clock_is_a_placeholder(self):
-        assert self._clock(is_live=True) == "–"
+        assert self._clock(is_live=True) == "\u2013"
 
     def test_header_labels_the_slot(self):
         markup = header_html({"session_info": {}, "is_live": False, "laps": self._laps(60)})
@@ -748,7 +748,7 @@ class TestSpecGapMarkup:
         markup = tower_html([TestTowerPartitions._row(1, status="IN PIT", speed_kmh=0.0)])
 
         # UI-13: a pit-lane car shows the missing-value dash, not 0 km/h.
-        assert '<span class="f1-time f1-num">–</span>' in markup
+        assert '<span class="f1-time f1-num">\u2013</span>' in markup
         assert 'class="f1-badge pit">PIT<' in markup
 
     def test_wind_shows_a_compass_arrow(self):

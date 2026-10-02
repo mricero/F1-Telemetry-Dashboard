@@ -238,6 +238,9 @@ class DataSourceManager:
             "drivers": self._get_driver_info(session),
             "source": "fastf1",
             "is_live": False,
+            # Ended less than a few hours ago: F1's archive may still be
+            # partial, so the app does not runtime-cache it (HIST-09).
+            "provisional": self.fastf1.ended_recently(session),
         }
 
     def _load_live_session(self) -> dict:
@@ -294,6 +297,7 @@ class DataSourceManager:
                 # snapshot; without this the caption froze (LIVE-23).
                 info["last_heartbeat"] = adapter.last_heartbeat
             current = cache.snapshot
+            assert current is not None  # stored just above when missing
             cache.remember(moment, pd.Timestamp.now(tz="UTC"))
             if not delay or delay <= 0:
                 return current
@@ -705,7 +709,7 @@ class DataSourceManager:
         }
 
         for key, value in data.items():
-            if key == "live_client":
+            if key in ("live_client", "provisional"):
                 continue
             # Under fastest scope these are the same objects; storing them
             # twice would double the file for nothing.

@@ -89,6 +89,7 @@ def test_the_env_example_is_not_ignored():
 
 def test_no_legacy_dashboard_preview_is_tracked():
     """DOC-04: scripts/preview_replay_player.py builds a current preview."""
-    assert "dashboard_preview.html" not in _tracked_files() or not (
-        REPO_ROOT / "dashboard_preview.html"
-    ).exists()
+    assert (
+        "dashboard_preview.html" not in _tracked_files()
+        or not (REPO_ROOT / "dashboard_preview.html").exists()
+    )

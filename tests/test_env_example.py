@@ -31,7 +31,9 @@ def _sources() -> list[Path]:
 def _variables_read() -> tuple[set[str], set[str]]:
     texts = {path: path.read_text(encoding="utf-8") for path in _sources()}
     constants = {
-        match["name"]: match["value"] for text in texts.values() for match in CONSTANT.finditer(text)
+        match["name"]: match["value"]
+        for text in texts.values()
+        for match in CONSTANT.finditer(text)
     }
     found, unresolved = set(), set()
     for path, text in texts.items():

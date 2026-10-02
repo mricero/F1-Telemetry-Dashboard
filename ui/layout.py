@@ -6,6 +6,7 @@ single source of truth for the dashboard's visuals (the former
 """
 
 import html
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,8 @@ from ui.theme import (
     chart_layout,
     status_chip,
 )
+
+logger = logging.getLogger(__name__)
 
 # Fallback only. Real sessions carry FastF1's official per-season mapping
 # (see FastF1Adapter.compound_colors); the defaults are the theme's.
@@ -175,6 +178,48 @@ def menu_items() -> dict:
     }
 
 
+def directory_size(path) -> int:
+    """Bytes under ``path`` (0 when it does not exist)."""
+    root = Path(path)
+    if not root.exists():
+        return 0
+    total = 0
+    for item in root.rglob("*"):
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except OSError:  # removed while walking, or unreadable: skip it
+            continue
+    return total
+
+
+def clear_schedule_caches() -> None:
+    """Forget the cached schedules and race-weekend probe (UI-22).
+
+    They live for up to an hour, which on a race weekend hides a session that
+    has just ended.
+    """
+    for cached in (_is_race_weekend_cached, _event_names_cached, _session_codes_cached):
+        cached.clear()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _update_notice_cached(version: str) -> str | None:
+    from data.update_check import update_notice
+
+    return update_notice(version)
+
+
+def render_sidebar_footer() -> None:
+    """The version, and a plain-text note when a newer release exists (DIST-05)."""
+    version = app_version()
+    with st.sidebar:
+        st.caption(f"F1 Replay {version}")
+        notice = _update_notice_cached(version)
+        if notice:
+            st.caption(notice)
+
+
 def sidebar_state(selection, query_params) -> str:
     """``initial_sidebar_state`` for this run (UI-19).
 
@@ -285,7 +330,7 @@ def _selection_from_url(data_manager) -> dict | None:
         year = int(params.get("year", ""))
     except ValueError:
         year = None
-    gp, session = params.get("gp"), params.get("session")
+    gp, session = params.get("gp") or "", params.get("session") or ""
     valid = (
         year is not None
         and FIRST_SEASON <= year <= datetime.now(UTC).year
@@ -951,7 +996,8 @@ def live_controls_allowed(environ=None, url: str | None = None, ip: str | None =
 def _viewer_may_control() -> bool:
     try:
         url, ip = st.context.url, st.context.ip_address
-    except Exception:  # no script-run context: nobody to grant anything to
+    except Exception as exc:  # no script-run context: nobody to grant anything to
+        logger.debug("No request context for the live controls: %s", exc)
         return False
     return live_controls_allowed(url=url, ip=ip)
 
@@ -1035,9 +1081,8 @@ def render_token_helper(now: datetime | None = None) -> None:
         )
         token = st.text_input("Token", type="password", key="token_paste")
         if st.button("Save token", key="token_save", disabled=not token):
-            env_path = getattr(config, "env_path", ".env")
             try:
-                where = save_subscription_token(token, env_path)
+                where = save_subscription_token(token, config.env_path)
             except (OSError, ValueError) as exc:
                 st.error(f"Could not save the token: {exc}")
             else:

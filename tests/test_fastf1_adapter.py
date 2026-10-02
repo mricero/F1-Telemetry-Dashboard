@@ -711,3 +711,73 @@ class TestRaceControlClock:
         messages = FastF1Adapter.get_race_control(session)
 
         assert messages["SessionTime"].iloc[0] == pd.Timedelta("2:36:29.151")
+
+
+class TestSessionNotArchived:
+    """HIST-09: a session F1's archive has not filled in yet."""
+
+    @staticmethod
+    def _unloaded_session(date="2024-03-02 15:00"):
+        from fastf1.exceptions import DataNotLoadedError
+
+        class Unloaded:
+            name = "Race"
+
+            def __init__(self):
+                self.date = pd.Timestamp(date)
+                self.load = Mock()
+
+            @property
+            def laps(self):
+                raise DataNotLoadedError("The data you are trying to access has not been loaded yet.")
+
+        return Unloaded()
+
+    @patch("data.fastf1_adapter.fastf1.get_session")
+    def test_missing_laps_say_the_archive_is_not_ready(self, mock_get_session, tmp_path):
+        from data.fastf1_adapter import SessionNotArchivedError
+
+        mock_get_session.return_value = self._unloaded_session()
+
+        with pytest.raises(SessionNotArchivedError, match="not in F1's archive yet"):
+            FastF1Adapter(cache_dir=str(tmp_path)).load_session(2024, "Bahrain", "R")
+
+    def test_a_race_that_ended_an_hour_ago_ended_recently(self):
+        session = Mock(spec=["date", "name"])
+        session.date, session.name = pd.Timestamp("2026-10-11 12:00"), "Race"
+
+        now = pd.Timestamp("2026-10-11 15:00", tz="UTC")  # 1 h after a 2 h race
+        assert FastF1Adapter.ended_recently(session, now=now)
+        later = pd.Timestamp("2026-10-11 20:00", tz="UTC")
+        assert not FastF1Adapter.ended_recently(session, now=later)
+
+    def test_a_session_without_a_date_is_not_recent(self):
+        assert not FastF1Adapter.ended_recently(Mock())
+
+    @patch("data.fastf1_adapter.fastf1.get_session")
+    def test_a_recent_session_is_not_kept_in_the_process(self, mock_get_session, tmp_path):
+        from data.fastf1_adapter import clear_session_cache
+
+        clear_session_cache()
+        laps = pd.DataFrame({"LapNumber": [1]})
+        session = Mock(spec=["date", "name", "load", "laps"])
+        session.date, session.name, session.laps = pd.Timestamp.now(), "Race", laps
+        mock_get_session.return_value = session
+        adapter = FastF1Adapter(cache_dir=str(tmp_path))
+
+        adapter.load_session(2026, "Singapore", "R")
+        adapter.load_session(2026, "Singapore", "R")
+
+        assert mock_get_session.call_count == 2
+        clear_session_cache()
+
+
+class TestCacheable:
+    """HIST-09: only settled, non-live sessions stay in the runtime cache."""
+
+    def test_rules(self):
+        from app import cacheable
+
+        assert cacheable({"is_live": False})
+        assert not cacheable({"is_live": True})
+        assert not cacheable({"is_live": False, "provisional": True})

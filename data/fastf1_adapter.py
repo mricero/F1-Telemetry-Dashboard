@@ -5,6 +5,7 @@ import threading
 import warnings
 from collections import OrderedDict
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import fastf1
@@ -259,7 +260,7 @@ def first_session_end(event: pd.Series) -> pd.Timestamp | None:
         start = pd.to_datetime(event.get(f"Session{index}DateUtc"), utc=True, errors="coerce")
         if pd.isna(start):
             continue
-        code = SESSION_NAME_TO_CODE.get(str(name).strip())
+        code = SESSION_NAME_TO_CODE.get(str(name).strip(), "")
         return start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
     return None
 
@@ -343,6 +344,10 @@ class FastF1Adapter:
         session = fastf1.get_session(year, gp, session_type)
         session.load(telemetry=True, laps=True, weather=True, messages=True)
         self._require_laps(session, year, gp, session_type)
+        if self.ended_recently(session):
+            # The archive may still be filling in or revising it (HIST-09):
+            # the next request loads it afresh.
+            return session
         with _cache_lock:
             _session_cache[key] = session
             while len(_session_cache) > SESSION_CACHE_SIZE:
@@ -375,11 +380,14 @@ class FastF1Adapter:
         Such a session may still be partial in the archive, so the app does
         not keep it in the runtime cache (HIST-09).
         """
-        start = pd.to_datetime(getattr(session, "date", None), utc=True, errors="coerce")
+        date = getattr(session, "date", None)
+        if not isinstance(date, (str, datetime, pd.Timestamp)):
+            return False
+        start = pd.to_datetime(date, utc=True, errors="coerce")
         if not isinstance(start, pd.Timestamp) or pd.isna(start):
             return False
         name = str(getattr(session, "name", "") or "")
-        code = SESSION_NAME_TO_CODE.get(name.strip())
+        code = SESSION_NAME_TO_CODE.get(name.strip(), "")
         end = start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
         return bool((now if now is not None else _utcnow()) - end < ARCHIVE_SETTLE_TIME)
 

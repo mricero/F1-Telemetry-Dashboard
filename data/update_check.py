@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from importlib import metadata
 from pathlib import Path
 
@@ -53,9 +53,9 @@ def is_newer(latest: str | None, current: str) -> bool:
     return latest_version > current_version
 
 
-def checks_enabled(environ: dict | None = None) -> bool:
-    environ = os.environ if environ is None else environ
-    return str(environ.get(DISABLE_ENV, "1")).strip().lower() not in {"0", "false", "no", "off"}
+def checks_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    source = os.environ if environ is None else environ
+    return str(source.get(DISABLE_ENV, "1")).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def default_cache_path() -> Path:
@@ -131,7 +131,7 @@ def update_notice(
     get: Callable = requests.get,
     environ: dict | None = None,
 ) -> str | None:
-    """``"Update available: v0.10.0 – run f1dash update"``, or ``None``.
+    """``"Update available: v0.10.0 \u2013 run f1dash update"``, or ``None``.
 
     ``None`` when checks are disabled, the check failed, or the running
     version is current.
@@ -144,7 +144,7 @@ def update_notice(
     if not is_newer(latest, current_version):
         return None
     tag = latest if str(latest).startswith("v") else f"v{latest}"
-    return f"Update available: {tag} – run f1dash update"
+    return f"Update available: {tag} \u2013 run f1dash update"
 
 
 def installed_from_registry(distribution: str = APP_NAME) -> bool:

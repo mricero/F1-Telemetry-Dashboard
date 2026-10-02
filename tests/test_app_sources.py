@@ -272,14 +272,14 @@ class TestPages:
 
         titles = [title for _, title, _ in page_specs(race_session())]
 
-        assert titles == ["Replay", "Results", "Analysis", "Records"]
+        assert titles == ["Replay", "Results", "Analysis", "Records", "Settings"]
 
     def test_a_live_session_opens_on_the_live_page(self):
         from ui.pages import page_specs
 
         titles = [title for _, title, _ in page_specs({"is_live": True})]
 
-        assert titles == ["Live", "Records"]
+        assert titles == ["Live", "Records", "Settings"]
 
     def test_a_historical_session_opens_on_the_replay(self):
         app_test = _run_for("fastf1")

@@ -80,7 +80,9 @@ _values = st.one_of(
 def _same(values: list) -> None:
     series = pd.Series(values, dtype=object)
     expected = series.map(to_seconds).astype("float64")
-    assert seconds_series(series).equals(expected), list(zip(values, seconds_series(series)))
+    assert seconds_series(series).equals(expected), list(
+        zip(values, seconds_series(series), strict=True)
+    )
 
 
 class TestSecondsSeriesProperty:

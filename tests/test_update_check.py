@@ -48,7 +48,7 @@ class TestNotice:
             "0.9.0", cache_path=cache, now=NOW, get=answering("v0.10.0"), environ=enabled
         )
 
-        assert notice == "Update available: v0.10.0 – run f1dash update"
+        assert notice == "Update available: v0.10.0 \u2013 run f1dash update"
 
     def test_the_notice_follows_the_copy_rules(self, cache, enabled):
         """Guideline 5.9: plain text, no exclamation mark, no emoji."""
@@ -57,7 +57,7 @@ class TestNotice:
         )
 
         assert "!" not in notice
-        assert {char for char in notice if not char.isascii()} <= {"–"}
+        assert {char for char in notice if not char.isascii()} <= {"\u2013"}
 
     def test_the_same_version_says_nothing(self, cache, enabled):
         assert (
@@ -162,7 +162,11 @@ class TestOncePerDay:
         calls = []
 
         update_check.update_notice(
-            "0.9.0", cache_path=cache, now=NOW, get=answering("v1.0.0", calls=calls), environ=enabled
+            "0.9.0",
+            cache_path=cache,
+            now=NOW,
+            get=answering("v1.0.0", calls=calls),
+            environ=enabled,
         )
 
         assert calls[0]["timeout"] == 3.0

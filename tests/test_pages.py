@@ -7,7 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 os.environ.setdefault("F1_METRICS_STORE", ":memory:")
 
-from tests.test_app_sources import _app_script, _open, _press_load  # noqa: E402
+from tests.test_app_sources import _app_script, _open, _press_load
 
 
 @pytest.fixture(autouse=True)
@@ -94,3 +94,100 @@ class TestAnalysisSectionSurvivesPageSwitches:
 
         assert not app_test.exception, app_test.exception
         assert app_test.segmented_control(key="analysis_section").value == "Weather"
+
+
+class TestSettingsPage:
+    """UI-22: caches, file locations and the version."""
+
+    def test_settings_is_offered_before_and_after_a_load(self):
+        from ui.pages import PAGE_SETTINGS, page_specs, start_page_specs
+
+        assert PAGE_SETTINGS in [title for _, title, _ in start_page_specs()]
+        assert PAGE_SETTINGS in [title for _, title, _ in page_specs({"is_live": False})]
+
+    def test_the_buttons_clear_the_caches(self):
+        def script():
+            from ui.pages import settings_page
+
+            settings_page()
+
+        from data.runtime_cache import runtime_cache
+
+        runtime_cache.set("session:test", {"x": 1})
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+        assert not app_test.exception, app_test.exception
+
+        labels = [button.label for button in app_test.button]
+        assert "Clear cached schedules" in labels
+        assert "Clear loaded sessions" in labels
+
+        app_test.button(key="settings_clear_sessions").click().run()
+        assert runtime_cache.get("session:test") is None
+        app_test.button(key="settings_clear_schedules").click().run()
+        assert not app_test.exception
+        assert any("Schedules cleared" in s.value for s in app_test.success)
+
+    def test_the_version_is_shown(self):
+        def script():
+            from ui.pages import settings_page
+
+            settings_page()
+
+        from ui.layout import app_version
+
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+        assert any(app_version() in md.value for md in app_test.markdown)
+
+    def test_the_cache_delete_needs_a_confirmation(self):
+        def script():
+            from ui.pages import settings_page
+
+            settings_page()
+
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+        assert app_test.button(key="settings_delete_cache").disabled
+
+
+class TestDirectorySize:
+    def test_counts_files_and_tolerates_a_missing_folder(self, tmp_path):
+        from ui.layout import directory_size
+
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a" / "f.bin").write_bytes(b"x" * 10)
+        (tmp_path / "g.bin").write_bytes(b"y" * 5)
+
+        assert directory_size(tmp_path) == 15
+        assert directory_size(tmp_path / "missing") == 0
+
+
+class TestSidebarFooter:
+    """DIST-05: the version, and a plain-text update note when one exists."""
+
+    def _run(self, monkeypatch, notice):
+        import data.update_check as update_check
+
+        monkeypatch.setattr(update_check, "update_notice", lambda version: notice)
+
+        def script():
+            from ui.layout import render_sidebar_footer
+
+            render_sidebar_footer()
+
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+        assert not app_test.exception, app_test.exception
+        return [caption.value for caption in app_test.sidebar.caption]
+
+    def test_a_newer_release_is_mentioned(self, monkeypatch):
+        captions = self._run(monkeypatch, "Update available: v9.0.0 \u2013 run f1dash update")
+
+        assert any(caption.startswith("F1 Replay ") for caption in captions)
+        assert "Update available: v9.0.0 \u2013 run f1dash update" in captions
+
+    def test_no_release_says_nothing(self, monkeypatch):
+        captions = self._run(monkeypatch, None)
+
+        assert len(captions) == 1

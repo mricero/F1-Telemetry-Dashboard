@@ -138,9 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"port to serve on (default {DEFAULT_PORT}, or the next free one)",
     )
-    parser.add_argument(
-        "--no-browser", action="store_true", help="do not open a browser window"
-    )
+    parser.add_argument("--no-browser", action="store_true", help="do not open a browser window")
     commands = parser.add_subparsers(dest="command", metavar="{paths,update}")
     commands.add_parser("paths", help="print where cache, replays, records and .env live")
     commands.add_parser("update", help="reinstall the newest release with uv")

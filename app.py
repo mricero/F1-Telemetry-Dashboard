@@ -74,7 +74,12 @@ from data.runtime_cache import runtime_cache  # noqa: E402
 from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
-from ui.layout import render_header, render_session_selector, selection_label  # noqa: E402
+from ui.layout import (  # noqa: E402
+    render_header,
+    render_session_selector,
+    render_sidebar_footer,
+    selection_label,
+)
 from ui.pages import CONTEXT_KEY, enter_page, pages_for  # noqa: E402
 from ui.replay_view import SECTOR_MEMO_PREFIX, session_key  # noqa: E402
 from ui.theme import NEUTRAL_GREY  # noqa: E402
@@ -116,9 +121,20 @@ def load_session_data(data_manager, selection: dict) -> dict:
         st.stop()
         raise RuntimeError("get_session_data() returned None")
 
-    if not session_data.get("is_live"):
+    if cacheable(session_data):
         runtime_cache.set(cache_key, session_data)
     return session_data
+
+
+def cacheable(session_data: dict) -> bool:
+    """Whether a loaded session may stay in the runtime cache.
+
+    Live sessions change by the second, and a session that ended in the last
+    few hours may still be partial in F1's archive (HIST-09): both are loaded
+    afresh next time instead of being served from the cache for the life of
+    the process.
+    """
+    return not session_data.get("is_live") and not session_data.get("provisional")
 
 
 def ensure_driver_table(session_data: dict) -> pd.DataFrame:
@@ -219,16 +235,24 @@ def processed_views(session_data: dict, key: str, processor) -> dict:
     return views
 
 
-def record_metrics(metrics_store, label: str, views: dict, key: str) -> None:
-    """Fold the session into the persistent records, once per session."""
+def record_metrics(
+    metrics_store, label: str, views: dict, key: str, circuit: str | None = None
+) -> None:
+    """Fold the session into the persistent records, once per session.
+
+    Top speed comes from the laps' speed traps when the source has them, so
+    the telemetry alignment - the slow part, and only Analysis needs it -
+    is not built just to read one number (HIST-08, CACHE-02).
+    """
     done_key = f"recorded:{key}"
     if st.session_state.get(done_key):
         return
     if not views["laps"].empty:
-        metrics_store.update_laps(label, views["laps"])
-    telemetry = views["telemetry"]()
-    if telemetry:
-        metrics_store.update_telemetry(label, telemetry)
+        metrics_store.update_laps(label, views["laps"], circuit=circuit)
+    if not metrics_store.has_top_speed(label):
+        telemetry = views["telemetry"]()
+        if telemetry:
+            metrics_store.update_telemetry(label, telemetry, circuit=circuit)
     st.session_state[done_key] = True
 
 
@@ -249,7 +273,10 @@ def main():
     # presses Load session (or opens a shared link).
     selection = render_session_selector(data_manager)
     if selection is None:
-        st.info("Choose a session in the sidebar and press Load session.")
+        render_sidebar_footer()
+        page = st.navigation(pages_for(None), position="top")
+        enter_page(page.title)
+        page.run()
         return
 
     # Load Data (runtime-cached: repeat selections are instant, and
@@ -264,7 +291,7 @@ def main():
     chosen = {k: v for k, v in selection.items() if v is not None}
     metrics_label = MetricsStore.make_label({**info, **chosen})
     if not session_data.get("is_live"):
-        record_metrics(metrics_store, metrics_label, views, key)
+        record_metrics(metrics_store, metrics_label, views, key, circuit=info.get("gp"))
 
     pages = pages_for(session_data)
     st.session_state[CONTEXT_KEY] = {
@@ -273,6 +300,7 @@ def main():
         "session_key": key,
         "metrics_store": metrics_store,
         "metrics_label": metrics_label,
+        "metrics_circuit": info.get("gp"),
         "data_manager": data_manager,
         "processor": processor,
     }
@@ -284,6 +312,7 @@ def main():
                 path = data_manager.save_replay(session_data, name)
                 st.success(f"Saved to {path}")
 
+    render_sidebar_footer()
     page = st.navigation(pages, position="top")
     enter_page(page.title)
     page.run()

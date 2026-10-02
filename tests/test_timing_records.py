@@ -19,7 +19,7 @@ from processing.timing import (
     fastest_lap_row,
 )
 from tests.replay_fixtures import practice_session
-from tests.test_timing import _drivers, _laps, _lap_rows, _quali_results, _race_laps, _results
+from tests.test_timing import _drivers, _lap_rows, _laps, _quali_results, _race_laps, _results
 
 
 def _end_order(session: dict) -> list[str]:
@@ -53,14 +53,17 @@ class TestNoSilentDowncasting:
     @pytest.mark.parametrize("no_silent_downcasting", [False, True])
     def test_flags_read_without_future_warnings(self, no_silent_downcasting):
         laps = self._laps()
-        with pd.option_context("future.no_silent_downcasting", no_silent_downcasting):
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", FutureWarning)
-                assert len(_valid_laps(laps)) == 2
-                assert _flag_is_set(laps, "Retired") is False
-                assert _laps_completed(laps) == 1
-                rows = build_timing_rows({"laps": laps, "drivers": _drivers(), "is_live": True})
-        assert rows[0]["laps_completed"] == 1
+        with (
+            pd.option_context("future.no_silent_downcasting", no_silent_downcasting),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("error", FutureWarning)
+            assert len(_valid_laps(laps)) == 2
+            assert _flag_is_set(laps, "Retired") is False
+            assert _laps_completed(laps) == 1
+            rows = build_timing_rows({"laps": laps, "drivers": _drivers(), "is_live": True})
+
+            assert rows[0]["laps_completed"] == 1
 
 
 class TestDeletedLaps:
@@ -231,7 +234,7 @@ class TestTowerVocabulary:
 
         assert rows[1]["status"] == "FIN"
         assert rows[1]["gap"] == "+1 LAP"
-        assert not any("L" == row["status"][-1:] for row in rows)
+        assert not any(row["status"][-1:] == "L" for row in rows)
 
     def test_live_pit_speed_is_missing(self):
         laps = _laps(_lap_rows("VER", [90.0], (30.0, 30.0, 30.0)))

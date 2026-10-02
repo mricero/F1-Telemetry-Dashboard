@@ -9,9 +9,15 @@ before navigation, and each page reads it from ``st.session_state``.
 
 import streamlit as st
 
+from config import config
+from data.fastf1_adapter import clear_session_cache
 from data.runtime_cache import runtime_cache
 from ui.dashboard import render_dashboard
 from ui.layout import (
+    app_version,
+    clear_schedule_caches,
+    directory_size,
+    render_delay_input,
     render_driver_comparison,
     render_feed_status,
     render_lap_times,
@@ -19,7 +25,6 @@ from ui.layout import (
     render_live_dashboard,
     render_position_changes,
     render_race_control,
-    render_delay_input,
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
@@ -42,6 +47,8 @@ PAGE_RESULTS = "Results"
 PAGE_ANALYSIS = "Analysis"
 PAGE_RECORDS = "Records"
 PAGE_LIVE = "Live"
+PAGE_SETTINGS = "Settings"
+PAGE_START = "Start"
 # Which page runs now and which ran on the previous script run, so the replay
 # can tell it is being re-entered. app.main() sets both from st.navigation's
 # result (UI-10): a page that forgot to set it (Records, Live) used to make the
@@ -192,9 +199,10 @@ def records_page() -> None:
         st.markdown("\n".join(f"- {line}" for line in lines))
     else:
         st.info("No records yet for this session.")
-    all_time = store.summary_lines(store.all_time())
+    circuit = context.get("metrics_circuit")
+    all_time = store.summary_lines(store.all_time(circuit=circuit))
     if all_time:
-        st.markdown("**All sessions viewed here**")
+        st.markdown(f"**All sessions viewed at {circuit}**" if circuit else "**All sessions viewed**")
         st.markdown("\n".join(f"- {line}" for line in all_time))
 
     with st.expander("Diagnostics", expanded=False):
@@ -237,22 +245,76 @@ def live_page() -> None:
     render_live_controls(live_client)
 
 
+def settings_page() -> None:
+    """Caches, file locations and the version (UI-22)."""
+    st.markdown(f"**Version** {app_version()}")
+
+    st.subheader("Caches")
+    st.caption(
+        "Schedules are kept for up to an hour. On a race weekend, clear them to see a "
+        "session that has just ended."
+    )
+    if st.button("Clear cached schedules", key="settings_clear_schedules"):
+        clear_schedule_caches()
+        st.success("Schedules cleared; the next selection fetches them again.")
+
+    stats = runtime_cache.stats()
+    st.caption(
+        f"Loaded sessions held in memory: {stats['entries']} "
+        f"({stats['bytes'] / (1024 * 1024):.0f} MB)."
+    )
+    if st.button("Clear loaded sessions", key="settings_clear_sessions"):
+        runtime_cache.clear()
+        clear_session_cache()
+        st.success("Loaded sessions cleared; the next load reads them again.")
+
+    st.subheader("Files")
+    cache_mb = directory_size(config.fastf1_cache_dir) / (1024 * 1024)
+    st.text(f"FastF1 cache   {config.fastf1_cache_dir}   {cache_mb:.0f} MB")
+    st.text(f"Replays        {config.replay_dir}")
+    st.text(f"Records        {config.metrics_store_path}")
+    st.text(f"Settings file  {config.env_path}")
+    confirm = st.checkbox(
+        "Delete the FastF1 download cache (sessions download again when opened)",
+        key="settings_confirm_cache",
+    )
+    if st.button("Delete FastF1 cache", key="settings_delete_cache", disabled=not confirm):
+        import fastf1
+
+        fastf1.Cache.clear_cache(config.fastf1_cache_dir)
+        clear_session_cache()
+        st.success("FastF1 cache deleted.")
+
+
+def start_page() -> None:
+    """What the app shows before a session is chosen."""
+    st.info("Choose a session in the sidebar and press Load session.")
+
+
+def start_page_specs() -> list[tuple]:
+    """The pages before a session is loaded: a prompt, and Settings."""
+    return [(start_page, PAGE_START, "start"), (settings_page, PAGE_SETTINGS, "settings")]
+
+
 def page_specs(session_data: dict) -> list[tuple]:
     """``(page function, title, url path)`` for a session; the first opens."""
     records = (records_page, PAGE_RECORDS, "records")
+    settings = (settings_page, PAGE_SETTINGS, "settings")
     if session_data.get("is_live"):
-        return [(live_page, PAGE_LIVE, "live"), records]
+        return [(live_page, PAGE_LIVE, "live"), records, settings]
     return [
         (replay_page, PAGE_REPLAY, "replay"),
         (results_page, PAGE_RESULTS, "results"),
         (analysis_page, PAGE_ANALYSIS, "analysis"),
         records,
+        settings,
     ]
 
 
-def pages_for(session_data: dict) -> list:
-    """The session's pages for ``st.navigation``."""
+def pages_for(session_data: dict | None) -> list:
+    """The session's pages for ``st.navigation`` (the start pages without one)."""
+    specs = start_page_specs() if session_data is None else page_specs(session_data)
     return [
         st.Page(page, title=title, url_path=path, default=index == 0)
-        for index, (page, title, path) in enumerate(page_specs(session_data))
+        for index, (page, title, path) in enumerate(specs)
     ]

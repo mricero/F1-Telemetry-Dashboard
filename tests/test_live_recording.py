@@ -152,6 +152,8 @@ class TestControlsAreReachable:
         from streamlit.testing.v1 import AppTest
 
         monkeypatch.setenv("REPLAY_DIR", str(tmp_path))
+        # LIVE-29: the controls are for the person running the app.
+        monkeypatch.setenv("F1_LIVE_CONTROLS", "1")
 
         def script():
             import streamlit as st
@@ -170,3 +172,42 @@ class TestControlsAreReachable:
         labels = [button.label for button in app_test.button]
         assert "Record raw stream" in labels
         assert "Stop live" in labels
+
+    def test_a_remote_viewer_gets_no_controls(self, monkeypatch):
+        """LIVE-29: without the flag, a viewer cannot stop or clear the shared feed."""
+        from streamlit.testing.v1 import AppTest
+
+        monkeypatch.delenv("F1_LIVE_CONTROLS", raising=False)
+
+        def script():
+            from data.live_adapter import SignalRLiveAdapter
+            from ui.layout import render_live_controls
+
+            render_live_controls(SignalRLiveAdapter())
+
+        app_test = AppTest.from_function(script, default_timeout=30)
+        app_test.run()
+
+        assert not app_test.exception
+        assert not [button.label for button in app_test.button]
+
+
+class TestLiveControlsAllowed:
+    """LIVE-29: who may stop, clear or record the one shared feed."""
+
+    def test_the_flag_grants_them(self):
+        from ui.layout import live_controls_allowed
+
+        assert live_controls_allowed({"F1_LIVE_CONTROLS": "1"}, url=None, ip="203.0.113.5")
+
+    def test_a_loopback_browser_on_localhost_gets_them(self):
+        from ui.layout import live_controls_allowed
+
+        assert live_controls_allowed({}, url="http://localhost:8501/", ip=None)
+
+    def test_a_remote_address_does_not(self):
+        from ui.layout import live_controls_allowed
+
+        assert not live_controls_allowed({}, url="http://localhost:8501/", ip="203.0.113.5")
+        assert not live_controls_allowed({}, url="http://dash.example.com/", ip=None)
+        assert not live_controls_allowed({}, url=None, ip=None)
