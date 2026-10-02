@@ -6,8 +6,10 @@ single source of truth for the dashboard's visuals (the former
 """
 
 import html
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
@@ -19,6 +21,8 @@ from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
+from processing.timing import MISSING, format_lap
+from processing.track_periods import lap_spans, lap_states
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
 from ui.status import DataStatus, show
@@ -29,6 +33,7 @@ from ui.theme import (
     CHART_WARM,
     COMPOUND_RING,
     CSS_TOKENS,
+    FLAG_STATES,
     NEUTRAL_GREY,
     TEXT,
     TEXT_DIM,
@@ -41,22 +46,65 @@ from ui.theme import (
 COMPOUND_COLORS = dict(COMPOUND_RING)
 
 # Official F1 TrackStatus codes (SignalR feed) -> (flag state, label). The
-# state picks the chip colour from ui.theme.FLAG_STATES; the label is what the
-# chip says, so the state never depends on telling colours apart.
+# state picks the chip colour from ui.theme.FLAG_STATES; the label is the
+# chip word of guideline 5.6, so the state never depends on telling colours
+# apart (UI-13: no sentence-case "Track clear" chips).
 TRACK_STATUS = {
-    "1": ("GREEN", "Track clear"),
-    "2": ("YELLOW", "Yellow flag"),
-    "4": ("SAFETY CAR", "Safety car"),
-    "5": ("RED", "Red flag"),
-    "6": ("VSC", "Virtual safety car"),
-    "7": ("VSC", "VSC ending"),
+    "1": ("GREEN", "GREEN"),
+    "2": ("YELLOW", "YELLOW"),
+    "4": ("SAFETY CAR", "SC"),
+    "5": ("RED", "RED"),
+    "6": ("VSC", "VSC"),
+    "7": ("VSC", "VSC"),
 }
 
 
-def _plot(fig: go.Figure, *args, **kwargs):
-    """Draw a chart in the shared style (guideline 5.6)."""
+def styled_figure(fig: go.Figure, uirevision: str | None = None) -> go.Figure:
+    """Apply the shared chart style *under* the chart's own layout (UI-12).
+
+    The template goes first and whatever the chart set itself goes back on
+    top, so a chart that asks for ``hovermode="closest"`` or a vertical legend
+    keeps it. ``uirevision`` (UX-02) keeps a zoomed range across reruns and
+    live fragment updates as long as it stays the same.
+    """
+    own = {key: value for key, value in fig.layout.to_plotly_json().items() if key != "template"}
     fig.update_layout(**chart_layout(len(fig.data)))
-    return st.plotly_chart(fig, *args, **kwargs)
+    fig.update_layout(own)
+    if uirevision is not None:
+        fig.update_layout(uirevision=str(uirevision))
+    return fig
+
+
+def _plot(fig: go.Figure, *args, uirevision: str | None = None, **kwargs):
+    """Draw a chart in the shared style (guideline 5.6)."""
+    return st.plotly_chart(styled_figure(fig, uirevision), *args, **kwargs)
+
+
+# Shaded lap spans: the chip words, in the flag colours at low opacity.
+SPAN_FLAGS = {"SC": "SAFETY CAR", "VSC": "VSC", "RED": "RED"}
+
+
+def shade_neutral_laps(fig: go.Figure, laps_df: pd.DataFrame, track_status=None) -> list[dict]:
+    """Shade SC, VSC and red-flag laps behind a lap-axis chart (UX-06).
+
+    Each span carries its word (``SC``/``VSC``/``RED``) at the top, so the
+    shading never depends on telling the colours apart. Returns the spans.
+    """
+    spans = lap_spans(lap_states(laps_df, track_status))
+    for span in spans:
+        colour = FLAG_STATES[SPAN_FLAGS[span["state"]]][0]
+        fig.add_vrect(
+            x0=span["first"] - 0.5,
+            x1=span["last"] + 0.5,
+            fillcolor=colour,
+            opacity=0.12,
+            line_width=0,
+            layer="below",
+            annotation_text=span["state"],
+            annotation_position="top left",
+            annotation_font={"size": 11, "color": TEXT_DIM},
+        )
+    return spans
 
 
 def _mark_lap(fig: go.Figure, lap: int | None) -> None:
@@ -79,12 +127,10 @@ SCOPE_LABELS = {
     "Full session": "session",
 }
 
-# "LiveF1 (Historical)" is deliberately absent: its loader reads attributes
-# and column names livef1 does not use, and livef1 itself raises building a
-# Session for some seasons. Offering it promised data the app cannot deliver
-# (HIST-03); FastF1 covers the same sessions. "Auto" is gone too: a running
-# session is offered through the explicit "Go live" button (LIVE-15), so the
-# picker never switches source behind the user's back.
+# FastF1 covers every historical session ("LiveF1 (Historical)" was removed
+# with the livef1 dependency, REPO-18). "Auto" is gone too: a running session
+# is offered through the explicit "Go live" button (LIVE-15), so the picker
+# never switches source behind the user's back.
 SOURCE_MAP = {
     "FastF1 (historical)": "fastf1",
     "Saved replay": "replay",
@@ -109,6 +155,39 @@ RECENT_KEY = "recent_sessions"
 RECENT_LIMIT = 5
 
 
+def app_version() -> str:
+    """The app version (REPO-23), or ``unknown`` on a config without one."""
+    try:
+        from config import __version__
+    except ImportError:
+        return "unknown"
+    return str(__version__)
+
+
+def menu_items() -> dict:
+    """The app menu's About entry, with the version (UI-22)."""
+    return {
+        "About": (
+            f"F1 Replay {app_version()}\n\n"
+            "Timing, replay and telemetry from FastF1 and the F1 live timing feed. "
+            "Not affiliated with Formula 1."
+        ),
+    }
+
+
+def sidebar_state(selection, query_params) -> str:
+    """``initial_sidebar_state`` for this run (UI-19).
+
+    Expanded only while there is nothing to show but the picker. Once a
+    session is selected - or a shared link is about to select one - it is
+    "auto": collapsed on a phone, where the open sidebar covered the data on
+    every first load, and open on a desktop.
+    """
+    if selection is not None or any(name in query_params for name in ("year", "gp", "session")):
+        return "auto"
+    return "expanded"
+
+
 def render_header():
     """Configure the page and inject the shared styles, before any content.
 
@@ -116,7 +195,12 @@ def render_header():
     5.2). The fonts are embedded here, in the main document, because a
     browser ignores ``@font-face`` inside a component's shadow root.
     """
-    st.set_page_config(page_title="F1 Replay", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(
+        page_title="F1 Replay",
+        layout="wide",
+        initial_sidebar_state=sidebar_state(st.session_state.get(SELECTION_KEY), st.query_params),
+        menu_items=menu_items(),
+    )
     st.html(f"<style>{font_face_css()}{CSS_TOKENS}{APP_CSS}</style>")
 
 
@@ -181,15 +265,37 @@ def _commit(selection: dict) -> None:
         st.query_params.clear()
 
 
-def _selection_from_url() -> dict | None:
-    """``?year=2023&gp=Bahrain Grand Prix&session=R`` -> a historical selection."""
+LINK_REJECTED_KEY = "link_rejected"
+UNKNOWN_LINK = "Link refers to an unknown session"
+
+
+def _selection_from_url(data_manager) -> dict | None:
+    """``?year=2023&gp=Bahrain Grand Prix&session=R`` -> a historical selection.
+
+    The link is checked against the same lists the picker offers (UI-17):
+    FastF1 fuzzy-matches event names, so ``?gp=Bahrein`` would otherwise load
+    a different Grand Prix than the link names, and a crafted link could
+    start cold downloads. A link that names nothing the picker would offer
+    sets ``LINK_REJECTED_KEY`` and selects nothing.
+    """
     params = st.query_params
+    if not any(name in params for name in ("year", "gp", "session")):
+        return None
     try:
         year = int(params.get("year", ""))
     except ValueError:
-        return None
+        year = None
     gp, session = params.get("gp"), params.get("session")
-    if not gp or not session:
+    valid = (
+        year is not None
+        and FIRST_SEASON <= year <= datetime.now(UTC).year
+        and bool(gp)
+        and gp in _event_names_cached(data_manager, year)
+        and session in (_session_codes_cached(data_manager, year, gp) or FALLBACK_SESSION_TYPES)
+    )
+    if not valid:
+        st.session_state[LINK_REJECTED_KEY] = True
+        st.query_params.clear()
         return None
     return {
         "source": "fastf1",
@@ -211,7 +317,7 @@ def render_session_selector(data_manager) -> dict | None:
     weekend format) without redrawing the page.
     """
     if SELECTION_KEY not in st.session_state:
-        from_url = _selection_from_url()
+        from_url = _selection_from_url(data_manager)
         st.session_state[SELECTION_KEY] = from_url
         if from_url is not None:
             st.session_state.setdefault("picker_year", from_url["year"])
@@ -221,7 +327,10 @@ def render_session_selector(data_manager) -> dict | None:
 
     with st.sidebar:
         _session_picker(data_manager)
-    return st.session_state.get(SELECTION_KEY)
+    selection = st.session_state.get(SELECTION_KEY)
+    if selection is None and st.session_state.get(LINK_REJECTED_KEY):
+        st.warning(f"{UNKNOWN_LINK}. Choose a session in the sidebar.")
+    return selection
 
 
 @st.fragment
@@ -317,10 +426,57 @@ def _session_picker(data_manager) -> None:
                 st.rerun()
 
 
+def decimate_by_distance(df: pd.DataFrame, step: float = TelemetryProcessor.DISTANCE_STEP):
+    """At most one sample per ``step`` metres of Distance (UX-02).
+
+    FastF1 samples at ~4 Hz plus position ticks; a full-session scope ships
+    every one of them to the browser. One point per 5 m (the alignment grid)
+    is all a line chart can show, so the rest are dropped - the first sample
+    in each 5 m bucket is kept, never an interpolated value, so coded
+    channels (gear, DRS) stay real.
+    """
+    if df is None or df.empty or "Distance" not in df.columns or step <= 0:
+        return df
+    distance = pd.to_numeric(df["Distance"], errors="coerce")
+    buckets = np.floor(distance.to_numpy(float) / float(step))
+    keep = np.ones(len(df), dtype=bool)
+    keep[1:] = buckets[1:] != buckets[:-1]
+    return df[keep]
+
+
+# The DRS channel reads 0 throughout from 2026: the regulations replaced DRS
+# with active aero, so a flat line would only suggest missing data (FEAT-12).
+LAST_DRS_SEASON = 2025
+
+TELEMETRY_CHANNELS = {
+    "Speed": {"col": "Speed", "unit": "km/h"},
+    "Throttle": {"col": "Throttle", "unit": "%"},
+    "Brake": {"col": "Brake", "unit": "%"},
+    "RPM": {"col": "RPM", "unit": "RPM"},
+    "Gear": {"col": "Gear", "unit": ""},
+    "DRS": {"col": "DRS", "unit": ""},
+}
+
+
+def telemetry_channels(year=None) -> dict:
+    """The channels worth a tab for a season: no DRS from 2026 on."""
+    try:
+        season = int(year) if year is not None else None
+    except (TypeError, ValueError):
+        season = None
+    if season is not None and season > LAST_DRS_SEASON:
+        return {name: cfg for name, cfg in TELEMETRY_CHANNELS.items() if name != "DRS"}
+    return dict(TELEMETRY_CHANNELS)
+
+
 def create_telemetry_chart(
     telemetry_data: dict[str, pd.DataFrame], config: dict, color_map: dict[str, str]
 ) -> go.Figure | None:
-    """Create multi-driver telemetry line chart."""
+    """Create a multi-driver telemetry line chart.
+
+    WebGL traces (``Scattergl``) on the 5 m grid: twenty drivers over a full
+    session were tens of thousands of SVG path points per channel (UX-02).
+    """
     col = config["col"]
     unit = config["unit"]
 
@@ -333,29 +489,19 @@ def create_telemetry_chart(
 
         has_data = True
         color = color_map.get(driver, NEUTRAL_GREY)
-
-        if col == "Gear":
-            fig.add_trace(
-                go.Scatter(
-                    x=df["Distance"],
-                    y=df[col],
-                    mode="lines",
-                    name=driver,
-                    line=dict(color=color, shape="hv"),
-                    hovertemplate=f"{driver}: %{{y}}<br>Distance: %{{x}}m<extra></extra>",
-                )
+        frame = decimate_by_distance(df)
+        suffix = f" {unit}" if unit else ""
+        line = dict(color=color, shape="hv") if col == "Gear" else dict(color=color, width=2)
+        fig.add_trace(
+            go.Scattergl(
+                x=frame["Distance"],
+                y=frame[col],
+                mode="lines",
+                name=driver,
+                line=line,
+                hovertemplate=f"{driver}: %{{y}}{suffix}<br>%{{x:.0f}} m<extra></extra>",
             )
-        else:
-            fig.add_trace(
-                go.Scatter(
-                    x=df["Distance"],
-                    y=df[col],
-                    mode="lines",
-                    name=driver,
-                    line=dict(color=color, width=2),
-                    hovertemplate=f"{driver}: %{{y}} {unit}<br>Distance: %{{x}}m<extra></extra>",
-                )
-            )
+        )
 
     if not has_data:
         return None
@@ -363,7 +509,6 @@ def create_telemetry_chart(
     layout = dict(
         xaxis_title="Distance (m)",
         yaxis_title=f"{col} ({unit})" if unit else col,
-        hovermode="x unified",
         height=400,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
@@ -379,34 +524,43 @@ def create_telemetry_chart(
     return fig
 
 
-def render_telemetry_charts(telemetry_data: dict[str, pd.DataFrame], color_map: dict[str, str]):
-    """Render speed, throttle, brake, rpm, gear, DRS charts."""
+def render_telemetry_charts(
+    telemetry_data: dict[str, pd.DataFrame],
+    color_map: dict[str, str],
+    year=None,
+    uirevision: str | None = None,
+):
+    """Speed, throttle, brake, RPM, gear and (before 2026) DRS charts.
+
+    ``uirevision`` keeps a zoomed range across reruns and live refreshes.
+    """
     if not telemetry_data:
         st.info("No telemetry data available")
         return
 
-    tabs = st.tabs(["Speed", "Throttle", "Brake", "RPM", "Gear", "DRS"])
-
-    channel_config = {
-        "Speed": {"col": "Speed", "unit": "km/h"},
-        "Throttle": {"col": "Throttle", "unit": "%"},
-        "Brake": {"col": "Brake", "unit": "%"},
-        "RPM": {"col": "RPM", "unit": "RPM"},
-        "Gear": {"col": "Gear", "unit": ""},
-        "DRS": {"col": "DRS", "unit": ""},
-    }
-
-    for i, (_, cfg) in enumerate(channel_config.items()):
-        with tabs[i]:
+    channels = telemetry_channels(year)
+    tabs = st.tabs(list(channels))
+    for tab, cfg in zip(tabs, channels.values(), strict=True):
+        with tab:
             fig = create_telemetry_chart(telemetry_data, cfg, color_map)
             if fig:
-                _plot(fig, width="stretch")
+                _plot(fig, width="stretch", uirevision=uirevision)
             else:
                 st.info(f"No {cfg['col']} data available")
+    if "DRS" not in channels:
+        st.caption(
+            "No DRS chart: from 2026 the regulations replace DRS with active aero, "
+            "and the feed's DRS channel reads 0 throughout."
+        )
 
 
 def render_lap_times(
-    laps_df: pd.DataFrame, color_map: dict[str, str], marker_lap: int | None = None
+    laps_df: pd.DataFrame,
+    color_map: dict[str, str],
+    marker_lap: int | None = None,
+    track_status: pd.DataFrame | None = None,
+    drivers=None,
+    uirevision: str | None = None,
 ):
     """Render lap time chart with pit stop indicators.
 
@@ -426,9 +580,10 @@ def render_lap_times(
         return
 
     fig = go.Figure()
+    shown = laps_df if drivers is None else laps_df[laps_df[driver_col].isin(list(drivers))]
 
-    for driver in laps_df[driver_col].dropna().unique():
-        driver_laps = laps_df[laps_df[driver_col] == driver].sort_values("LapNumber")
+    for driver in shown[driver_col].dropna().unique():
+        driver_laps = shown[shown[driver_col] == driver].sort_values("LapNumber")
         color = color_map.get(driver, NEUTRAL_GREY)
 
         lap_times_sec = seconds_series(driver_laps["LapTime"])
@@ -438,14 +593,14 @@ def render_lap_times(
             pit_out = pd.Series(False, index=driver_laps.index, dtype=bool)
 
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=driver_laps["LapNumber"],
                 y=lap_times_sec,
                 mode="lines+markers",
                 name=driver,
                 line=dict(color=color),
                 marker=dict(
-                    color=["red" if p else color for p in pit_out],
+                    color=[TEXT if p else color for p in pit_out],
                     size=8,
                     symbol=["diamond" if p else "circle" for p in pit_out],
                 ),
@@ -454,19 +609,19 @@ def render_lap_times(
                     f"Time: %{{customdata}}<br>"
                     f"Pit: %{{text}}<extra></extra>"
                 ),
-                customdata=driver_laps["LapTime"].astype(str),
+                customdata=[format_lap(value) for value in lap_times_sec],
                 text=["PIT OUT" if p else "" for p in pit_out],
             )
         )
 
     fig.update_layout(
-        xaxis_title="Lap Number",
-        yaxis_title="Lap Time (seconds)",
-        hovermode="x unified",
+        xaxis_title="Lap",
+        yaxis_title="Lap time (s)",
         height=500,
     )
+    shade_neutral_laps(fig, laps_df, track_status)
     _mark_lap(fig, marker_lap)
-    _plot(fig, width="stretch")
+    _plot(fig, width="stretch", uirevision=uirevision)
 
 
 def _as_lap_number(value, default):
@@ -525,7 +680,7 @@ def stint_traces(
                 base=group["_start"].tolist(),
                 orientation="h",
                 name=label,
-                marker=dict(color=palette.get(label, "gray")),
+                marker=dict(color=palette.get(label, NEUTRAL_GREY)),
                 customdata=list(zip(group["_start"], group["_end"], strict=False)),
                 hovertemplate=(
                     "%{y}: " + label + "<br>Laps: %{x}"
@@ -598,32 +753,63 @@ FEED_CHIPS = {
     "stopped": ("STOPPED", "FINISHED"),
 }
 
+# Past this many seconds without a message the caption says so (LIVE-23).
+STALE_AFTER_S = 30
+
+
+def _parse_utc(value) -> datetime | None:
+    """An ISO timestamp from the feed (``...Z`` or with an offset), in UTC."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        try:
+            moment = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
+
+
+def freshness_caption(last_heartbeat, now: datetime | None = None) -> str:
+    """``Last update 3 s ago``, or ``No update for 45 s`` past 30 s (LIVE-23)."""
+    moment = _parse_utc(last_heartbeat)
+    if moment is None:
+        return "No update received yet"
+    current = now or datetime.now(UTC)
+    seconds = max(int((current - moment).total_seconds()), 0)
+    if seconds > STALE_AFTER_S:
+        return f"No update for {seconds} s"
+    return f"Last update {seconds} s ago"
+
+
+def token_line(token: str | None, now: datetime | None = None) -> str:
+    """One sentence on the subscription token: absent, valid, expired."""
+    from data.token_store import token_status
+
+    if not token:
+        return "No subscription token: timing, tyres, race control and weather only"
+    status = token_status(token, now=now)
+    if status["expires_at"] is None:
+        return "Subscription token set"
+    if status["expired"]:
+        return "Subscription token expired - paste a new one under Subscription token"
+    return f"Subscription token valid for {status['days_left']} more day(s)"
+
 
 def render_feed_status(live_client) -> None:
     """The connection state chip, its explanation and the token's expiry."""
     if live_client is None:
         return
-    from data.signalr_core import token_expiry
-
     status = live_client.status()
     label, state = FEED_CHIPS.get(status.value, ("UNKNOWN", "FINISHED"))
     parts = [live_client.status_text()]
     stats = getattr(live_client.client, "stats", None)
     if stats is not None and stats.reconnects:
         parts.append(f"{stats.reconnects} reconnect(s)")
-    token = subscription_token()
-    if token:
-        expiry = token_expiry(token)
-        if expiry is not None:
-            remaining = expiry - datetime.now(UTC)
-            if remaining.total_seconds() <= 0:
-                parts.append("subscription token expired - set a new one")
-            else:
-                parts.append(f"subscription token valid for {remaining.days} more day(s)")
-        else:
-            parts.append("subscription token set")
-    else:
-        parts.append("no subscription token: timing, tyres, race control and weather only")
+    parts.append(token_line(subscription_token()))
     st.html(
         f'<div class="f1-dash" style="display:flex;gap:8px;align-items:center">'
         f"{status_chip(label, state)}"
@@ -631,22 +817,63 @@ def render_feed_status(live_client) -> None:
     )
 
 
+DELAY_KEY = "live_delay"
+MAX_DELAY_S = 300
+
+
+def live_delay() -> float:
+    """The viewer's broadcast delay in seconds, 0 to 300 (LIVE-21)."""
+    try:
+        value = float(st.session_state.get(DELAY_KEY) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(max(value, 0.0), float(MAX_DELAY_S))
+
+
+def render_delay_input() -> None:
+    """Sidebar input that holds the Live page back to match a TV broadcast."""
+    with st.sidebar:
+        st.number_input(
+            "Broadcast delay (s)",
+            min_value=0,
+            max_value=MAX_DELAY_S,
+            step=5,
+            key=DELAY_KEY,
+            help="Show the session as it stood this many seconds ago, to match a "
+            "delayed TV or streaming picture. The feed itself stays real time.",
+        )
+
+
+def poll_live(data_manager, delay: float) -> dict:
+    """``poll_live_data(delay=...)``, tolerating a manager without the argument."""
+    if delay:
+        try:
+            return data_manager.poll_live_data(delay=delay)
+        except TypeError:
+            pass
+    return data_manager.poll_live_data()
+
+
+LIVE_TABS = ["Telemetry", "Tyres", "Race control", "Weather"]
+LIVE_TAB_KEY = "live_tab"
+
+
 @st.fragment(run_every=3)
 def render_live_dashboard(data_manager, processor):
     """Auto-refreshing live view: polls the SignalR buffers every 3 s and
     renders telemetry channels, the track map, tyre stints and lap info."""
     render_feed_status(data_manager.live)
-    snapshot = data_manager.poll_live_data()
+    delay = live_delay()
+    snapshot = poll_live(data_manager, delay)
     telemetry = snapshot["telemetry"]
     location = snapshot["location"]
-    stints_df = processor.process_stints(
-        snapshot["stints"], latest_lap=max_lap_number(snapshot["laps"])
-    )
+    info = snapshot.get("session_info") or {}
 
     # The spec dashboard, fed from the *polled* snapshot. It used to be
     # rendered once, outside the fragment, with the empty dict a live session
     # starts from - so the tower, sector cards and map read "No timing data"
-    # for the whole session (LIVE-10).
+    # for the whole session (LIVE-10). The map carries the SC/VSC/RED chip
+    # (LIVE-22); there is no second chip under the dashboard any more.
     render_dashboard(snapshot)
 
     # Car telemetry and positions are the only auth-gated parts of the feed.
@@ -655,45 +882,175 @@ def render_live_dashboard(data_manager, processor):
     has_car_data = bool(telemetry or location)
     if not has_car_data:
         if subscription_token():
-            st.info("Waiting for car telemetry and positions from the F1 SignalR feed...")
+            st.info("Waiting for car telemetry and positions from the F1 SignalR feed")
         else:
             st.warning(
                 "Car telemetry and driver positions need an F1TV subscription token "
-                f"(set `{TOKEN_ENV_VAR}`). Timing, tyres, race control and weather "
-                "below do not need one."
+                f"(set `{TOKEN_ENV_VAR}`, or paste it under Subscription token). Timing, "
+                "tyres, race control and weather below do not need one."
             )
 
-    status = (snapshot.get("session_info") or {}).get("track_status")
-    if status:
-        state, label = TRACK_STATUS.get(status.get("status", ""), ("FINISHED", "Unknown"))
-        st.html(status_chip(label, state))
-
-    st.caption(
-        f"Streaming · {len(telemetry)} driver(s) with telemetry · "
-        f"{len(location)} on track · auto-refreshes every 3s"
-    )
+    parts = [freshness_caption(info.get("last_heartbeat"))]
+    if delay:
+        parts.append(f"{delay:g} s behind real time")
+    parts.append(f"{len(telemetry)} driver(s) with telemetry, {len(location)} on track")
+    st.caption(" · ".join(parts))
 
     color_map = processor.build_driver_color_map(snapshot["drivers"])
 
-    # No "Timing" tab: the dashboard above is the timing view.
-    # The track map is the dashboard's SVG map above; there is one map.
-    tabs = st.tabs(["Telemetry", "Tyres", "Race control", "Weather"])
-    with tabs[0]:
-        render_telemetry_charts(
-            {d: processor.normalize_units(df.copy()) for d, df in telemetry.items()}, color_map
+    # No "Timing" tab: the dashboard above is the timing view, and the track
+    # map is the dashboard's. Only the open tab is drawn (LIVE-35): with the
+    # Weather tab open, the six telemetry figures used to be rebuilt every 3 s.
+    tabs = st.tabs(LIVE_TABS, key=LIVE_TAB_KEY, on_change="rerun")
+    telemetry_tab, tyres_tab, race_control_tab, weather_tab = tabs
+    revision = f"live:{info.get('session_key') or info.get('gp') or 'session'}"
+    if telemetry_tab.open:
+        with telemetry_tab:
+            render_telemetry_charts(
+                {d: processor.normalize_units(df.copy()) for d, df in telemetry.items()},
+                color_map,
+                uirevision=revision,
+            )
+    if tyres_tab.open:
+        with tyres_tab:
+            stints_df = processor.process_stints(
+                snapshot["stints"], latest_lap=max_lap_number(snapshot["laps"])
+            )
+            render_tire_strategy(stints_df, color_map, snapshot.get("compound_colors"))
+            if not stints_df.empty:
+                st.dataframe(stints_df, width="stretch", height=250)
+    if race_control_tab.open:
+        with race_control_tab:
+            render_race_control(snapshot.get("race_control"), limit=25, key="rc:live")
+    if weather_tab.open:
+        with weather_tab:
+            render_weather(snapshot.get("weather"), uirevision=revision)
+
+
+LIVE_CONTROLS_ENV = "F1_LIVE_CONTROLS"
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def live_controls_allowed(environ=None, url: str | None = None, ip: str | None = "") -> bool:
+    """Whether this viewer may stop, clear or record the shared feed (LIVE-29).
+
+    The feed is one per process and every tab reads it, so the controls are
+    for the person running the app: ``F1_LIVE_CONTROLS=1``, or a browser on
+    the same machine - a ``localhost`` URL *and* a loopback socket (Streamlit
+    reports ``ip_address`` as None for loopback). Anyone else only reads.
+    """
+    environ = os.environ if environ is None else environ
+    if str(environ.get(LIVE_CONTROLS_ENV, "")).strip() == "1":
+        return True
+    if not url or ip is not None:
+        return False
+    host = (urlparse(url).hostname or "").lower()
+    return host in _LOCAL_HOSTS
+
+
+def _viewer_may_control() -> bool:
+    try:
+        url, ip = st.context.url, st.context.ip_address
+    except Exception:  # no script-run context: nobody to grant anything to
+        return False
+    return live_controls_allowed(url=url, ip=ip)
+
+
+@st.dialog("Stop live timing")
+def _confirm_stop(live_client) -> None:
+    st.write(
+        "This disconnects the live feed for every viewer of this app, and stops "
+        "any raw-stream recording. It does not reconnect by itself."
+    )
+    left, right = st.columns(2)
+    if left.button("Stop live timing", type="primary", key="live_stop_confirm"):
+        live_client.stop_recording()
+        live_client.stop()
+        st.rerun()
+    if right.button("Cancel", key="live_stop_cancel"):
+        st.rerun()
+
+
+def render_live_controls(live_client):
+    """The process-level live controls, for the person running the app only."""
+    if not live_client or not _viewer_may_control():
+        return
+
+    st.divider()
+    st.subheader("Live session controls")
+
+    if live_client.is_recording():
+        st.caption(f"Recording · {live_client.recorder.message_count} messages captured")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("View buffered data"):
+            st.json(
+                {
+                    topic: len(live_client.get_buffered_data(topic))
+                    for topic in ("CarData.z", "Position.z", "WeatherData")
+                }
+            )
+        # Only the time series: the merged timing state stays, so the tower
+        # keeps its order for every viewer (LIVE-29).
+        if st.button("Clear buffers"):
+            live_client.clear_buffer()
+            st.info("Car data, position and weather buffers cleared; timing is kept")
+
+    with col2:
+        # Records the raw messages, so a replay feeds the same handler the
+        # live client does (LIVE-12). Saving the processed session dict for a
+        # live session would have saved the empty dict it starts from.
+        if live_client.is_recording():
+            if st.button("Stop recording"):
+                where = live_client.stop_recording()
+                st.success(f"Raw stream saved to {where}")
+        elif st.button("Record raw stream"):
+            directory = Path(config.replay_dir) / f"raw_{datetime.now(UTC):%Y%m%d_%H%M%S}"
+            live_client.start_recording(directory)
+            st.info(f"Recording to {directory}")
+
+    with col3:
+        if st.button("Stop live"):
+            _confirm_stop(live_client)
+
+
+def render_token_helper(now: datetime | None = None) -> None:
+    """A collapsed paste box for the F1TV subscription token (LIVE-24).
+
+    The value goes to ``.env`` only on an explicit Save and is never shown
+    back. No automated login: ``fastf1``'s helper starts a blocking local
+    auth server, which has no place inside the app.
+    """
+    from data.token_store import save_subscription_token
+
+    with st.expander("Subscription token", expanded=False):
+        st.caption(token_line(subscription_token(), now=now))
+        st.caption(
+            "Car telemetry and positions need an F1TV subscription. Sign in at "
+            "f1tv.formula1.com, open the browser's developer tools, and copy the value "
+            "of the login-session cookie (or the JWT inside it). It stays on this "
+            "machine, in the .env file."
         )
-    with tabs[1]:
-        render_tire_strategy(stints_df, color_map, snapshot.get("compound_colors"))
-        if not stints_df.empty:
-            st.dataframe(stints_df, width="stretch", height=250)
-    with tabs[2]:
-        render_race_control(snapshot.get("race_control"), limit=25)
-    with tabs[3]:
-        render_weather(snapshot.get("weather"))
+        token = st.text_input("Token", type="password", key="token_paste")
+        if st.button("Save token", key="token_save", disabled=not token):
+            env_path = getattr(config, "env_path", ".env")
+            try:
+                where = save_subscription_token(token, env_path)
+            except (OSError, ValueError) as exc:
+                st.error(f"Could not save the token: {exc}")
+            else:
+                st.session_state.pop("token_paste", None)
+                st.success(f"Saved to {where}. The next connection uses it.")
 
 
 def render_position_changes(
-    laps_df: pd.DataFrame, color_map: dict[str, str], marker_lap: int | None = None
+    laps_df: pd.DataFrame,
+    color_map: dict[str, str],
+    marker_lap: int | None = None,
+    track_status: pd.DataFrame | None = None,
+    uirevision: str | None = None,
 ):
     """Lap-by-lap running order - who gained and lost places, and when."""
     if laps_df.empty or "Position" not in laps_df.columns:
@@ -736,11 +1093,14 @@ def render_position_changes(
         height=560,
         legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01),
     )
+    shade_neutral_laps(fig, laps_df, track_status)
     _mark_lap(fig, marker_lap)
-    _plot(fig, width="stretch")
+    _plot(fig, width="stretch", uirevision=uirevision)
 
 
-def render_weather(weather_df: pd.DataFrame, status: DataStatus | None = None):
+def render_weather(
+    weather_df: pd.DataFrame, status: DataStatus | None = None, uirevision: str | None = None
+):
     """Track/air temperature, humidity, wind and rainfall over the session."""
     if weather_df is None or weather_df.empty:
         show(status or DataStatus.empty("weather data"))
@@ -761,7 +1121,7 @@ def render_weather(weather_df: pd.DataFrame, status: DataStatus | None = None):
         value = pd.to_numeric(latest.get(key), errors="coerce")
         if convert is not None:
             value = convert(value)
-        col.metric(label, f"{value:g} {unit}" if pd.notna(value) else "--")
+        col.metric(label, f"{value:g} {unit}" if pd.notna(value) else MISSING)
 
     if "Rainfall" in weather_df.columns and bool(weather_df["Rainfall"].any()):
         st.warning("Rainfall recorded during this session")
@@ -802,7 +1162,7 @@ def render_weather(weather_df: pd.DataFrame, status: DataStatus | None = None):
         height=340,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    _plot(fig, width="stretch")
+    _plot(fig, width="stretch", uirevision=uirevision)
 
 
 def _elapsed_minutes(df: pd.DataFrame) -> pd.Series:
@@ -818,44 +1178,85 @@ def _elapsed_minutes(df: pd.DataFrame) -> pd.Series:
     return pd.Series(range(len(df)), index=df.index, dtype="float64")
 
 
+def race_control_lines(df: pd.DataFrame) -> list[dict]:
+    """Race-control rows as plain values for the panel, newest first.
+
+    The message stays text: it is escaped when drawn, so ``*`` or ``$...$`` in
+    a steward's message are never read as Markdown or maths (UI-13).
+    """
+    lines = []
+    for _, row in df.iloc[::-1].iterrows():
+        flag = str(row.get("Flag") or "").upper()
+        lap = pd.to_numeric(row.get("Lap"), errors="coerce")
+        message = row.get("Message")
+        lines.append(
+            {
+                "lap": f"L{int(lap)}" if pd.notna(lap) else MISSING,
+                "flag": flag if flag and flag not in ("NONE", "NAN", "<NA>") else "",
+                "message": "" if message is None or pd.isna(message) else str(message),
+            }
+        )
+    return lines
+
+
+def race_control_html(lines: list[dict]) -> str:
+    """The race-control list as escaped HTML (no Markdown interpretation)."""
+    rows = "".join(
+        '<div class="f1-rc-row">'
+        f'<span class="f1-rc-lap f1-num">{html.escape(line["lap"])}</span>'
+        f'<span class="f1-rc-flag">{html.escape(line["flag"])}</span>'
+        f'<span class="f1-rc-msg">{html.escape(line["message"])}</span></div>'
+        for line in lines
+    )
+    return f'<div class="f1-rc">{rows}</div>'
+
+
+def filter_race_control(df: pd.DataFrame, categories=None, search: str = "") -> pd.DataFrame:
+    """Messages in ``categories`` (all when empty) whose text contains ``search``."""
+    if categories and "Category" in df.columns:
+        df = df[df["Category"].astype(str).isin(list(categories))]
+    needle = (search or "").strip().lower()
+    if needle and "Message" in df.columns:
+        df = df[df["Message"].astype(str).str.lower().str.contains(needle, regex=False)]
+    return df
+
+
 def render_race_control(
-    race_control_df: pd.DataFrame, limit: int = 60, status: DataStatus | None = None
+    race_control_df: pd.DataFrame,
+    limit: int = 60,
+    status: DataStatus | None = None,
+    key: str = "rc",
 ):
-    """Race control feed: flags, safety cars, investigations, penalties."""
+    """Race control feed: flags, safety cars, investigations, penalties.
+
+    ``key`` scopes the filter widgets to one session (UX-06): the old fixed
+    ``rc_categories`` key carried one session's category choice into the next.
+    """
     if race_control_df is None or race_control_df.empty:
         show(status or DataStatus.empty("race control messages"))
         return
 
     df = race_control_df.copy()
-    if "Lap" in df.columns:
-        df["Lap"] = pd.to_numeric(df["Lap"], errors="coerce").astype("Int64")
-
     categories = sorted({str(c) for c in df.get("Category", pd.Series(dtype=object)).dropna()})
+    left, right = st.columns([3, 2])
+    chosen = []
     if categories:
-        chosen = st.multiselect(
-            "Filter by category", categories, default=categories, key="rc_categories"
-        )
-        if chosen:
-            df = df[df["Category"].astype(str).isin(chosen)]
+        with left:
+            chosen = st.multiselect(
+                "Filter by category", categories, default=categories, key=f"{key}_categories"
+            )
+    with right:
+        search = st.text_input("Search messages", key=f"{key}_search", placeholder="Car 44")
+    df = filter_race_control(df, chosen, search)
 
     if df.empty:
         st.info("No messages match that filter")
         return
 
-    # Newest first: during a session the latest instruction is what matters.
-    df = df.iloc[::-1].head(limit)
-
-    lines = []
-    for _, row in df.iterrows():
-        flag = str(row.get("Flag") or "").upper()
-        # The flag is a word, not a coloured icon (UI guideline 5.2).
-        flag_text = f"{flag} · " if flag and flag not in ("NONE", "NAN") else ""
-        lap = row.get("Lap")
-        lap_text = f"L{int(lap)}" if pd.notna(lap) else "--"
-        lines.append(f"**{lap_text}** · {flag_text}{row.get('Message', '')}")
-    st.markdown("\n\n".join(lines))
-    if len(race_control_df) > limit:
-        st.caption(f"Showing the {limit} most recent of {len(race_control_df)} messages.")
+    lines = race_control_lines(df)[:limit]
+    st.html(race_control_html(lines))
+    if len(df) > limit:
+        st.caption(f"Showing the {limit} most recent of {len(df)} messages.")
 
 
 def render_driver_comparison(
@@ -991,48 +1392,3 @@ def _speed_on_grid(df: pd.DataFrame, grid: np.ndarray | None = None):
         if grid.size < 10:
             return None, None
     return grid, np.interp(grid, distance, speed)
-
-
-def render_live_controls(live_client):
-    """Render live session controls."""
-    if not live_client:
-        return
-
-    st.markdown("---")
-    st.subheader("Live session controls")
-
-    if live_client.is_recording():
-        st.caption(f"Recording · {live_client.recorder.message_count} messages captured")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        if st.button("View buffered data"):
-            st.json(
-                {
-                    topic: len(live_client.get_buffered_data(topic))
-                    for topic in ("CarData.z", "Position.z", "TimingData", "WeatherData")
-                }
-            )
-        if st.button("Clear buffers"):
-            live_client.clear_buffer()
-            st.info("Buffered telemetry and merged state cleared")
-
-    with col2:
-        # Records the raw messages, so a replay feeds the same handler the
-        # live client does (LIVE-12). Saving the processed session dict for a
-        # live session would have saved the empty dict it starts from.
-        if live_client.is_recording():
-            if st.button("Stop recording"):
-                where = live_client.stop_recording()
-                st.success(f"Raw stream saved to {where}")
-        elif st.button("Record raw stream"):
-            directory = Path(config.replay_dir) / f"raw_{datetime.now(UTC):%Y%m%d_%H%M%S}"
-            live_client.start_recording(directory)
-            st.info(f"Recording to {directory}")
-
-    with col3:
-        if st.button("Stop live"):
-            live_client.stop_recording()
-            live_client.stop()
-            st.warning("Live session stopped")

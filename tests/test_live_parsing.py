@@ -127,47 +127,6 @@ class TestParsersLiveF1Shapes:
         df = LiveDataProcessor.parse_position_data(records)
         assert not df.empty and df["Y"].iloc[0] == -200
 
-    def test_parse_tyre_stints(self):
-        records = [
-            {
-                "DriverNo": "14",
-                "PitCount": "0",
-                "Compound": "SOFT",
-                "LapStart": None,
-                "LapEnd": None,
-            },
-            {
-                "DriverNo": "14",
-                "PitCount": "1",
-                "Compound": "MEDIUM",
-                "LapStart": None,
-                "LapEnd": None,
-            },
-        ]
-        df = LiveDataProcessor.parse_tyre_stints(records)
-        assert len(df) == 2
-        assert set(df["Compound"]) == {"SOFT", "MEDIUM"}
-        for col in ("LapStart", "LapEnd"):
-            assert col in df.columns
-
-    def test_parse_driver_list_dedupes(self):
-        records = [
-            {
-                "RacingNumber": "4",
-                "Tla": "NOR",
-                "TeamColour": "ff8000",
-                "FirstName": "Lando",
-                "LastName": "Norris",
-                "TeamName": "McLaren",
-            },
-            {"RacingNumber": "4", "Tla": "NOR"},  # duplicate update
-        ]
-        df = LiveDataProcessor.parse_driver_list(records)
-        assert len(df) == 1
-        assert df["name_acronym"].iloc[0] == "NOR"
-        assert df["team_colour"].iloc[0] == "#ff8000"
-        assert df["full_name"].iloc[0] == "Lando Norris"
-
     def test_brake_scaling_via_normalize_units(self):
         from processing.telemetry_processor import TelemetryProcessor
 
@@ -216,36 +175,44 @@ class TestPollPipeline:
         adapter._data_buffer["Position.z"] = [
             {"DriverNo": "44", "Utc": f"t{i}", "X": i * 10, "Y": i * 5, "Z": 0} for i in range(50)
         ]
-        adapter._data_buffer["TimingData"] = [
+        # State topics go through the real entry point, in the feed's shapes.
+        adapter.handle_message("SessionInfo", REAL_SESSION_INFO)
+        adapter.handle_message(
+            "DriverList",
             {
-                "DriverNo": "44",
-                "timestamp": "t",
-                "BestLapTime_Value": "1:31.20",
-                "Sectors_1_Value": "31.10",
-                "Sectors_2_Value": "35.05",
-                "Sectors_3_Value": "25.05",
-            }
-        ]
-        adapter._data_buffer["TyreStintSeries"] = [
+                "44": {
+                    "RacingNumber": "44",
+                    "Tla": "HAM",
+                    "TeamColour": "00d2be",
+                    "FirstName": "Lewis",
+                    "LastName": "Hamilton",
+                    "TeamName": "Ferrari",
+                }
+            },
+        )
+        adapter.handle_message(
+            "TimingData",
             {
-                "DriverNo": "44",
-                "PitCount": "0",
-                "Compound": "HARD",
-                "LapStart": None,
-                "LapEnd": None,
-            }
-        ]
-        adapter._data_buffer["DriverList"] = [
-            {
-                "RacingNumber": "44",
-                "Tla": "HAM",
-                "TeamColour": "00d2be",
-                "FirstName": "Lewis",
-                "LastName": "Hamilton",
-                "TeamName": "Ferrari",
-            }
-        ]
-        adapter._data_buffer["SessionInfo"] = [REAL_SESSION_INFO]
+                "Lines": {
+                    "44": {
+                        "Position": "1",
+                        "NumberOfLaps": 1,
+                        "BestLapTime": {"Value": "1:31.200"},
+                        "Sectors": [{"Value": "31.10"}, {"Value": "35.05"}, {"Value": "25.05"}],
+                    }
+                }
+            },
+            "2026-09-06T13:05:00.000Z",
+        )
+        adapter.handle_message(
+            "TimingData",
+            {"Lines": {"44": {"LastLapTime": {"Value": "1:31.200"}}}},
+            "2026-09-06T13:05:00.100Z",
+        )
+        adapter.handle_message(
+            "TyreStintSeries",
+            {"Stints": {"44": [{"Compound": "HARD", "New": "true", "TotalLaps": 2}]}},
+        )
 
     def test_poll_shapes_match_unified_dict(self, manager):
         self._prime_buffers(manager.live)
@@ -320,7 +287,7 @@ class TestSessionInfoParsing:
 
     @staticmethod
     def _info(manager, payload):
-        manager.live._data_buffer["SessionInfo"] = [payload]
+        manager.live.handle_message("SessionInfo", payload)
         return manager._session_info_from_feed(manager.live)
 
     def test_gp_comes_from_the_nested_meeting_name(self, manager):

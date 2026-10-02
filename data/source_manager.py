@@ -1,15 +1,16 @@
 """Data Source Manager - Unified interface with automatic fallback"""
 
+import contextlib
 import json
 import logging
 import pickle
+import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 import pandas as pd
-from livef1 import get_session
 
 from config import config
 from data.fastf1_adapter import (
@@ -73,13 +74,10 @@ class DataSourceManager:
         self.live = live_adapter or get_live_adapter()
         self.replay_dir = Path(replay_dir or config.replay_dir)
         self.replay_dir.mkdir(parents=True, exist_ok=True)
-        # Last live snapshot and the ingest token it was built from.
-        self._live_snapshot: dict | None = None
-        self._live_snapshot_token: tuple | None = None
 
     def get_session_data(
         self,
-        source: str = "auto",  # "auto", "fastf1", "livef1", "live", "replay"
+        source: str = "auto",  # "auto", "fastf1", "live", "replay"
         year: int | None = None,
         gp: str | None = None,
         session_type: str | None = None,
@@ -124,18 +122,11 @@ class DataSourceManager:
                 recent = self._get_most_recent_completed_race()
                 year, gp, session_type = recent["year"], recent["gp"], recent["session_type"]
 
-        if source in ("auto", "fastf1", "livef1"):
+        if source in ("auto", "fastf1"):
             if year is None or gp is None or session_type is None:
                 raise ValueError(
                     f"source={source!r} needs year, gp and session_type "
                     f"(got {year!r}, {gp!r}, {session_type!r})"
-                )
-            if source == "livef1":
-                raise NotImplementedError(
-                    "The LiveF1 historical source is disabled (HIST-03): its loader "
-                    "reads attributes and column names livef1 does not provide, and "
-                    "livef1 raises building a Session for some seasons. Use "
-                    "source='fastf1', which covers the same sessions."
                 )
             return self._load_fastf1_session(year, gp, session_type, telemetry_scope, progress)
 
@@ -249,141 +240,6 @@ class DataSourceManager:
             "is_live": False,
         }
 
-    # Map FastF1 EventName-style GP names to LiveF1 circuit short names
-    CIRCUIT_MAP: ClassVar = {
-        "bahrain": "Sakhir",
-        "saudi arabia": "Jeddah",
-        "australia": "Melbourne",
-        "japan": "Suzuka",
-        "china": "Shanghai",
-        "miami": "Miami",
-        "emilia romagna": "Imola",
-        "monaco": "Monaco",
-        "canada": "Montreal",
-        "spain": "Barcelona",
-        "austria": "Spielberg",
-        "great britain": "Silverstone",
-        "hungary": "Hungaroring",
-        "belgium": "Spa",
-        "netherlands": "Zandvoort",
-        "italy": "Monza",
-        "azerbaijan": "Baku",
-        "singapore": "Singapore",
-        "united states": "Austin",
-        "usa": "Austin",
-        "mexico": "Mexico City",
-        "mexico city": "Mexico City",
-        "brazil": "Sao Paulo",
-        "sao paulo": "Sao Paulo",
-        "las vegas": "Las Vegas",
-        "vegas": "Las Vegas",
-        "qatar": "Lusail",
-        "abu dhabi": "Yas Marina",
-    }
-
-    @classmethod
-    def _gp_to_circuit_short(cls, gp: str) -> str:
-        """Normalize a Grand Prix name ('Bahrain Grand Prix') to a circuit
-        short name ('Sakhir') accepted by LiveF1's meeting_identifier."""
-        if not gp:
-            return gp
-        normalized = gp.strip().lower()
-        for suffix in (" grand prix", " gp", " grand-prix"):
-            normalized = normalized.replace(suffix, "")
-        normalized = normalized.strip()
-        return cls.CIRCUIT_MAP.get(normalized, gp)
-
-    def _load_livef1_session(self, year: int, gp: str, session_type: str) -> dict:
-        """Load session using LiveF1 (historical data with full telemetry)."""
-        # Map session type to LiveF1 format
-        session_map = {
-            "R": "Race",
-            "Q": "Qualifying",
-            "FP1": "Practice 1",
-            "FP2": "Practice 2",
-            "FP3": "Practice 3",
-            "S": "Sprint",
-            "SQ": "Sprint Qualifying",
-        }
-        livef1_session_type = session_map.get(session_type, session_type)
-
-        # LiveF1 uses meeting_identifier and session_identifier.
-        # Need to map the GP name to a circuit short name.
-        circuit_short = self._gp_to_circuit_short(gp)
-
-        session = get_session(
-            season=year, meeting_identifier=circuit_short, session_identifier=livef1_session_type
-        )
-
-        # Generate silver tables (processed data)
-        session.generate(silver=True)
-
-        # Get processed data
-        laps_df = session.get_laps()
-        telemetry_df = session.get_car_telemetry()
-
-        # Get driver info from session
-        drivers = session.drivers
-        drivers_df = pd.DataFrame(
-            {
-                "driver_number": [d.driver_number for d in drivers.values()],
-                "name_acronym": [d.name_acronym for d in drivers.values()],
-                "team_colour": [d.team_colour for d in drivers.values()],
-                "team_name": [d.team_name for d in drivers.values()],
-                "full_name": [f"{d.first_name} {d.last_name}" for d in drivers.values()],
-            }
-        )
-
-        # Build telemetry dict by driver
-        telemetry_dict = {}
-        if not telemetry_df.empty and "Driver" in telemetry_df.columns:
-            channels = ["Distance", "Speed", "Throttle", "Brake", "RPM", "nGear", "DRS"]
-            for driver in drivers_df["name_acronym"].unique():
-                driver_telemetry = telemetry_df[telemetry_df["Driver"] == driver]
-                if driver_telemetry.empty:
-                    continue
-                driver_telemetry = driver_telemetry.copy()
-                if "Distance" not in driver_telemetry.columns:
-                    # LiveF1 silver tables carry no distance channel; index-based
-                    # pseudo-metres keep the charts plottable and ordered.
-                    driver_telemetry["Distance"] = np.arange(len(driver_telemetry)) * 10
-                available = [c for c in channels if c in driver_telemetry.columns]
-                telemetry_dict[driver] = driver_telemetry[available]
-
-        # LiveF1 exposes no GPS channel, so the track map has no source here.
-
-        # Process laps data
-        if not laps_df.empty:
-            # Ensure we have the right columns
-            laps_df = laps_df.copy()
-            if "IsPitOutLap" not in laps_df.columns and "PitOutLap" in laps_df.columns:
-                laps_df["IsPitOutLap"] = laps_df["PitOutLap"]
-
-        return {
-            "session_info": {
-                "year": year,
-                "gp": gp,
-                "session_type": session_type,
-                "session_name": f"{gp} {session_type}",
-                "date": None,  # LiveF1 doesn't expose date easily
-            },
-            "telemetry": telemetry_dict,
-            "laps": laps_df,
-            "stints": pd.DataFrame(),  # Could be extracted from LiveF1
-            "results": pd.DataFrame(),
-            "positions": pd.DataFrame(),
-            "timing_stream": pd.DataFrame(),
-            "track_status": pd.DataFrame(),
-            "location": {},
-            "weather": pd.DataFrame(),
-            "race_control": pd.DataFrame(),
-            "compound_colors": {},
-            "circuit_info": {},
-            "drivers": drivers_df,
-            "source": "livef1",
-            "is_live": False,
-        }
-
     def _load_live_session(self) -> dict:
         """Start live SignalR client and return initial data structure."""
         return {
@@ -406,33 +262,75 @@ class DataSourceManager:
             "live_client": self.live,  # Pass client for UI to use
         }
 
-    def poll_live_data(self) -> dict:
+    def poll_live_data(self, delay: float = 0.0, now: float | None = None) -> dict:
         """Snapshot the buffered SignalR data in the unified session-dict
         shape. Call repeatedly (e.g. on a timer) while live; each call folds
         in whatever arrived since the stream started.
 
         Returns dict with keys telemetry/laps/stints/location/weather/drivers,
         mirroring get_session_data() so the same renderers work for both.
+
+        The built snapshot is shared by every tab through the adapter
+        (LIVE-36): nothing new since the last poll means the same snapshot
+        comes back, with only the clock and heartbeat refreshed (LIVE-11,
+        LIVE-23). ``delay`` (0 to 300 s) shows the session as it stood that
+        long ago, to match a delayed broadcast (LIVE-21).
         """
         adapter = self.live
+        cache = adapter.snapshots
+        moment = time.monotonic() if now is None else now
+        with cache.lock:
+            token = adapter.change_token()
+            if cache.snapshot is None or token != cache.token:
+                cache.store(token, self._build_live_snapshot(adapter))
+            else:
+                info = cache.snapshot["session_info"]
+                remaining = extrapolated_remaining(adapter.state.get("ExtrapolatedClock") or {})
+                if remaining is not None:
+                    info["extrapolated_clock"] = remaining
+                    if info.get("segment"):
+                        info["segment_remaining"] = remaining
+                # A Heartbeat changes no data, so it never invalidates the
+                # snapshot; without this the caption froze (LIVE-23).
+                info["last_heartbeat"] = adapter.last_heartbeat
+            current = cache.snapshot
+            cache.remember(moment, pd.Timestamp.now(tz="UTC"))
+            if not delay or delay <= 0:
+                return current
+            past = cache.at(moment - min(float(delay), cache.history_seconds))
+        return self._delayed_snapshot(current, past, float(delay))
 
-        # Nothing new since the last poll: hand back the same snapshot rather
-        # than reprocessing the buffers for an identical result (LIVE-11).
-        token = adapter.change_token()
-        if self._live_snapshot is not None and token == self._live_snapshot_token:
-            # The session clock runs between messages; only it is refreshed.
-            remaining = extrapolated_remaining(adapter.state.get("ExtrapolatedClock") or {})
-            if remaining is not None:
-                self._live_snapshot["session_info"]["extrapolated_clock"] = remaining
-            return self._live_snapshot
+    @staticmethod
+    def _delayed_snapshot(current: dict, past: tuple | None, delay: float) -> dict:
+        """``current`` as it stood at the kept moment ``past`` (LIVE-21).
 
+        Order, gaps, laps and messages come from the kept snapshot; the
+        per-driver telemetry and GPS frames are cut at the same wall-clock
+        moment, since only their light neighbours are kept per second.
+        """
+        if past is None:
+            return current
+        wall, light = past
+        cut: dict[str, dict] = {}
+        for key in ("telemetry", "location"):
+            frames = {}
+            for driver, frame in (current.get(key) or {}).items():
+                if isinstance(frame, pd.DataFrame) and "timestamp" in frame.columns:
+                    stamps = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+                    frame = frame[stamps <= wall]
+                frames[driver] = frame
+            cut[key] = frames
+        info = dict(light.get("session_info", {}))
+        info["broadcast_delay"] = delay
+        return {**light, **cut, "session_info": info}
+
+    def _build_live_snapshot(self, adapter: SignalRLiveAdapter) -> dict:
+        """Build the unified dict from the adapter's state and buffers."""
         car_df = LiveDataProcessor.parse_car_data(adapter.get_buffered_data("CarData.z"))
         pos_df = LiveDataProcessor.parse_position_data(adapter.get_buffered_data("Position.z"))
         weather_df = LiveDataProcessor.parse_weather_data(adapter.get_buffered_data("WeatherData"))
 
-        # Keyframe+delta topics come from the merged state when it has been
-        # fed (LIVE-05); the legacy livef1 callback path still delivers
-        # pre-parsed records, so those buffers remain the fallback.
+        # Keyframe+delta topics come from the merged state (LIVE-05).
         timing_state = adapter.state.get("TimingData")
         driver_state = adapter.state.get("DriverList")
         # TyreStintSeries when the feed delivers it; TimingAppData carries the
@@ -441,22 +339,10 @@ class DataSourceManager:
             LiveDataProcessor.stints_from_timing_app(adapter.state.get("TimingAppData"))
         )
 
-        drivers_df = (
-            LiveDataProcessor.drivers_from_state(driver_state)
-            if driver_state
-            else LiveDataProcessor.parse_driver_list(adapter.get_buffered_data("DriverList"))
-        )
-        timing_df = (
-            LiveDataProcessor.timing_from_state(timing_state)
-            if timing_state
-            else LiveDataProcessor.parse_timing_data(adapter.get_buffered_data("TimingData"))
-        )
-        stints_df = (
-            LiveDataProcessor.stints_from_state(
-                stint_state, LiveDataProcessor.acronyms_from_state(driver_state)
-            )
-            if stint_state
-            else LiveDataProcessor.parse_tyre_stints(adapter.get_buffered_data("TyreStintSeries"))
+        drivers_df = LiveDataProcessor.drivers_from_state(driver_state)
+        timing_df = LiveDataProcessor.timing_from_state(timing_state)
+        stints_df = LiveDataProcessor.stints_from_state(
+            stint_state, LiveDataProcessor.acronyms_from_state(driver_state)
         )
 
         # Fall back to timing-feed driver numbers if DriverList is empty
@@ -516,7 +402,10 @@ class DataSourceManager:
                 if dist is not None:
                     d = d.assign(Distance=dist)
                 location[name] = d[["X", "Y"]].assign(
-                    Z=d.get("Z"), **({"Distance": d["Distance"]} if "Distance" in d.columns else {})
+                    Z=d.get("Z"),
+                    **({"Distance": d["Distance"]} if "Distance" in d.columns else {}),
+                    # When each point was sampled, for the broadcast delay.
+                    timestamp=d["timestamp"],
                 )
                 if "Distance" in d.columns:
                     pos_distance_by_num[num] = d
@@ -566,14 +455,10 @@ class DataSourceManager:
                 ]
                 telemetry[name] = d[keep]
 
-        # --- laps: recorded completions when the state layer is fed, else
-        # the legacy reconstruction from buffered TimingData records ---
-        if adapter.lap_history or timing_state:
-            laps_df = LiveDataProcessor.laps_from_history(
-                adapter.recorded_laps(), timing_state, acr_by_num
-            )
-        else:
-            laps_df = self._laps_from_timing(timing_df, acr_by_num)
+        # --- laps: recorded completions plus the lap in progress ---
+        laps_df = LiveDataProcessor.laps_from_history(
+            adapter.recorded_laps(), timing_state, acr_by_num
+        )
 
         # --- ensure stint chart columns exist ---
         if not stints_df.empty:
@@ -582,25 +467,28 @@ class DataSourceManager:
                     stints_df[col] = default
 
         info = self._session_info_from_feed(adapter)
-        # Race control and track status are merged state on the SignalR Core
-        # path; the buffers only ever held records from the old livef1 path.
+        # Race control and track status are merged state topics.
         rcm_state = adapter.state.get("RaceControlMessages")
-        rcm_records = (
-            [m for m in as_list(rcm_state.get("Messages")) if isinstance(m, dict)]
-            if rcm_state
-            else adapter.get_buffered_data("RaceControlMessages")
-        )
+        rcm_records = [m for m in as_list(rcm_state.get("Messages")) if isinstance(m, dict)]
         race_control_df = LiveDataProcessor.parse_race_control(rcm_records)
         track_state = adapter.state.get("TrackStatus")
-        track_status = LiveDataProcessor.parse_track_status(
-            [track_state] if track_state else adapter.get_buffered_data("TrackStatus")
-        )
+        track_status = LiveDataProcessor.parse_track_status([track_state] if track_state else [])
         standings = (
             LiveDataProcessor.standings_from_state(
-                timing_state, acr_by_num, race=is_race_session(info)
+                timing_state,
+                acr_by_num,
+                race=is_race_session(info),
+                segment_prefix=info.get("segment_prefix", "Q"),
             )
             if timing_state
             else pd.DataFrame()
+        )
+        # Corners and rotation for the map, once the feed names the circuit;
+        # fetched only while actually connected, never from a replayed feed.
+        circuit_info = (
+            adapter.circuit_info(info.get("year"), info.get("circuit_key"))
+            if adapter.is_running()
+            else {}
         )
 
         snapshot = {
@@ -631,111 +519,12 @@ class DataSourceManager:
             "weather": weather_df,
             "race_control": race_control_df,
             "compound_colors": {},
-            "circuit_info": {},
+            "circuit_info": circuit_info,
             "drivers": drivers_df,
             "source": "live",
             "is_live": True,
         }
-        self._live_snapshot = snapshot
-        self._live_snapshot_token = token
         return snapshot
-
-    @staticmethod
-    def _ever_true(records: pd.DataFrame, column: str) -> bool:
-        """Whether a flag was ever set across a driver's TimingData records."""
-        if column not in records.columns:
-            return False
-        return bool(records[column].fillna(False).astype(bool).any())
-
-    @staticmethod
-    def _laps_from_timing(timing_df: pd.DataFrame, acr_by_num: dict) -> pd.DataFrame:
-        """Build a laps DataFrame from TimingData records with real lap
-        numbers.
-
-        Legacy path, used only when nothing has fed the state layer (the
-        livef1 callback client). It cannot resolve the LIVE-04 sector
-        ambiguity - livef1 flattens the snapshot list and the 0-based delta
-        dict onto the same ``Sectors_N_Value`` names - so prefer
-        :meth:`LiveDataProcessor.laps_from_history`. Removed with LIVE-16.
-
-        TimingData snapshots carry ``NumberOfLaps`` (completed-lap counter)
-        and, once a lap is completed, ``LastLapTime_Value``. Each completed
-        (lap, time) pair becomes one row; the in-progress lap is appended
-        with its latest sector values. Falls back to a record-count
-        approximation only when NumberOfLaps was never seen.
-        """
-        rows = []
-        if timing_df.empty or "driver_number" not in timing_df.columns:
-            return pd.DataFrame()
-        for num, grp in timing_df.groupby("driver_number"):
-            grp = grp.sort_values("timestamp")
-            completed: dict[int, str] = {}
-            current_lap = 0
-            latest = grp.iloc[-1]
-            # Driver state for the tower's badge. Retirement latches: the feed
-            # is lossy, so one "Retired" stands even if later partials omit it.
-            flags = {
-                "InPit": bool(latest.get("InPit")) if pd.notna(latest.get("InPit")) else False,
-                "PitOut": bool(latest.get("PitOut")) if pd.notna(latest.get("PitOut")) else False,
-                "Retired": DataSourceManager._ever_true(grp, "Retired"),
-                "Stopped": DataSourceManager._ever_true(grp, "Stopped"),
-            }
-            for _, rec in grp.iterrows():
-                nol = pd.to_numeric(pd.Series([rec.get("NumberOfLaps")]), errors="coerce").iloc[0]
-                if pd.notna(nol):
-                    current_lap = max(current_lap, int(nol))
-                last_time = rec.get("LastLapTime_Value")
-                if pd.notna(last_time) and current_lap >= 1:
-                    completed.setdefault(current_lap, last_time)
-
-            if not completed and current_lap == 0:
-                # Fallback: no NumberOfLaps in feed - approximate progression
-                lap_time = latest.get("BestLapTime_Value")
-                if pd.isna(lap_time):
-                    lap_time = latest.get("LastLapTime_Value")
-                if pd.isna(lap_time):
-                    lap_time = None
-                rows.append(
-                    {
-                        "Driver": acr_by_num.get(num, f"#{num}"),
-                        "driver_number": num,
-                        "LapNumber": len(grp),
-                        "LapTime": lap_time,
-                        "IsPitOutLap": False,
-                        "IsInProgress": False,
-                        **flags,
-                    }
-                )
-            else:
-                for lap_no, lap_time in sorted(completed.items()):
-                    rows.append(
-                        {
-                            "Driver": acr_by_num.get(num, f"#{num}"),
-                            "driver_number": num,
-                            "LapNumber": lap_no,
-                            "LapTime": lap_time,
-                            "IsPitOutLap": False,
-                            "IsInProgress": False,
-                            **flags,
-                        }
-                    )
-                # In-progress lap
-                rows.append(
-                    {
-                        "Driver": acr_by_num.get(num, f"#{num}"),
-                        "driver_number": num,
-                        "LapNumber": current_lap + 1,
-                        "LapTime": None,
-                        "IsPitOutLap": False,
-                        # Not a completed lap: laps_completed must skip it.
-                        "IsInProgress": True,
-                        **flags,
-                    }
-                )
-            row = rows[-1]
-            for i in range(1, 4):
-                row[f"Sector{i}Time"] = latest.get(f"Sectors_{i}_Value")
-        return pd.DataFrame(rows)
 
     @staticmethod
     def _session_info_from_feed(adapter: SignalRLiveAdapter) -> dict:
@@ -754,9 +543,7 @@ class DataSourceManager:
             "circuit_key": None,
             "gmt_offset": "",
         }
-        # Merged state first (LIVE-05); the legacy buffer is the fallback for
-        # the livef1 callback path, which delivers pre-parsed records.
-        si = adapter.state.get("SessionInfo") or adapter.get_latest_data("SessionInfo") or {}
+        si = adapter.state.get("SessionInfo")
 
         meeting = si.get("Meeting")
         if isinstance(meeting, dict):
@@ -781,9 +568,7 @@ class DataSourceManager:
             if pd.notna(year):
                 info["year"] = int(year.year)
 
-        status = (
-            adapter.state.get("SessionStatus") or adapter.get_latest_data("SessionStatus") or {}
-        )
+        status = adapter.state.get("SessionStatus")
         info["status"] = status.get("Status", "")
 
         clock = adapter.state.get("ExtrapolatedClock") or {}
@@ -795,6 +580,16 @@ class DataSourceManager:
             info["current_lap_number"] = lap_count.get("CurrentLap")
             info["total_laps"] = lap_count.get("TotalLaps")
         info["last_heartbeat"] = adapter.last_heartbeat
+
+        # Qualifying: which segment is running, for the header (LIVE-19).
+        name = info["session_name"].lower()
+        info["segment_prefix"] = "SQ" if ("sprint" in name or "shootout" in name) else "Q"
+        part = adapter.state.get("TimingData").get("SessionPart")
+        if part not in (None, "") and not is_race_session(info):
+            with contextlib.suppress(TypeError, ValueError):
+                info["segment"] = f"{info['segment_prefix']}{int(str(part))}"
+                if remaining is not None:
+                    info["segment_remaining"] = remaining
         return info
 
     def _get_most_recent_completed_race(self) -> dict:

@@ -137,8 +137,9 @@ class TestClassification:
 
         assert [r["knocked_out"] for r in rows] == [False, False]
 
-    def test_completed_session_is_classified(self, session):
-        assert {r["status"] for r in build_timing_rows(session)} == {"CLASSIFIED"}
+    def test_completed_practice_rows_carry_no_status_chip(self, session):
+        """UI-13: no CLASSIFIED chip on qualifying and practice rows."""
+        assert {r["status"] for r in build_timing_rows(session)} == {"ON TRACK"}
 
     def test_live_session_reports_pit_state(self, session):
         session["is_live"] = True
@@ -836,8 +837,9 @@ class TestStatusBadges:
         "status,badge",
         [
             ("Finished", "FIN"),
-            ("+1 Lap", "+1L"),
-            ("+2 Laps", "+2L"),
+            # UI-13: a lapped finisher is a finish; the laps go in the gap.
+            ("+1 Lap", "FIN"),
+            ("+2 Laps", "FIN"),
             ("Retired", "DNF"),
             ("Accident", "DNF"),
             ("Power Unit", "DNF"),
@@ -851,13 +853,13 @@ class TestStatusBadges:
 
         assert rows[0]["status"] == badge
 
-    def test_without_results_the_row_is_simply_classified(self):
+    def test_without_results_the_row_has_no_chip(self):
         session = self._session("Finished")
         session["results"] = pd.DataFrame()
 
         rows = build_timing_rows(session)
 
-        assert rows[0]["status"] == "CLASSIFIED"
+        assert rows[0]["status"] == "ON TRACK"
 
     def test_a_driver_with_no_laps_is_out(self):
         session = self._session("Finished")
@@ -1020,7 +1022,7 @@ class TestSpecGaps:
         assert ver["last_is_session_best"] is True
         assert ham["last_is_session_best"] is False
 
-    def test_a_driver_in_the_pits_reads_zero(self):
+    def test_a_driver_in_the_pits_has_no_trap_speed(self):
         session = self._session()
         session["is_live"] = True
         session["laps"]["InPit"] = True
@@ -1028,4 +1030,5 @@ class TestSpecGaps:
         rows = build_timing_rows(session)
 
         assert all(r["status"] == "IN PIT" for r in rows)
-        assert all(r["speed_kmh"] == 0.0 for r in rows)
+        # UI-13: missing, not 0.
+        assert all(r["speed_kmh"] is None for r in rows)

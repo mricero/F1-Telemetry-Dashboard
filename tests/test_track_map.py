@@ -236,12 +236,12 @@ class TestHeaderAndSectors:
         assert "21.6 km/h E" in html
         # The clock slot is the session duration, and without laps there is
         # nothing to measure - the weather window is not a session clock.
-        assert "--:--:--" in html and "Duration" in html
+        assert "–" in html and "Duration" in html
 
     def test_header_without_weather_uses_placeholders(self):
         html = header_html({"session_info": {"gp": "Test GP"}, "is_live": False})
 
-        assert "--:--" in html and "ENDED" in html
+        assert "–" in html and "ENDED" in html
 
     def test_header_flags_rain(self):
         weather = pd.DataFrame({"Time": pd.to_timedelta([0], unit="s"), "Rainfall": [True]})
@@ -665,7 +665,7 @@ class TestHeaderClock:
         assert self._clock(laps=self._laps(42.5)) == "0:42:30"
 
     def test_no_laps_leaves_a_placeholder(self):
-        assert self._clock() == "--:--:--"
+        assert self._clock() == "–"
 
     def test_live_counts_down_the_extrapolated_clock(self):
         state = self._clock(session_info={"extrapolated_clock": "0:32:15"}, is_live=True)
@@ -673,7 +673,7 @@ class TestHeaderClock:
         assert state == "0:32:15"
 
     def test_live_without_a_clock_is_a_placeholder(self):
-        assert self._clock(is_live=True) == "--:--:--"
+        assert self._clock(is_live=True) == "–"
 
     def test_header_labels_the_slot(self):
         markup = header_html({"session_info": {}, "is_live": False, "laps": self._laps(60)})
@@ -693,7 +693,8 @@ class TestStatusBadgeMarkup:
     def test_a_lapped_finish_is_still_a_finish(self):
         markup = tower_html([TestTowerPartitions._row(1, status="+1L")])
 
-        assert 'class="f1-badge track">+1L' in markup
+        # UI-13: the laps down belong in the gap column, not a chip.
+        assert 'class="f1-badge track">FIN' in markup and "+1L" not in markup
 
     def test_retirements_are_marked_out(self):
         for badge in ("DNF", "DSQ", "DNS"):
@@ -743,10 +744,12 @@ class TestSpecGapMarkup:
 
         assert 'class="f1-time f1-num">1:32.000' in markup
 
-    def test_a_car_in_the_pits_reads_zero_kmh(self):
+    def test_a_car_in_the_pits_has_no_trap_speed(self):
         markup = tower_html([TestTowerPartitions._row(1, status="IN PIT", speed_kmh=0.0)])
 
-        assert '<span class="f1-time f1-num">0</span>' in markup  # the unit is in the header
+        # UI-13: a pit-lane car shows the missing-value dash, not 0 km/h.
+        assert '<span class="f1-time f1-num">–</span>' in markup
+        assert 'class="f1-badge pit">PIT<' in markup
 
     def test_wind_shows_a_compass_arrow(self):
         weather = pd.DataFrame(
@@ -802,3 +805,13 @@ class TestResultsPolish:
 
         assert _status_html("ON TRACK") == ""
         assert "PIT" in _status_html("IN PIT")
+
+
+class TestSectorCardsOnPhones:
+    """UI-20: the three sector cards wrap instead of clipping sector 3."""
+
+    def test_the_grid_wraps_below_three_card_widths(self):
+        from ui.theme import DASHBOARD_CSS
+
+        assert "repeat(auto-fit, minmax(150px, 1fr))" in DASHBOARD_CSS
+        assert "repeat(3, 1fr)" not in DASHBOARD_CSS

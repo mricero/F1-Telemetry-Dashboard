@@ -39,6 +39,18 @@ HYPE = re.compile(
     re.IGNORECASE,
 )
 MAX_RADIUS_PX = 4.0
+# CSS colour keywords slip past the hex check (UI-13): "red" for a pit marker,
+# "gray" for an unknown compound. A whole lowercase string literal, or a
+# colour property set to a keyword, counts. Upper-case state names ("RED",
+# "GREEN") are flag and segment states, not colours.
+_COLOUR_NAMES = (
+    "red|gray|grey|green|blue|yellow|orange|purple|white|black|pink|silver|gold|navy|teal"
+    "|lime|cyan|magenta|maroon|olive|violet|brown|crimson|darkgray|darkgrey|lightgray|lightgrey"
+)
+COLOUR_WORD = re.compile(rf"^(?:{_COLOUR_NAMES})$")
+COLOUR_PROPERTY = re.compile(
+    rf"(?:color|background|fill|stroke)\s*[:=]\s*[\"']?(?:{_COLOUR_NAMES})\b", re.IGNORECASE
+)
 
 
 def _python_files() -> list[Path]:
@@ -168,6 +180,25 @@ class TestColoursComeFromTheTheme:
         offenders = _offences(HEX, skip=("theme.py",), root_block_ok=True)
 
         assert not offenders, offenders
+
+
+    def test_no_css_colour_names(self):
+        offenders = []
+        for path in _python_files():
+            for line, text in _python_strings(path):
+                if COLOUR_WORD.match(text.strip()) or COLOUR_PROPERTY.search(text):
+                    offenders.append(f"{path.relative_to(ROOT)}:{line}: {text[:40]!r}")
+        for path in _component_files():
+            for match in COLOUR_PROPERTY.finditer(path.read_text(encoding="utf-8")):
+                offenders.append(f"{path.relative_to(ROOT)}: {match.group(0)!r}")
+
+        assert not offenders, offenders
+
+    def test_the_colour_name_check_catches_keywords_not_states(self):
+        assert COLOUR_WORD.match("red") and COLOUR_WORD.match("gray")
+        assert not COLOUR_WORD.match("RED")
+        assert COLOUR_PROPERTY.search("color: red;")
+        assert not COLOUR_PROPERTY.search("color: var(--text)")
 
 
 class TestCopy:
@@ -328,3 +359,64 @@ class TestReplayScreenSpec:
         ):
             assert value in section, value
         assert "prefers-reduced-motion" in section
+
+
+# Chip words a tower may show (guideline 5.6); "ON TRACK" is an empty cell.
+TOWER_CHIPS = {"PIT", "OUT", "FIN", "DNF", "DSQ", "DNS", "KO"}
+
+
+def _fixture_towers():
+    from processing.timing import build_timing_rows
+    from tests import replay_fixtures as fx
+    from ui.dashboard import header_html, tower_html
+
+    for build in (fx.race_session, fx.qualifying_session, fx.practice_session):
+        session = build()
+        yield build.__name__, tower_html(build_timing_rows(session)) + header_html(session)
+
+
+class TestTowerVocabulary:
+    """UI-13: the tower's words and formats, over the race, qualifying and practice fixtures."""
+
+    def test_only_the_status_vocabulary_appears_as_chips(self):
+        for name, markup in _fixture_towers():
+            chips = set(re.findall(r'class="f1-badge[^"]*">([^<]*)<', markup))
+            assert chips <= TOWER_CHIPS, (name, chips - TOWER_CHIPS)
+
+    def test_no_classified_or_in_pit_words(self):
+        for name, markup in _fixture_towers():
+            assert "CLASSIFIED" not in markup, name
+            assert "IN PIT" not in markup, name
+
+    def test_missing_values_are_an_en_dash(self):
+        for name, markup in _fixture_towers():
+            texts = [t.strip() for t in re.findall(r">([^<]+)<", markup) if t.strip()]
+            for text in texts:
+                assert not re.fullmatch(r"-{2,}(:-{2})*", text), (name, text)
+                assert text.lower() not in {"nan", "none", "nat", "<na>"}, (name, text)
+
+    def test_a_lapped_finish_is_not_a_chip(self):
+        from ui.dashboard import _status_html
+
+        assert ">FIN<" in _status_html("+1L")
+        assert "+1" not in _status_html("+2 LAPS")
+
+    def test_a_car_in_the_pit_has_no_trap_speed(self):
+        from processing.timing import MISSING
+        from ui.dashboard import _speed_text
+
+        assert _speed_text(0.0, "PIT") == MISSING
+        assert _speed_text(None, "") == MISSING
+        assert _speed_text(301.4, "") == "301"
+
+    def test_live_track_status_chips_use_the_flag_words(self):
+        from ui.layout import TRACK_STATUS
+
+        assert {label for _, label in TRACK_STATUS.values()} <= {"GREEN", "YELLOW", "SC", "VSC", "RED"}
+
+    def test_race_control_text_is_escaped_not_markdown(self):
+        from ui.layout import race_control_html
+
+        markup = race_control_html([{"lap": "L3", "flag": "", "message": "CAR 1 *VER* $5$ <b>"}])
+
+        assert "*VER* $5$ &lt;b&gt;" in markup

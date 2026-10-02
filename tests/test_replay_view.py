@@ -148,7 +148,7 @@ class TestStepping:
         assert app.session_state[CURSOR] == pytest.approx(fx.C_PIT_IN)
         tower = next(body for body in _markup(app) if 'class="f1-tower"' in body)
         c_row = tower[tower.index('<div class="f1-code">C</div>') :]
-        assert "IN PIT" in c_row[: c_row.index("</tr>")]
+        assert ">PIT<" in c_row[: c_row.index("</tr>")]  # UI-13 chip word
 
 
 class TestPlayback:
@@ -434,3 +434,65 @@ class TestAnalysisFollowsTheReplay:
 
         moment = app.session_state["moment"]
         assert (moment["lap"], moment["focus"], moment["ahead"]) == (4, "A", "B")
+
+
+# --- the player's data stays put between Python seeks (UI-11) -----------------
+
+
+class TestAFocusChangeDoesNotResendThePayload:
+    """Every change to the component's ``data`` re-sends the whole payload
+    (2-4 MB on a real race), so a driver click must leave it byte-identical."""
+
+    @pytest.fixture
+    def player_app(self, monkeypatch) -> AppTest:
+        monkeypatch.delenv("F1_REPLAY_PLAYER", raising=False)
+        test = AppTest.from_function(_replay_script, default_timeout=60)
+        test.run()
+        assert not test.exception, test.exception
+        return test
+
+    @staticmethod
+    def _json(app: AppTest) -> str:
+        (element,) = app.get("bidi_component")
+        return element.proto.json
+
+    def test_focusing_a_driver_leaves_the_data_byte_identical(self, player_app):
+        before = self._json(player_app)
+        # What on_focus_change stores when a tower row or a car is clicked.
+        player_app.session_state[f"replay_focus:{KEY}"] = "B"
+        player_app.run()
+
+        assert not player_app.exception, player_app.exception
+        assert self._json(player_app) == before
+
+    def test_a_seek_carries_the_focus_for_a_remount(self, player_app):
+        player_app.session_state[f"replay_focus:{KEY}"] = "C"
+        player_app.run()
+        jump = player_app.selectbox(key=f"replay_jump:{KEY}")
+        jump.set_value(next(o for o in jump.options if o.endswith("Pit stop - C"))).run()
+
+        data = _player_data(player_app)
+        assert data["focus"] == "C"
+        assert data["cursor"] == pytest.approx(fx.C_PIT_IN)
+
+    def test_returning_to_the_page_carries_the_focus(self, monkeypatch):
+        monkeypatch.delenv("F1_REPLAY_PLAYER", raising=False)
+
+        def script():
+            import streamlit as st
+
+            from tests import replay_fixtures
+            from ui.replay_view import render_session_replay, sync_seek_cursor
+
+            key = "fastf1:2026:Test Grand Prix:R"
+            st.session_state[f"replay_focus:{key}"] = "A"
+            st.session_state[f"replay_cursor:{key}"] = 1200.0
+            sync_seek_cursor(key)  # what the Replay page does on return
+            render_session_replay(replay_fixtures.race_session())
+
+        app = AppTest.from_function(script, default_timeout=60)
+        app.run()
+
+        assert not app.exception, app.exception
+        data = _player_data(app)
+        assert (data["cursor"], data["focus"]) == (1200.0, "A")

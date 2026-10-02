@@ -75,8 +75,8 @@ from data.source_manager import DataSourceManager  # noqa: E402
 from processing.metrics_store import MetricsStore  # noqa: E402
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
 from ui.layout import render_header, render_session_selector, selection_label  # noqa: E402
-from ui.pages import CONTEXT_KEY, pages_for  # noqa: E402
-from ui.replay_view import session_key  # noqa: E402
+from ui.pages import CONTEXT_KEY, enter_page, pages_for  # noqa: E402
+from ui.replay_view import SECTOR_MEMO_PREFIX, session_key  # noqa: E402
 from ui.theme import NEUTRAL_GREY  # noqa: E402
 
 
@@ -158,6 +158,25 @@ def init_browser_session() -> None:
         st.session_state.metrics_store = MetricsStore()
 
 
+PROCESSED_PREFIX = "processed"
+# Per-session entries a browser session keeps for the current session only
+# (UI-18): each holds the session dict or markup derived from it.
+PER_SESSION_PREFIXES = (PROCESSED_PREFIX, SECTOR_MEMO_PREFIX)
+
+
+def evict_other_sessions(key: str) -> None:
+    """Drop every per-session entry that belongs to a session other than ``key``.
+
+    Loading four sessions in one tab used to leave four ``processed:*``
+    entries, each pinning a whole session dict, which defeated the runtime
+    cache's byte budget.
+    """
+    for name in [k for k in st.session_state if isinstance(k, str)]:
+        for prefix in PER_SESSION_PREFIXES:
+            if name.startswith(f"{prefix}:") and name != f"{prefix}:{key}":
+                del st.session_state[name]
+
+
 def processed_views(session_data: dict, key: str, processor) -> dict:
     """Laps, stints and colours for the pages, built once per session.
 
@@ -166,10 +185,11 @@ def processed_views(session_data: dict, key: str, processor) -> dict:
     the expensive part and only the Analysis page needs it, so it is built
     on first use.
     """
-    cache_key = f"processed:{key}"
+    cache_key = f"{PROCESSED_PREFIX}:{key}"
     cached = st.session_state.get(cache_key)
     if cached is not None and cached["session_data"] is session_data:
         return cached
+    evict_other_sessions(key)
 
     drivers_df = ensure_driver_table(session_data)
     laps = processor.process_laps(session_data["laps"], drivers_df)
@@ -264,7 +284,9 @@ def main():
                 path = data_manager.save_replay(session_data, name)
                 st.success(f"Saved to {path}")
 
-    st.navigation(pages, position="top").run()
+    page = st.navigation(pages, position="top")
+    enter_page(page.title)
+    page.run()
 
 
 if __name__ == "__main__":

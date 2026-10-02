@@ -1,10 +1,12 @@
 # Run the same gates CI runs, before the commit rather than after it.
-#   pip install -r requirements-dev.txt && pre-commit install
+#   python -m pip install --require-hashes -r requirements-dev.lock && pre-commit install
+# The ruff and black revs equal the versions in requirements-dev.lock
+# (tests/test_pre_commit_config.py checks it), so the hook and CI agree.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.4
+    rev: v0.16.10
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
         # Formatting is black's job here; ruff only lints.
@@ -15,14 +17,17 @@ repos:
     hooks:
       - id: black
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.1
+  - repo: local
     hooks:
+      # REPO-21: the mirrors-mypy hook ran in an isolated env with unpinned
+      # pandas-stubs and no numpy/streamlit, and reported 156 errors CI never
+      # saw. This runs the CI command with the project's own interpreter.
       - id: mypy
-        # processing/ is pure transforms, so it type-checks cleanly first.
-        files: ^processing/
-        args: [--ignore-missing-imports]
-        additional_dependencies: [pandas-stubs, types-requests]
+        name: mypy
+        entry: python -m mypy --ignore-missing-imports app.py data processing ui
+        language: system
+        types: [python]
+        pass_filenames: false
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

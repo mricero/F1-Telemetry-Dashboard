@@ -1,0 +1,12 @@
+{
+  "name": "f1-replay-player-tests",
+  "private": true,
+  "description": "jsdom tests for ui/components/replay_player/player.js (run: npm ci && node --test)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.1"
+  }
+}

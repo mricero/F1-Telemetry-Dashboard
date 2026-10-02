@@ -65,6 +65,7 @@ def build_track_svg(
     markers: Sequence[dict] | None = None,
     segment_distances: Sequence[float] | None = None,
     title: str = "Track map",
+    tint: str | None = None,
 ) -> str | None:
     """Render the circuit to an SVG string.
 
@@ -73,7 +74,9 @@ def build_track_svg(
     (from :func:`processing.timing.micro_sector_marks`), so the map and the
     timing strips cover the same stretches; without them the lap is split
     evenly. ``markers`` places driver nodes:
-    ``[{'code','x','y','team_colour'}]``. Returns None without usable GPS.
+    ``[{'code','x','y','team_colour'}]``. ``tint`` washes the ribbon in a
+    flag colour at 30 % (SC, VSC, red flag), as the replay player does.
+    Returns None without usable GPS.
     """
     geometry = track_geometry(location, circuit_info)
     if geometry is None:
@@ -93,6 +96,11 @@ def build_track_svg(
         f'<path d="{outline}" fill="none" stroke="{SURFACE_2}" stroke-width="14" '
         'stroke-linejoin="round" stroke-linecap="round"/>'
     )
+    if tint:
+        layers.append(
+            f'<path class="tint" d="{outline}" fill="none" stroke="{safe_hex(tint)}" '
+            'stroke-width="14" opacity="0.3" stroke-linejoin="round" stroke-linecap="round"/>'
+        )
 
     # Dominance layer: split the projected polyline into equal slices and
     # tint each by the team colour of whoever was quickest through it.

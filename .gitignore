@@ -33,9 +33,10 @@ ff1_cache/
 # Replay Sessions
 replay_sessions/
 
-# Environment
+# Environment (.env.example is the committed template, REPO-13)
 .env
 .env.local
+!.env.example
 
 # IDE
 .vscode/
@@ -52,11 +53,20 @@ Thumbs.db
 
 # Persistent metrics store (fastest lap/sector/top speed records)
 metrics_store.json
+metrics_store.sqlite
+metrics_store.sqlite-*
 
-# Test coverage
+# Test coverage and test output
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 .pytest_cache/
+.hypothesis/
+# An old FastF1Adapter test default; TEST-08 points tests at tmp_path now.
+test_cache/
+# npm install for the player's JS tests (tests/js)
+tests/js/node_modules/
 
 # Type checking
 .mypy_cache/

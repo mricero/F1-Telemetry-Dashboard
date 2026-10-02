@@ -124,9 +124,18 @@ class LiveState:
             self._version += 1
 
     def seed(self, snapshot: dict[str, Any]) -> None:
-        """Apply a subscription completion result: ``{topic: full_state}``."""
-        for topic, payload in (snapshot or {}).items():
-            self.update(topic, payload)
+        """Apply a subscription completion result: ``{topic: full_state}``.
+
+        Each topic in the snapshot **replaces** what was held: the snapshot
+        is the full state, so merging it over the old one kept qualifying's
+        ``KnockedOut`` on the race leader and resurrected entries deleted
+        during an outage (LIVE-27). Topics the snapshot lacks are kept.
+        """
+        with self._lock:
+            for topic, payload in (snapshot or {}).items():
+                if isinstance(payload, dict):
+                    self._topics[topic] = deep_merge({}, payload)
+            self._version += 1
 
     def get(self, topic: str) -> dict:
         """A deep copy of one topic's state, so readers cannot mutate it."""

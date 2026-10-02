@@ -11,7 +11,7 @@ import json
 import pytest
 
 from data.live_adapter import SignalRLiveAdapter
-from data.live_recorder import LiveRecorder, replay_recording
+from data.live_recorder import SNAPSHOT_MARKER, LiveRecorder, replay_recording
 from tests import live_fixtures
 
 TOPICS = ("SessionInfo", "DriverList", "TimingData", "TyreStintSeries")
@@ -37,10 +37,16 @@ class TestRecordingFormat:
     def test_each_line_is_topic_data_timestamp(self, tmp_path):
         recorder = _record_fixture(tmp_path)
 
-        first = json.loads((recorder.directory / "live.jsonl").read_text("utf-8").splitlines()[0])
+        lines = [
+            json.loads(line)
+            for line in (recorder.directory / "live.jsonl").read_text("utf-8").splitlines()
+        ]
 
-        assert len(first) == 3
-        assert first[0] in TOPICS
+        # The recording opens with the state it started from (LIVE-32) ...
+        assert lines[0][0] == SNAPSHOT_MARKER
+        # ... then one [topic, data, timestamp] per message.
+        assert all(len(line) == 3 for line in lines)
+        assert lines[1][0] in TOPICS
 
     def test_recording_is_append_only(self, tmp_path):
         recorder = LiveRecorder(tmp_path)

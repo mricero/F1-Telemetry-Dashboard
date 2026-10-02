@@ -31,9 +31,12 @@ import json
 import logging
 import os
 import threading
+import time
 import zlib
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
@@ -42,6 +45,13 @@ import pandas as pd
 # Position.z shares FastF1's 1/10 m position units - one definition, both paths.
 from data.fastf1_adapter import POSITION_UNITS_PER_METRE
 from data.live_state import STATE_TOPICS, LiveState, as_list
+from data.signalr_core import (
+    AUTH_TOPICS,
+    STATUS_TEXT,
+    FeedStatus,
+    SignalRCoreClient,
+    token_from_env_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +131,22 @@ def decode_topic_payload(topic: str, payload: Any) -> list[dict]:
     return records
 
 
+def _session_part(timing_state: Any) -> int | None:
+    """The running qualifying segment (1-3) from ``TimingData.SessionPart``."""
+    raw = (timing_state or {}).get("SessionPart") if isinstance(timing_state, dict) else None
+    try:
+        part = int(str(raw))
+    except (TypeError, ValueError):
+        return None
+    return part if part >= 1 else None
+
+
+def format_lap_time(seconds: float) -> str:
+    """``91.204`` -> ``1:31.204``."""
+    minutes, rest = divmod(float(seconds), 60.0)
+    return f"{int(minutes)}:{rest:06.3f}"
+
+
 def _as_bool(value: Any) -> bool | None:
     """The feed sends booleans as "true"/"false" strings as often as bools."""
     if value is None:
@@ -138,24 +164,26 @@ def _as_bool(value: Any) -> bool | None:
 # Official CarData.z channel ids (verified against LiveF1 channel_name_map)
 CAR_CHANNELS = {"0": "rpm", "2": "speed", "3": "n_gear", "4": "throttle", "5": "brake", "45": "drs"}
 
-
-# Topics F1 has gated behind an F1TV subscription token since the 2025 Dutch
-# GP. Without a token they never produce data, so subscribing to them only
-# adds noise - and the panels that do not need one must still render (LIVE-02).
-AUTH_TOPICS = frozenset(
-    {
-        "CarData.z",
-        "Position.z",
-        "PitStopSeries",
-        "ChampionshipPrediction",
-        "DriverRaceInfo",
-        "TeamRadio",
-    }
-)
-
 # Where the user's own token is read from. It stays on their machine: the
 # sustainable mode for this feed is local, single-connection, own-token use.
 TOKEN_ENV_VAR = "F1TV_SUBSCRIPTION_TOKEN"  # noqa: S105 - the variable name, not a token
+# Record every live session into the replay directory unless set to 0 (LIVE-20).
+AUTORECORD_ENV_VAR = "F1_LIVE_AUTORECORD"
+
+# Numeric WeatherData fields. The live feed sends them as strings ("0" for no
+# rain), and bool("0") is True: every dry session read as wet (LIVE-34).
+# Per-driver TimingData flags carried onto every lap row of that driver.
+DRIVER_FLAGS = ("InPit", "PitOut", "Retired", "Stopped")
+
+WEATHER_NUMERIC = (
+    "AirTemp",
+    "Humidity",
+    "Pressure",
+    "Rainfall",
+    "TrackTemp",
+    "WindDirection",
+    "WindSpeed",
+)
 
 
 def subscription_token() -> str | None:
@@ -164,9 +192,87 @@ def subscription_token() -> str | None:
     Accepts the JWT or the F1 website's ``login-session`` cookie value; see
     :func:`data.signalr_core.token_from_env_value`.
     """
-    from data.signalr_core import token_from_env_value
-
     return token_from_env_value(os.getenv(TOKEN_ENV_VAR, ""))
+
+
+def autorecord_enabled() -> bool:
+    return os.getenv(AUTORECORD_ENV_VAR, "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _safe_name(value: Any) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(value)).strip("_")
+
+
+def session_identity(info: Any) -> str | None:
+    """What identifies one session in ``SessionInfo``: its ``Key`` or ``Path``.
+
+    Partial updates (``ArchiveStatus`` alone, say) carry neither and say
+    nothing about a change of session.
+    """
+    if not isinstance(info, dict):
+        return None
+    for field in ("Key", "Path"):
+        value = info.get(field)
+        if value not in (None, ""):
+            return f"{field}:{value}"
+    return None
+
+
+class SnapshotCache:
+    """The built live snapshot, shared by every browser tab (LIVE-36).
+
+    Each tab's manager used to keep its own change-token cache, so N viewers
+    meant N full rebuilds every 3 s competing with the ingest thread. The
+    lock also makes concurrent polls build once.
+
+    It also keeps the light part of past snapshots (everything except the
+    per-driver telemetry and GPS frames) at most once a second for
+    ``history_seconds``, for the broadcast delay (LIVE-21): a delayed view
+    reads the order, gaps and messages from that moment, and the time-series
+    frames are cut at the same moment.
+    """
+
+    HEAVY_KEYS = ("telemetry", "location")
+
+    def __init__(self, history_seconds: float = 300.0):
+        self.lock = threading.RLock()
+        self.token: tuple | None = None
+        self.snapshot: dict | None = None
+        self.builds = 0
+        self.history_seconds = history_seconds
+        self._history: deque[tuple[float, pd.Timestamp, dict]] = deque()
+
+    def store(self, token: tuple, snapshot: dict) -> None:
+        self.token, self.snapshot = token, snapshot
+        self.builds += 1
+
+    def remember(self, now: float, wall: pd.Timestamp) -> None:
+        """Keep the light part of the current snapshot (one per second)."""
+        if self.snapshot is None:
+            return
+        if self._history and now - self._history[-1][0] < 1.0:
+            return
+        light = {k: v for k, v in self.snapshot.items() if k not in self.HEAVY_KEYS}
+        light["session_info"] = dict(self.snapshot.get("session_info", {}))
+        self._history.append((now, wall, light))
+        while self._history and now - self._history[0][0] > self.history_seconds:
+            self._history.popleft()
+
+    def at(self, moment: float) -> tuple[pd.Timestamp, dict] | None:
+        """The newest kept snapshot taken at or before ``moment``."""
+        chosen = None
+        for taken, wall, light in self._history:
+            if taken > moment:
+                break
+            chosen = (wall, light)
+        if chosen is None and self._history:
+            _, wall, light = self._history[0]  # not that much history yet
+            chosen = (wall, light)
+        return chosen
+
+    def clear(self) -> None:
+        self.token = self.snapshot = None
+        self._history.clear()
 
 
 class SignalRLiveAdapter:
@@ -181,6 +287,7 @@ class SignalRLiveAdapter:
     # client and the community clients that work against the 2026 feed
     # subscribe; the rest feed the tyre panels. An unknown topic simply never
     # delivers anything (SignalR Core does not reject the whole Subscribe).
+    # The client leaves out AUTH_TOPICS on a connection made without a token.
     TELEMETRY_TOPICS: ClassVar = [
         "Heartbeat",
         "CarData.z",  # speed/throttle/brake/RPM/gear/DRS - needs a token
@@ -223,6 +330,7 @@ class SignalRLiveAdapter:
         # cap: losing them would erase the first half of a race from the lap
         # chart. Kept separately, and only one small row per completed lap.
         self.lap_history: list[dict] = []
+        self._lap_keys: set[tuple[str, int]] = set()
         self._lap_counter: dict[str, int] = {}
         self._data_buffer: dict[str, list[dict]] = defaultdict(list)
         # The client runs on its own thread while Streamlit polls from the
@@ -234,22 +342,32 @@ class SignalRLiveAdapter:
         self._ingested = 0
         # Optional raw-stream recorder; see data/live_recorder.py (LIVE-12).
         self.recorder: LiveRecorder | None = None
+        # Why recording stopped by itself (disk full ...), for the Live page.
+        self.recorder_error: str | None = None
+        # Record each live session automatically while the client runs (LIVE-20).
+        self.autorecord = False
+        self._auto_recording = False
+        # The session the state belongs to (LIVE-27).
+        self._session_id: str | None = None
         self._running = False
         self._thread_error: BaseException | None = None
         # Wall-clock time of the last Heartbeat, for the "last update" caption.
         self.last_heartbeat: str | None = None
+        # The built snapshot, shared by every tab (LIVE-36, LIVE-21).
+        self.snapshots = SnapshotCache()
+        self._circuit_info_cache: dict[tuple, dict] = {}
 
     def handle_message(self, topic: str, payload: Any, timestamp: str | None = None) -> None:
         """Ingest one raw feed message.
 
         State topics are deep-merged into :attr:`state`; time series are
-        appended to the bounded buffers. This is the entry point a SignalR
-        Core client (LIVE-01) and the fixture replay both use - the legacy
-        livef1 callback path still delivers pre-parsed records to
-        :meth:`_buffer_topic`.
+        appended to the bounded buffers. This is the entry point the SignalR
+        Core client (LIVE-01), the recorder replay and the fixture replay all
+        use.
         """
-        if self.recorder is not None:
-            self.recorder.record(topic, payload, timestamp)
+        if topic == "SessionInfo":
+            self._observe_session(payload)
+        self._record("record", topic, payload, timestamp)
 
         if topic == "Heartbeat":
             if isinstance(payload, dict):
@@ -263,6 +381,73 @@ class SignalRLiveAdapter:
         records = self.normalise_series(topic, payload, timestamp)
         if records is not None:
             self._buffer_topic(topic, records)
+
+    def _record(self, method: str, *args: Any) -> None:
+        """Pass one message or snapshot to the recorder, if there is one.
+
+        A recorder failure (disk full, a file removed under it) must not
+        freeze the live state: before LIVE-31 every later message raised here,
+        before reaching the state update. The recorder is read once, so a
+        stop on the UI thread cannot null it between the check and the call.
+        """
+        recorder = self.recorder
+        if recorder is None:
+            return
+        try:
+            getattr(recorder, method)(*args)
+        except Exception as exc:
+            if self.recorder is recorder:
+                self.recorder = None
+                self._auto_recording = False
+            self.recorder_error = f"Recording stopped: {type(exc).__name__}: {exc}"
+            logger.error("Live recording stopped: %s", exc)
+            with contextlib.suppress(Exception):
+                recorder.close()
+
+    def _observe_session(self, info: Any) -> None:
+        """Reset everything when ``SessionInfo`` names a different session.
+
+        A qualifying snapshot followed by the race's used to leave the race
+        leader ``KO`` and qualifying laps in the lap history (LIVE-27). An
+        automatic recording rotates at the same moment (LIVE-20).
+        """
+        identity = session_identity(info)
+        if identity is None or identity == self._session_id:
+            return
+        previous, self._session_id = self._session_id, identity
+        if previous is not None:
+            logger.info("Live feed: new session, clearing the previous one's state")
+            self._reset_session_state()
+        if self.autorecord:
+            self._rotate_autorecording(info)
+
+    def _reset_session_state(self) -> None:
+        with self._buffer_lock:
+            self.state.clear()
+            self.lap_history.clear()
+            self._lap_keys.clear()
+            self._lap_counter.clear()
+            self._data_buffer.clear()
+            self._ingested += 1
+
+    def _rotate_autorecording(self, info: dict) -> None:
+        if self.recorder is not None and not self._auto_recording:
+            return  # a recording the user started keeps going
+        self.stop_recording()
+        meeting = info.get("Meeting") if isinstance(info.get("Meeting"), dict) else {}
+        gp = _safe_name(meeting.get("Name") or "live")
+        session = _safe_name(info.get("Name") or info.get("Type") or "session")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        from config import config
+
+        directory = Path(config.replay_dir) / f"raw_{gp}_{session}_{stamp}"
+        try:
+            self.start_recording(directory)
+            self._auto_recording = True
+            logger.info("Live feed: recording this session to %s", directory)
+        except OSError as exc:
+            self.recorder_error = f"Could not start recording: {exc}"
+            logger.error("Could not start the automatic recording: %s", exc)
 
     @staticmethod
     def normalise_series(topic: str, payload: Any, timestamp: str | None) -> Any:
@@ -292,7 +477,8 @@ class SignalRLiveAdapter:
 
         ``NumberOfLaps`` and ``LastLapTime`` usually come in separate partial
         messages, so the lap counter is tracked per driver and a lap time is
-        attributed to whatever lap the driver had reached.
+        attributed to whatever lap the driver had reached. Each (driver, lap)
+        is recorded once; the old "last 40 rows" check could drop real laps.
         """
         if not isinstance(payload, dict):
             return
@@ -311,13 +497,9 @@ class SignalRLiveAdapter:
             if not value or not lap_number:
                 continue
             with self._buffer_lock:
-                recent = self.lap_history[-40:]
-            if any(
-                entry["driver_number"] == driver and entry["LapNumber"] == lap_number
-                for entry in recent
-            ):
-                continue  # the same completion repeated in a later message
-            with self._buffer_lock:
+                if (driver, lap_number) in self._lap_keys:
+                    continue  # the same completion repeated in a later message
+                self._lap_keys.add((driver, lap_number))
                 self.lap_history.append(
                     {
                         "driver_number": driver,
@@ -330,11 +512,23 @@ class SignalRLiveAdapter:
                 )
 
     def seed_state(self, snapshot: dict[str, Any]) -> None:
-        """Apply a subscription snapshot: ``{topic: full_state}``."""
-        if self.recorder is not None:
-            self.recorder.record_snapshot(snapshot)
+        """Apply a subscription snapshot: ``{topic: full_state}``.
+
+        A snapshot of a different session resets everything first; each
+        state topic it carries replaces the held one (LIVE-27).
+        """
         snapshot = snapshot or {}
+        if "SessionInfo" in snapshot:
+            self._observe_session(snapshot["SessionInfo"])
+        self._record("record_snapshot", snapshot)
         self.state.seed({k: v for k, v in snapshot.items() if k in STATE_TOPICS})
+        # Joining mid-session: the lap counters come from the snapshot, or the
+        # next LastLapTime would have no lap number to be filed under.
+        timing = snapshot.get("TimingData")
+        for number, line in ((timing or {}).get("Lines") or {}).items():
+            if isinstance(line, dict) and line.get("NumberOfLaps") is not None:
+                with contextlib.suppress(TypeError, ValueError):
+                    self._lap_counter[str(number)] = int(line["NumberOfLaps"])
         # The snapshot also carries the latest sample of each time series
         # (car data, positions, weather): keep it rather than wait for the
         # next update.
@@ -349,17 +543,23 @@ class SignalRLiveAdapter:
         from data.live_recorder import LiveRecorder
 
         self.stop_recording()
-        self.recorder = LiveRecorder(directory)
-        self.recorder.record_snapshot(self.state.snapshot())
-        return self.recorder
+        recorder = LiveRecorder(directory)
+        recorder.record_snapshot(self.state.snapshot())
+        self.recorder = recorder
+        self.recorder_error = None
+        self._auto_recording = False
+        return recorder
 
     def stop_recording(self) -> str | None:
         """Stop recording; returns where the recording was written."""
-        if self.recorder is None:
+        recorder = self.recorder
+        if recorder is None:
             return None
-        directory = str(self.recorder.directory)
-        self.recorder.close()
         self.recorder = None
+        self._auto_recording = False
+        directory = str(recorder.directory)
+        with contextlib.suppress(Exception):
+            recorder.close()
         return directory
 
     def is_recording(self) -> bool:
@@ -369,7 +569,9 @@ class SignalRLiveAdapter:
         """Topics worth subscribing to, given whether a token is configured.
 
         Auth-gated topics are dropped without one: they would never deliver
-        anything, and the rest of the feed works perfectly well alone.
+        anything, and the rest of the feed works perfectly well alone. The
+        client applies the same rule per connection, so a token that expires
+        or is refused mid-weekend drops them too (LIVE-26).
         """
         if subscription_token():
             return list(self.TELEMETRY_TOPICS)
@@ -391,8 +593,6 @@ class SignalRLiveAdapter:
                 del buf[:overflow]
 
     def _make_client(self, topics: list[str]):
-        from data.signalr_core import SignalRCoreClient
-
         factory = self._client_factory or SignalRCoreClient
         return factory(
             topics=topics,
@@ -407,39 +607,45 @@ class SignalRLiveAdapter:
     def start_async(self, topics: list[str] | None = None, log_file: str | None = None):
         """Connect to /signalrcore on a background thread (no-op if running).
 
-        ``log_file`` is accepted for compatibility with older callers and
-        ignored: raw recording is :meth:`start_recording`.
+        Every topic is handed to the client, which leaves out the gated ones
+        on a connection without a (valid) token. ``log_file`` is accepted for
+        compatibility with older callers and ignored: raw recording is
+        :meth:`start_recording`, and automatic per-session recording is on
+        unless ``F1_LIVE_AUTORECORD=0``.
         """
         if self.is_running():
             return
         self._thread_error = None
+        self.autorecord = autorecord_enabled()
         try:
-            self.client = self._make_client(topics or self.subscribed_topics())
+            self.client = self._make_client(list(topics or self.TELEMETRY_TOPICS))
             self.client.start()
             self._running = True
         except Exception as exc:
             self._running = False
             self._thread_error = exc
             logger.error("Could not start the live client: %s", exc, exc_info=exc)
+            return
+        if self.autorecord and self._session_id is not None and self.recorder is None:
+            self._rotate_autorecording(self.state.get("SessionInfo"))
 
     def status(self):
         """The connection state (:class:`data.signalr_core.FeedStatus`)."""
-        from data.signalr_core import FeedStatus
-
         if self.client is None:
             return FeedStatus.IDLE
         return self.client.status
 
     def status_text(self) -> str:
         """One line for the UI: the state and, when relevant, why."""
-        from data.signalr_core import STATUS_TEXT, FeedStatus
-
         status = self.status()
         text = STATUS_TEXT[status]
         stats = getattr(self.client, "stats", None)
         problem = status in (FeedStatus.RECONNECTING, FeedStatus.BLOCKED, FeedStatus.AUTH_REQUIRED)
         if problem and stats is not None and stats.last_error:
             text += f" - {stats.last_error}"
+        notice = getattr(self.client, "token_notice", None)
+        if isinstance(notice, str) and notice and status is not FeedStatus.STOPPED:
+            text += f". {notice}"
         return text
 
     def change_token(self) -> tuple:
@@ -468,23 +674,49 @@ class SignalRLiveAdapter:
         with self._buffer_lock:
             return list(self._data_buffer.get(topic, []))
 
-    def get_latest_data(self, topic: str) -> dict | None:
-        """Get most recent record for a topic."""
-        with self._buffer_lock:
-            data = self._data_buffer.get(topic, [])
-            return data[-1] if data else None
-
     def clear_buffer(self, topic: str | None = None):
-        """Clear buffered data."""
+        """Empty the time-series buffers (car data, positions, weather).
+
+        The merged state (timing, race control, track status) and the lap
+        history are kept: state only comes back with the next Subscribe
+        snapshot, possibly hours away, so clearing it emptied the tower for
+        every viewer (LIVE-29).
+        """
         with self._buffer_lock:
             if topic:
                 self._data_buffer[topic] = []
             else:
                 self._data_buffer.clear()
-                self.state.clear()
-                self.lap_history.clear()
-                self._lap_counter.clear()
-                self._ingested += 1  # a clear is a change like any other
+            self._ingested += 1  # a clear is a change like any other
+
+    def circuit_info(self, year: Any, circuit_key: Any) -> dict:
+        """Corners and rotation for the live map, once per circuit (LIVE-22).
+
+        FastF1 reads them from the MultiViewer circuit API by season and
+        ``SessionInfo.Meeting.Circuit.Key``. A failure is remembered for ten
+        minutes, so an offline machine does not retry on every poll.
+        """
+        if year in (None, "") or circuit_key in (None, ""):
+            return {}
+        try:
+            key = (int(year), int(circuit_key))
+        except (TypeError, ValueError):
+            return {}
+        cached = self._circuit_info_cache.get(key)
+        now = time.monotonic()
+        if cached is not None and (cached["info"] or now - cached["at"] < 600):
+            return cached["info"]
+        info: dict = {}
+        try:
+            from fastf1.mvapi import get_circuit_info
+
+            raw = get_circuit_info(year=key[0], circuit_key=key[1])
+            if raw is not None:
+                info = {"corners": raw.corners, "rotation": float(raw.rotation)}
+        except Exception as exc:
+            logger.warning("Circuit info unavailable for the live map: %s", exc)
+        self._circuit_info_cache[key] = {"info": info, "at": now}
+        return info
 
     def is_running(self) -> bool:
         """Whether the client thread is alive (connected or reconnecting)."""
@@ -508,10 +740,8 @@ class SignalRLiveAdapter:
 
 
 class LiveDataProcessor:
-    """Process parsed SignalR records into structured DataFrames.
-
-    Input records are the already-parsed dicts emitted by LiveF1's
-    MessageHandlerTemplate (see module docstring).
+    """Process the adapter's merged state and normalised records into
+    structured DataFrames (see the module docstring for the record shapes).
     """
 
     # CarData.z field -> unified channel name.
@@ -610,23 +840,6 @@ class LiveDataProcessor:
         return out[keep & ~garage].reset_index(drop=True)
 
     @staticmethod
-    def parse_timing_data(raw_records: list[dict]) -> pd.DataFrame:
-        """TimingData records -> one row per driver with flattened fields
-        (Position, BestLapTimeValue, Sectors_1_Value, ...)."""
-        rows = []
-        for r in raw_records or []:
-            row = {
-                "driver_number": r.get("DriverNo"),
-                "timestamp": r.get("timestamp"),
-            }
-            for k, v in r.items():
-                if k in ("SessionKey", "timestamp"):
-                    continue
-                row[k] = v
-            rows.append(row)
-        return pd.DataFrame(rows)
-
-    @staticmethod
     def parse_weather_data(raw_records: list[dict]) -> pd.DataFrame:
         """WeatherData records -> DataFrame of weather observations."""
         rows = []
@@ -634,41 +847,12 @@ class LiveDataProcessor:
             row = {"timestamp": r.get("timestamp")}
             row.update({k: v for k, v in r.items() if k not in ("SessionKey", "timestamp")})
             rows.append(row)
-        return pd.DataFrame(rows)
-
-    @staticmethod
-    def parse_tyre_stints(raw_records: list[dict]) -> pd.DataFrame:
-        """TyreStintSeries records -> stints DataFrame compatible with the
-        tire strategy chart (Compound, LapStart/LapEnd when available)."""
-        rows: dict[tuple, dict] = {}
-        for r in raw_records or []:
-            driver = r.get("DriverNo")
-            pit = r.get("PitCount")
-            compound = r.get("Compound")
-            if driver is None or not compound:
-                continue
-            key = (driver, pit)
-            rows[key] = {
-                "DriverAcronym": driver,
-                "Stint": pit,
-                "Compound": compound,
-                "LapStart": (
-                    r.get("LapStart")
-                    if r.get("LapStart") is not None
-                    else rows.get(key, {}).get("LapStart")
-                ),
-                "LapEnd": (
-                    r.get("LapEnd")
-                    if r.get("LapEnd") is not None
-                    else rows.get(key, {}).get("LapEnd")
-                ),
-            }
-        df = pd.DataFrame(list(rows.values()))
-        if not df.empty:
-            for col in ("LapStart", "LapEnd"):
-                if col not in df.columns:
-                    df[col] = None
-        return df
+        frame = pd.DataFrame(rows)
+        # The feed sends every value as a string; "0" rain read as wet (LIVE-34).
+        for column in WEATHER_NUMERIC:
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        return frame
 
     # -- state-derived frames (LIVE-05) ---------------------------------
     #
@@ -708,7 +892,7 @@ class LiveDataProcessor:
 
     @staticmethod
     def standings_from_state(
-        timing_state: dict, acronyms: dict[str, str], race: bool
+        timing_state: dict, acronyms: dict[str, str], race: bool, segment_prefix: str = "Q"
     ) -> pd.DataFrame:
         """``TimingData`` state -> the ``standings`` table the tower orders by.
 
@@ -719,6 +903,10 @@ class LiveDataProcessor:
         screen" path for live and replay. Races read ``GapToLeader`` /
         ``IntervalToPositionAhead``; practice and qualifying read
         ``TimeDiffToFastest`` / ``TimeDiffToPositionAhead``.
+
+        In qualifying (``TimingData.SessionPart`` set) the running cars are
+        ordered by their best in the running segment and knocked-out cars sit
+        under "Eliminated in Q1/Q2" headings, as on the replay (LIVE-19).
         """
         from processing.time_utils import parse_gap, to_seconds
         from processing.timing import LEADER, MISSING, format_delta, format_lap_gap
@@ -798,8 +986,108 @@ class LiveDataProcessor:
             rows.append(row)
         if not rows:
             return pd.DataFrame()
+        part = _session_part(timing_state)
+        if not race and part:
+            return LiveDataProcessor._qualifying_standings(
+                rows, (timing_state or {}).get("Lines", {}), acronyms, part, segment_prefix
+            )
         frame = pd.DataFrame(rows).sort_values("Position", kind="stable").reset_index(drop=True)
         # The feed briefly repeats a position during overtakes; rank instead.
+        frame["Position"] = range(1, len(frame) + 1)
+        return frame
+
+    @staticmethod
+    def _qualifying_standings(
+        rows: list[dict], lines: dict, acronyms: dict[str, str], part: int, prefix: str
+    ) -> pd.DataFrame:
+        """Running cars by their best this segment, then each knock-out group.
+
+        ``BestLapTimes`` holds one entry per segment (index 0 = Q1). A car
+        knocked out in Q1 has no Q2 time; a Q2 time proves the segment was
+        reached. The shapes follow f1-dash and the 2023 archive; confirm them
+        on a live SQ/Q recording (LIVE-18).
+        """
+        from processing.time_utils import to_seconds
+        from processing.timing import LEADER, MISSING, format_delta
+
+        by_code = {row["Driver"]: row for row in rows}
+        segment_times: dict[str, list[float | None]] = {}
+        knocked: dict[str, bool] = {}
+        for number, line in lines.items():
+            if not isinstance(line, dict):
+                continue
+            code = acronyms.get(str(number), f"#{number}")
+            if code not in by_code:
+                continue
+            times = []
+            for entry in as_list(line.get("BestLapTimes")):
+                value = entry.get("Value") if isinstance(entry, dict) else entry
+                times.append(to_seconds(value) if value else None)
+            segment_times[code] = times
+            knocked[code] = bool(_as_bool(line.get("KnockedOut")))
+
+        def best_in(code: str, segment: int) -> float | None:
+            times = segment_times.get(code, [])
+            return times[segment - 1] if 0 < segment <= len(times) else None
+
+        def eliminated_in(code: str) -> int:
+            reached = [s for s in range(1, part) if best_in(code, s + 1) is not None]
+            return min(max(reached, default=0) + 1, max(part - 1, 1))
+
+        def ordered(codes: list[str], segment: int) -> list[str]:
+            return sorted(
+                codes,
+                key=lambda c: (
+                    best_in(c, segment) is None,
+                    best_in(c, segment) or 0.0,
+                    by_code[c]["Position"],
+                ),
+            )
+
+        active = [code for code in by_code if not knocked.get(code)]
+        groups: dict[int, list[str]] = {}
+        for code in by_code:
+            if knocked.get(code):
+                groups.setdefault(eliminated_in(code), []).append(code)
+
+        sections: list[tuple[str | None, list[str], int]] = []
+        heading = f"{prefix}{part}" if groups else None
+        sections.append((heading, ordered(active, part), part))
+        sections.extend(
+            (f"Eliminated in {prefix}{segment}", ordered(groups[segment], segment), segment)
+            for segment in sorted(groups, reverse=True)
+        )
+
+        out = []
+        for heading, codes, segment in sections:
+            leader_best = best_in(codes[0], segment) if codes else None
+            previous = None
+            for index, code in enumerate(codes):
+                row = dict(by_code[code])
+                best = best_in(code, segment)
+                row["Partition"] = heading if index == 0 else None
+                if best is not None:
+                    row["BestSeconds"] = best
+                    row["BestLap"] = format_lap_time(best)
+                if index == 0 and best is not None:
+                    row["Gap"], row["GapSeconds"] = LEADER, 0.0
+                    row["Interval"], row["IntervalSeconds"] = LEADER, 0.0
+                elif best is not None and leader_best is not None:
+                    row["Gap"], row["GapSeconds"] = (
+                        format_delta(best - leader_best),
+                        best - leader_best,
+                    )
+                    if previous is not None:
+                        row["Interval"] = format_delta(best - previous)
+                        row["IntervalSeconds"] = best - previous
+                else:
+                    row["Gap"], row["GapSeconds"] = MISSING, None
+                    row["Interval"], row["IntervalSeconds"] = MISSING, None
+                if knocked.get(code):
+                    row["Status"] = "KO"
+                previous = best if best is not None else previous
+                out.append(row)
+        frame = pd.DataFrame(out)
         frame["Position"] = range(1, len(frame) + 1)
         return frame
 
@@ -933,16 +1221,13 @@ class LiveDataProcessor:
                 }
             )
 
+        flags_by_driver: dict[str, dict[str, bool]] = {}
         for number, line in lines.items():
             driver = str(number)
             if not isinstance(line, dict):
                 continue
-            flags = {
-                "InPit": _as_bool(line.get("InPit")) or False,
-                "PitOut": _as_bool(line.get("PitOut")) or False,
-                "Retired": _as_bool(line.get("Retired")) or False,
-                "Stopped": _as_bool(line.get("Stopped")) or False,
-            }
+            flags = {column: bool(_as_bool(line.get(column))) for column in DRIVER_FLAGS}
+            flags_by_driver[driver] = flags
             sectors = {}
             for index, sector in enumerate(as_list(line.get("Sectors")), start=1):
                 if isinstance(sector, dict):
@@ -971,11 +1256,16 @@ class LiveDataProcessor:
             return frame
         # The state flags describe the driver, not one lap: apply them to all
         # of that driver's rows so the tower latches retirement correctly.
-        for column in ("InPit", "PitOut", "Retired", "Stopped"):
-            if column in frame.columns:
-                frame[column] = frame.groupby("driver_number")[column].transform(
-                    lambda values: values.ffill().bfill()
-                )
+        # Built per driver as plain bools - filling object columns of NaN and
+        # bools relied on pandas' silent downcasting, which pandas 3 drops
+        # (and a driver missing from Lines then made ~frame["Retired"] raise),
+        # CORE-02.
+        for column in DRIVER_FLAGS:
+            frame[column] = (
+                frame["driver_number"]
+                .map(lambda driver, c=column: flags_by_driver.get(driver, {}).get(c, False))
+                .astype(bool)
+            )
         return frame.sort_values(["Driver", "LapNumber"]).reset_index(drop=True)
 
     @staticmethod
@@ -1050,32 +1340,6 @@ class LiveDataProcessor:
                 continue
             return {"status": str(status), "message": r.get("Message") or ""}
         return None
-
-    @staticmethod
-    def parse_driver_list(raw_records: list[dict]) -> pd.DataFrame:
-        """DriverList records -> drivers table matching the unified schema."""
-        rows = []
-        seen = set()
-        for r in raw_records or []:
-            number = r.get("RacingNumber", r.get("DriverNo"))
-            if number is None or number in seen:
-                continue
-            seen.add(number)
-            first = r.get("FirstName") or ""
-            last = r.get("LastName") or r.get("FullName") or ""
-            colour = r.get("TeamColour") or "#888888"
-            if not str(colour).startswith("#"):
-                colour = f"#{colour}"
-            rows.append(
-                {
-                    "driver_number": number,
-                    "name_acronym": r.get("Tla") or r.get("name_acronym") or last[:3].upper(),
-                    "team_colour": colour,
-                    "team_name": r.get("TeamName", ""),
-                    "full_name": f"{first} {last}".strip(),
-                }
-            )
-        return pd.DataFrame(rows)
 
     @staticmethod
     def distance_at(pos_df: pd.DataFrame, car_timestamps: Sequence) -> np.ndarray | None:

@@ -144,13 +144,22 @@ def _evict_other_sessions(prefix: str, key: str) -> None:
 
 
 SEEK_CURSOR_PREFIX = "replay_seek_cursor"
+# The focused driver as of the last seek: the only focus sent to the player
+# (UI-11). Sending the live focus changed the component's data on every
+# driver click, so Streamlit re-sent the whole multi-MB payload each time.
+SEEK_FOCUS_PREFIX = "replay_seek_focus"
+
+
+def _sync_seek_focus(key: str) -> None:
+    st.session_state[f"{SEEK_FOCUS_PREFIX}:{key}"] = st.session_state.get(f"{FOCUS_PREFIX}:{key}")
 
 
 def sync_seek_cursor(key: str) -> None:
-    """Send the latest reported cursor to a freshly mounted player."""
+    """Send the latest reported cursor and focus to a freshly mounted player."""
     cursor = st.session_state.get(cursor_key(key))
     if cursor is not None:
         st.session_state[f"{SEEK_CURSOR_PREFIX}:{key}"] = cursor
+    _sync_seek_focus(key)
 
 
 def _move(key: str, moment: float, clock: ReplayClock) -> None:
@@ -162,6 +171,7 @@ def _move(key: str, moment: float, clock: ReplayClock) -> None:
     """
     st.session_state[cursor_key(key)] = clock.clamp(moment)
     st.session_state[f"{SEEK_CURSOR_PREFIX}:{key}"] = clock.clamp(moment)
+    _sync_seek_focus(key)
     seek = f"{SEEK_PREFIX}:{key}"
     st.session_state[seek] = st.session_state.get(seek, 0) + 1
 
@@ -371,12 +381,15 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
     st.session_state.setdefault(seek, 0)
     seek_cursor = f"{SEEK_CURSOR_PREFIX}:{key}"
     st.session_state.setdefault(seek_cursor, st.session_state[cursor_key(key)])
+    seek_focus = f"{SEEK_FOCUS_PREFIX}:{key}"
+    if seek_focus not in st.session_state:
+        _sync_seek_focus(key)
     render_replay_player(
         payload,
         key=f"{PLAYER_PREFIX}:{key}",
         cursor=st.session_state[seek_cursor],
         seek=st.session_state[seek],
-        focus=st.session_state.get(f"{FOCUS_PREFIX}:{key}"),
+        focus=st.session_state[seek_focus],
         on_cursor_change=lambda: _from_player(key, clock),
         on_focus_change=lambda: _focus_from_player(key),
         on_analyse_change=lambda: _analyse_from_player(key),

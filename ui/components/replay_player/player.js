@@ -9,7 +9,11 @@
 // the returned cleanup only on unmount, so one Player per parent element is
 // kept and rebuilt only when the session changes. The cursor is reported to
 // Python only on pause, on a seek while paused and at the end: every state
-// change reruns the script.
+// change reruns the script. `data.focus` is read at mount only (UI-11).
+//
+// Car positions and the interval trend arrive packed (REPLAY-29) and are
+// unpacked once, asynchronously, with the browser's DecompressionStream; the
+// root gets data-ready="1" when that is done and drawn.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const INSTANCES = new WeakMap();
@@ -72,6 +76,106 @@ function setClass(node, name, on) {
   if (node.classList.contains(name) !== on) node.classList.toggle(name, on);
 }
 
+// Attribute and property writes only on a change: every write is a DOM
+// mutation, and draw() runs every animation frame.
+function setAttr(node, name, value) {
+  const text = String(value);
+  if (node.getAttribute(name) !== text) node.setAttribute(name, text);
+}
+
+function setHidden(node, hidden) {
+  if (node.hidden !== hidden) node.hidden = hidden;
+}
+
+function setDisabled(node, disabled) {
+  if (node.disabled !== disabled) node.disabled = disabled;
+}
+
+function base64Bytes(text) {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Raw DEFLATE (Python's zlib with wbits -15), via the browser's own decoder.
+async function inflate(text) {
+  const stream = new DecompressionStream("deflate-raw");
+  const writer = stream.writable.getWriter();
+  // Errors surface through the reader below.
+  writer.write(base64Bytes(text)).catch(() => {});
+  writer.close().catch(() => {});
+  const reader = stream.readable.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
+}
+
+// processing/replay_payload._pack_positions reversed: absent flags, then the
+// low and high bytes of zigzag second differences (driver, x/y, frame), into
+// frame-major Int16 frames holding pos.absent where a car has no sample.
+function unpackPositions(pos, raw) {
+  const frames = pos.frames;
+  const drivers = pos.drivers;
+  const count = frames * drivers;
+  const flagBytes = (count + 7) >> 3;
+  if (raw.length !== flagBytes + 4 * count) throw new Error("unexpected position data length");
+  const low = flagBytes;
+  const high = flagBytes + 2 * count;
+  const xy = new Int16Array(count * 2);
+  for (let d = 0; d < drivers; d += 1) {
+    for (let c = 0; c < 2; c += 1) {
+      const base = (d * 2 + c) * frames;
+      let value = 0;
+      let step = 0;
+      for (let f = 0; f < frames; f += 1) {
+        const code = raw[low + base + f] | (raw[high + base + f] << 8);
+        step += (code >>> 1) ^ -(code & 1);
+        value += step;
+        xy[(f * drivers + d) * 2 + c] = value;
+      }
+    }
+    for (let f = 0; f < frames; f += 1) {
+      const bit = d * frames + f;
+      if (raw[bit >> 3] & (0x80 >> (bit & 7))) {
+        xy[(f * drivers + d) * 2] = pos.absent;
+        xy[(f * drivers + d) * 2 + 1] = pos.absent;
+      }
+    }
+  }
+  return xy;
+}
+
+// The interval trend: little-endian UInt16 hundredths, one row per driver,
+// trend.missing for "no interval" (NaN here).
+function unpackTrend(trend, raw) {
+  const samples = trend.samples;
+  if (raw.length !== trend.codes.length * samples * 2) throw new Error("unexpected trend data length");
+  const values = {};
+  trend.codes.forEach((code, row) => {
+    const out = new Float64Array(samples);
+    for (let i = 0; i < samples; i += 1) {
+      const at = (row * samples + i) * 2;
+      const value = raw[at] | (raw[at + 1] << 8);
+      out[i] = value === trend.missing ? NaN : value / trend.scale;
+    }
+    values[code] = out;
+  });
+  return values;
+}
+
 class Player {
   constructor(root, data, setStateValue) {
     this.root = root;
@@ -95,12 +199,33 @@ class Player {
     this.lastTick = null;
     this.lastDrawn = null;
     this.listeners = [];
+    this.destroyed = false;
+    this.order = [];
+    this.cardKey = null;
     this.flagTimes = data.flags.map((row) => row[0]);
     this.rcTimes = data.rcm.map((row) => row[0]);
     this.weatherTimes = data.weather.map((row) => row[0]);
-    this.decodePositions();
+    this.lapTimes = {};
+    for (const [code, laps] of Object.entries(data.laps || {})) this.lapTimes[code] = laps.map((lap) => lap[0]);
+    this.xy = null;
+    this.trend = null;
+    this.carIndex = {};
+    (data.pos ? data.pos.codes : []).forEach((code, index) => {
+      this.carIndex[code] = index;
+    });
+    this.root.dataset.ready = "0";
     this.build();
     this.draw(true);
+    this.ready = this.unpack()
+      .catch((error) => {
+        console.warn("replay player: could not unpack the payload", error);
+        this.mapNote("Car positions could not be unpacked, so the cars are not drawn.");
+      })
+      .then(() => {
+        if (this.destroyed) return;
+        this.draw(true);
+        this.root.dataset.ready = "1";
+      });
   }
 
   // ---------------------------------------------------------------- data
@@ -108,24 +233,31 @@ class Player {
     return Math.min(Math.max(t, this.clock.start), this.clock.end);
   }
 
-  decodePositions() {
-    const pos = this.data.pos;
-    this.xy = null;
-    this.carIndex = {};
-    if (!pos) return;
-    const binary = atob(pos.xy_b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    this.xy = new Int16Array(bytes.buffer);
-    pos.codes.forEach((code, index) => {
-      this.carIndex[code] = index;
-    });
+  async unpack() {
+    const { pos, trend } = this.data;
+    const packed = Boolean(pos) || Boolean(trend && trend.z);
+    if (!packed) return;
+    if (typeof DecompressionStream === "undefined") {
+      this.mapNote("This browser cannot unpack the car positions; a current Chrome, Edge, Firefox or Safari can.");
+      return;
+    }
+    const [xy, values] = await Promise.all([
+      pos ? inflate(pos.xy_z).then((raw) => unpackPositions(pos, raw)) : null,
+      trend && trend.z ? inflate(trend.z).then((raw) => unpackTrend(trend, raw)) : null,
+    ]);
+    if (this.destroyed) return;
+    this.xy = xy;
+    this.trend = values;
+  }
+
+  mapNote(text) {
+    if (this.mapNode && !this.destroyed) this.mapNode.append(el("div", "rp-map-note", text));
   }
 
   carAt(code, t) {
     const pos = this.data.pos;
     const d = this.carIndex[code];
-    if (!pos || d === undefined) return null;
+    if (!pos || !this.xy || d === undefined) return null;
     let i = (t - pos.t0) / pos.step;
     // Within one frame of either end, hold the nearest frame.
     if (i < -1 || i > pos.frames) return null;
@@ -234,8 +366,11 @@ class Player {
       const toggle = el("div", "rp-toggle");
       this.gapButton = el("button", "on", "Gap");
       this.intervalButton = el("button", "", "Interval");
+      this.gapButton.setAttribute("aria-pressed", "true");
+      this.intervalButton.setAttribute("aria-pressed", "false");
       this.on(this.gapButton, "click", () => this.setMode("gap"));
       this.on(this.intervalButton, "click", () => this.setMode("int"));
+      toggle.setAttribute("aria-label", "Gap column shows");
       toggle.append(this.gapButton, this.intervalButton);
       tower.append(toggle);
     }
@@ -254,6 +389,7 @@ class Player {
     this.cardTrend = el("div", "rp-card-trend");
     this.cardTrend.title = "Gap to the car ahead, last five minutes";
     this.analyseButton = el("button", "", "Analyse this lap");
+    this.analyseButton.disabled = true;
     this.on(this.analyseButton, "click", () => {
       this.reportCursor();
       this.report("analyse", this.cardLap);
@@ -261,6 +397,7 @@ class Player {
     this.card.append(this.cardTitle, this.cardFacts, this.cardLaps, this.cardTrend, this.analyseButton);
     side.append(this.card);
     this.rcNode = el("div", "rp-rc");
+    this.rcNode.id = "rp-rc";
     this.rcNode.setAttribute("aria-label", "Race control");
     this.rcLines = [0, 1, 2].map(() => el("div", "rp-rc-line"));
     this.rcNode.append(el("div", "rp-label", "Race control"), ...this.rcLines);
@@ -308,10 +445,21 @@ class Player {
     controls.append(this.speedSelect);
     this.labelButton = el("button", "", "Labels");
     this.labelButton.title = "Driver labels on the map (L)";
+    this.labelButton.setAttribute("aria-pressed", "false");
     this.on(this.labelButton, "click", () => this.toggleLabels());
     controls.append(this.labelButton);
+    this.followButton = el("button", "", "Follow");
+    this.followButton.title = "Keep the map on the focused driver (F)";
+    this.followButton.setAttribute("aria-pressed", "false");
+    this.on(this.followButton, "click", () => this.toggleFollow());
+    controls.append(this.followButton);
     const rcToggle = el("button", "rp-rc-toggle", "Race control");
-    this.on(rcToggle, "click", () => this.rcNode.classList.toggle("open"));
+    rcToggle.setAttribute("aria-controls", this.rcNode.id);
+    rcToggle.setAttribute("aria-expanded", "false");
+    this.on(rcToggle, "click", () => {
+      this.rcNode.classList.toggle("open");
+      rcToggle.setAttribute("aria-expanded", String(this.rcNode.classList.contains("open")));
+    });
     controls.append(rcToggle);
     this.readout = el("span", "rp-readout");
     controls.append(this.readout);
@@ -319,7 +467,13 @@ class Player {
 
     // Timeline
     this.timelineNode = el("div", "rp-timeline");
-    this.timelineNode.setAttribute("aria-label", "Timeline: click or drag to seek");
+    // A slider for keyboards and screen readers: arrow keys seek (onKey),
+    // Home and End go to either end.
+    this.timelineNode.setAttribute("role", "slider");
+    this.timelineNode.tabIndex = 0;
+    this.timelineNode.setAttribute("aria-label", "Session time");
+    this.timelineNode.setAttribute("aria-valuemin", Math.round(this.clock.start - this.clock.lights_out));
+    this.timelineNode.setAttribute("aria-valuemax", Math.round(this.clock.end - this.clock.lights_out));
     body.append(this.timelineNode);
     this.drawTimeline();
     if (typeof ResizeObserver !== "undefined") {
@@ -390,7 +544,13 @@ class Player {
       cells.tyreAge = el("span", "rp-num");
       cells.tyre.append(cells.tyreBadge, cells.tyreAge);
       row.title = driver.team ? `${driver.name} ${DOT} ${driver.team}` : driver.name;
+      // A button for keyboards and screen readers (UI-15): Enter or Space
+      // focuses the driver, the up and down arrows move between rows.
+      row.setAttribute("role", "button");
+      row.tabIndex = 0;
+      row.setAttribute("aria-pressed", "false");
       this.on(row, "click", () => this.setFocus(driver.code));
+      this.on(row, "keydown", (event) => this.onRowKey(event, driver.code));
       const heading = el("div", "rp-heading rp-label");
       heading.hidden = true;
       this.rowsNode.append(heading, row);

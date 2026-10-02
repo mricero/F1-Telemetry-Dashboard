@@ -22,7 +22,10 @@ WHITE = "#ffffff"
 EDGE = "#07080a"  # the 1 px darker edge under the track ribbon
 
 # --- Timing conventions ---------------------------------------------------
-BEST = "#b138dd"  # session best (purple)
+BEST = "#b138dd"  # session best (purple): fills, segments and flashes
+# Session-best *text*: BEST itself measures 3.9:1 on SURFACE, under the 4.5:1
+# body-text floor (UI-14). This lighter purple reads 5.97:1 / 5.52:1.
+BEST_TEXT = "#c56ef0"
 PB = "#2fbf5b"  # personal best (green)
 SLOWER = "#e6c229"  # slower than personal best (yellow)
 SEGMENT_NONE = LINE  # a mini-sector with no usable time
@@ -85,7 +88,8 @@ COMPOUND_RING = {
 FLAG_GREEN = "#2fbf5b"
 FLAG_YELLOW = "#e6c229"
 FLAG_AMBER = "#f2a900"
-FLAG_RED = "#e5484d"
+# Dark enough for white chip text at 5.57:1 (UI-14; the old #e5484d gave 3.91:1).
+FLAG_RED = "#c62a2f"
 FLAG_STATES = {
     "GREEN": (FLAG_GREEN, "#06200e", "GREEN"),
     "YELLOW": (FLAG_YELLOW, "#1f1a00", "YELLOW"),
@@ -154,6 +158,23 @@ def _luminance(colour: str) -> float:
     return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 
 
+def contrast_ratio(first: str, second: str) -> float:
+    """WCAG 2 contrast ratio between two hex colours (1.0 to 21.0)."""
+    light, dark = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+# Colours lap times, gaps and sector times are written in (UI-14): each must
+# reach 4.5:1 on both panel surfaces.
+TIME_TEXT_TOKENS = {
+    "TEXT": TEXT,
+    "TEXT_DIM": TEXT_DIM,
+    "BEST_TEXT": BEST_TEXT,
+    "PB": PB,
+    "SLOWER": SLOWER,
+}
+
+
 def text_on(colour: str) -> str:
     """Black or white, whichever reads better on ``colour`` (guideline 5.4)."""
     light = _luminance(colour)
@@ -180,7 +201,8 @@ def chart_layout(series_count: int) -> dict:
 
     Transparent paper on a ``--surface`` plot area, 1 px ``--line`` grid,
     11 px ``--text-dim`` ticks, no title inside the figure (the panel label
-    is the title), a legend only above three series, and an x-unified hover.
+    is the title), a legend only above three series, and an ``x`` hover. Charts
+    override any of it through :func:`ui.layout.styled_figure`.
     """
     axis = {
         "gridcolor": LINE,
@@ -198,7 +220,9 @@ def chart_layout(series_count: int) -> dict:
         "yaxis": axis,
         "showlegend": series_count > 3,
         "legend": {"font": {"size": 11, "color": TEXT_DIM}, "orientation": "h", "y": 1.02},
-        "hovermode": "x unified",
+        # One label per series at the cursor; "x unified" stacked a 20-driver
+        # box over the chart (UX-02).
+        "hovermode": "x",
         "hoverlabel": {"bgcolor": SURFACE_2, "bordercolor": LINE, "font": {"size": 12}},
         "margin": {"l": 48, "r": 16, "t": 16, "b": 40},
     }
@@ -224,6 +248,7 @@ CSS_TOKENS = f"""
   --text-dim: {TEXT_DIM};
   --accent: {ACCENT};
   --best: {BEST};
+  --best-text: {BEST_TEXT};
   --pb: {PB};
   --slower: {SLOWER};
   --font-label: {LABEL_STACK};
@@ -235,6 +260,17 @@ CSS_TOKENS = f"""
 # markup is the block padding (guideline 5.6).
 APP_CSS = """
 .block-container { padding-top: 3.5rem; }
+.f1-rc { font-family: var(--font-body); font-size: 13px; line-height: 1.45; color: var(--text); }
+.f1-rc-row {
+  display: grid; grid-template-columns: 44px 88px 1fr; gap: 8px;
+  padding: 4px 0; border-bottom: 1px solid var(--line);
+}
+.f1-rc-lap { color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
+.f1-rc-flag {
+  font-family: var(--font-label); font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim);
+}
+.f1-rc-msg { overflow-wrap: anywhere; }
 """
 
 # Injected with every dashboard render. Scoped under .f1-dash so it cannot
@@ -338,7 +374,7 @@ DASHBOARD_CSS = f"""
 .f1-badge.out {{ border-color: var(--line); color: var(--text-dim); }}
 
 .f1-time {{ font-variant-numeric: tabular-nums; }}
-.f1-time.best {{ color: var(--best); font-weight: 600; }}
+.f1-time.best {{ color: var(--best-text); font-weight: 600; }}
 .f1-time.pb {{ color: var(--pb); }}
 .f1-dim {{ color: var(--text-dim); }}
 
@@ -371,7 +407,12 @@ DASHBOARD_CSS = f"""
 }}
 
 /* ---------- sector top-3 widgets ---------- */
-.f1-sectors {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 8px; }}
+/* auto-fit: three cards side by side on a desktop, fewer per row on a phone,
+   so the sector-3 times are never clipped by .f1-dash's overflow (UI-20). */
+.f1-sectors {{
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px; padding: 8px;
+}}
 .f1-sector-card {{ border-top: 1px solid var(--line); }}
 .f1-sector-head {{
   color: var(--text-dim); font-family: var(--font-label); font-size: 11px; font-weight: 600;

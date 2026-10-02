@@ -8,6 +8,7 @@ accent bars.
 """
 
 import html
+import re
 from collections.abc import Sequence
 
 import pandas as pd
@@ -149,7 +150,7 @@ def _flag_state(session_data: dict) -> str:
     return "FINISHED"
 
 
-CLOCK_PLACEHOLDER = "--:--:--"
+CLOCK_PLACEHOLDER = MISSING
 
 
 def _session_clock(session_data: dict) -> str:
@@ -209,8 +210,9 @@ def header_html(session_data: dict) -> str:
 
     def number(key: str, unit: str, digits: int = 1) -> str:
         value = latest.get(key)
+        value = pd.to_numeric(value, errors="coerce") if value is not None else None
         if value is None or pd.isna(value):
-            return "--"
+            return MISSING
         return f"{float(value):.{digits}f} {unit}"
 
     rain = latest.get("Rainfall")
@@ -220,7 +222,7 @@ def header_html(session_data: dict) -> str:
     wind = (
         f"{_wind_arrow(direction)} {wind_speed:.1f} km/h {_cardinal(direction)}".strip()
         if wind_speed is not None
-        else "--"
+        else MISSING
     )
 
     # REPLAY-08: without the timing stream (an old replay, or FastF1 could
@@ -299,13 +301,29 @@ def _tyres_html(history: Sequence[dict]) -> str:
     return f'<div class="f1-tyres">{"".join(badges)}</div>'
 
 
-# Badge -> CSS modifier. "+1L"-style badges (a lapped but classified finish)
-# are matched by prefix below.
+# The tower's status vocabulary (guideline 5.6): the model's words -> the
+# chip word. On track and a plain classified finish are the normal state and
+# show an empty cell; a lapped finisher is a finish (the laps down belong in
+# the gap column, UI-13). Anything outside the vocabulary shows nothing
+# rather than an unexplained word.
+STATUS_WORDS = {
+    "ON TRACK": "",
+    "CLASSIFIED": "",
+    "": "",
+    "IN PIT": "PIT",
+    "PIT": "PIT",
+    "OUT": "OUT",
+    "FIN": "FIN",
+    "DNF": "DNF",
+    "DSQ": "DSQ",
+    "DNS": "DNS",
+    "KO": "KO",
+}
+
+# Chip word -> CSS modifier.
 STATUS_CSS = {
-    "IN PIT": "pit",
-    "ON TRACK": "track",
+    "PIT": "pit",
     "KO": "ko",
-    "CLASSIFIED": "track",
     "FIN": "track",
     "DNF": "out",
     "DSQ": "out",
@@ -313,15 +331,31 @@ STATUS_CSS = {
     "OUT": "out",
 }
 
+_LAPPED_STATUS = re.compile(r"^\+\d+\s*(L|LAP|LAPS)$")
+
+
+def status_word(status) -> str:
+    """The chip word for a model status, or ``""`` for an empty cell."""
+    text = str(status or "").strip().upper()
+    if _LAPPED_STATUS.match(text):
+        return "FIN"
+    return STATUS_WORDS.get(text, "")
+
 
 def _status_html(status: str) -> str:
-    # On track is the normal state: an empty cell (guideline 5.6).
-    if status == "ON TRACK":
+    word = status_word(status)
+    if not word:
         return ""
-    css = STATUS_CSS.get(status)
-    if css is None:
-        css = "track" if status.startswith("+") and status.endswith("L") else "out"
-    return f'<span class="f1-badge {css}">{_esc(status)}</span>'
+    return f'<span class="f1-badge {STATUS_CSS.get(word, "out")}">{_esc(word)}</span>'
+
+
+def _speed_text(speed, word: str) -> str:
+    """Speed-trap cell: a car in the pit lane has no trap speed, not 0."""
+    if speed is None or pd.isna(speed):
+        return MISSING
+    if word == "PIT" and float(speed) == 0.0:
+        return MISSING
+    return f"{float(speed):.0f}"
 
 
 def tower_html(rows: Sequence[dict]) -> str:
@@ -349,11 +383,10 @@ def tower_html(rows: Sequence[dict]) -> str:
             if row.get("last_is_session_best")
             else "f1-time pb" if row.get("last_is_personal_best") else "f1-time"
         )
-        status = (
-            "KO" if row.get("knocked_out") and row.get("status") == "CLASSIFIED" else row["status"]
-        )
-        speed = row.get("speed_kmh")
-        speed_text = f"{speed:.0f}" if speed is not None and pd.notna(speed) else MISSING
+        status = row.get("status")
+        if row.get("knocked_out") and not status_word(status):
+            status = "KO"
+        speed_text = _speed_text(row.get("speed_kmh"), status_word(status))
         # Diff is measured against the session ideal; the driver's own ideal
         # lap is the other half of the picture (spec section 3.12).
         personal_ideal = row.get("personal_ideal")
@@ -479,6 +512,20 @@ def _replay_markers(session_data: dict, rows: Sequence[dict]) -> list[dict]:
     return markers
 
 
+def track_state_marks(session_data: dict) -> tuple[str, str | None]:
+    """The map's SC/VSC/RED chip markup and ribbon tint (REPLAY-07, LIVE-22).
+
+    Only a replay moment or a live session has a "now" to show; the Results
+    page's map is the whole session, so it gets neither.
+    """
+    if not (_is_snapshot(session_data) or session_data.get("is_live")):
+        return "", None
+    state = _flag_state(session_data)
+    if state not in TRACK_CHIPS:
+        return "", None
+    return status_chip(TRACK_CHIPS[state], state), FLAG_STATES[state][0]
+
+
 def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     """Track map with dominance colouring, corners and a benchmark overlay.
 
@@ -488,6 +535,7 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
     """
     telemetry, location = dashboard_frames(session_data)
     laps = session_data.get("laps")
+    chip, tint = track_state_marks(session_data)
     if _is_snapshot(session_data):
         svg = build_track_svg(
             location,
@@ -495,6 +543,7 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
             driver_meta=_driver_meta(rows),
             markers=_replay_markers(session_data, rows),
             title=f"{_map_name(session_data)} at {info_time(session_data)}",
+            tint=tint,
         )
         if svg is None:
             return (
@@ -504,13 +553,8 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
             )
         label = f"Track map with every car at {info_time(session_data)}"
         # REPLAY-07: under a safety car, VSC or red flag the map says so.
-        state = flag_state(session_data)
-        chip = (
-            f'<div class="f1-bench">{status_chip(TRACK_CHIPS[state], state)}</div>'
-            if state in TRACK_CHIPS
-            else ""
-        )
-        return f'<div class="f1-map-wrap">{chip}{svg_image(svg, label)}</div>'
+        bench = f'<div class="f1-bench">{chip}</div>' if chip else ""
+        return f'<div class="f1-map-wrap">{bench}{svg_image(svg, label)}</div>'
 
     micro = {}
     for code, frame in telemetry.items():
@@ -542,6 +586,7 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
         markers=markers,
         segment_distances=segment_distances,
         title=f"{_map_name(session_data)}: fastest driver through each mini-sector",
+        tint=tint,
     )
     if svg is None:
         return (
@@ -559,8 +604,10 @@ def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
         if best is not None
         else ""
     )
+    # LIVE-22: under SC/VSC/red the live map carries the chip too.
+    chip_line = f'<div style="margin-bottom:4px">{chip}</div>' if chip else ""
     bench = (
-        '<div class="f1-bench"><div class="f1-bench-label">Session best</div>'
+        f'<div class="f1-bench">{chip_line}<div class="f1-bench-label">Session best</div>'
         f'<div class="f1-bench-time f1-num">{_esc(leader)}</div>{ideal}</div>'
     )
     label = "Track map coloured by the fastest driver through each mini-sector"

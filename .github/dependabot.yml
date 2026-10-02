@@ -1,0 +1,38 @@
+# Weekly update PRs (TEST-09). Streamlit once fell five minors behind because
+# nothing proposed the upgrade. CI's lock job re-compiles requirements*.lock
+# and fails on a diff, so a PR that bumps requirements.txt without the lock
+# shows red until `python scripts/lock_requirements.py` is run on it.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tools:
+        patterns: ["ruff", "black", "mypy", "pytest*", "hypothesis", "pre-commit"]
+      runtime:
+        patterns: ["*"]
+        exclude-patterns: ["ruff", "black", "mypy", "pytest*", "hypothesis", "pre-commit"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pre-commit
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      hooks:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/tests/js"
+    schedule:
+      interval: monthly

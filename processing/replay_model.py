@@ -19,6 +19,7 @@ module: no Streamlit, no network.
 """
 
 import bisect
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
@@ -26,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from processing.replay import ReplayClock, format_clock, replay_clock
-from processing.time_utils import seconds_series
+from processing.time_utils import seconds_series, to_seconds
 from processing.timing import (
     LEADER,
     MISSING,
@@ -64,6 +65,17 @@ TRACK_STATUS_FLAGS = {
 }
 
 SEGMENT_NAMES = ("Q1", "Q2", "Q3")
+SPRINT_SEGMENT_NAMES = ("SQ1", "SQ2", "SQ3")
+_SPRINT_QUALIFYING = {"sq", "sprint qualifying", "sprint shootout"}
+
+
+def segment_names(info: dict | None) -> tuple[str, ...]:
+    """``SQ1``..``SQ3`` for sprint qualifying, else ``Q1``..``Q3`` (REPLAY-24)."""
+    for key in ("session_type", "session_name"):
+        value = str((info or {}).get(key) or "").strip().lower()
+        if value in _SPRINT_QUALIFYING:
+            return SPRINT_SEGMENT_NAMES
+    return SEGMENT_NAMES
 
 TOWER_FIELDS = (
     "position",
@@ -76,6 +88,8 @@ TOWER_FIELDS = (
     "last",
     "last_s",
     "last_flag",
+    "last_deleted",
+    "last_deleted_reason",
     "best",
     "best_s",
     "s1",
@@ -102,6 +116,8 @@ FIELD_DEFAULTS: dict = {
     "last": MISSING,
     "last_s": None,
     "last_flag": None,
+    "last_deleted": False,
+    "last_deleted_reason": None,
     "best": MISSING,
     "best_s": None,
     "s1": None,
@@ -132,6 +148,8 @@ STANDINGS_COLUMNS = [
     "LastLap",
     "LastSeconds",
     "LastFlag",
+    "LastDeleted",
+    "LastDeletedReason",
     "BestLap",
     "BestSeconds",
     "S1",
@@ -157,6 +175,8 @@ STANDINGS_FIELDS = {
     "LastLap": "last",
     "LastSeconds": "last_s",
     "LastFlag": "last_flag",
+    "LastDeleted": "last_deleted",
+    "LastDeletedReason": "last_deleted_reason",
     "BestLap": "best",
     "BestSeconds": "best_s",
     "S1": "s1",
@@ -281,6 +301,9 @@ class TowerSeries:
     chequered: float | None = None
     estimated: bool = False
     order_hint: dict[str, int] = field(default_factory=dict)
+    segment_names: tuple[str, ...] = SEGMENT_NAMES
+    # Red-flag (track status 5) spans, for the segment clock (REPLAY-24).
+    suspensions: tuple[tuple[float, float], ...] = ()
 
     def value(self, code: str, name: str, moment: float):
         series = self.fields.get(code, {}).get(name)
@@ -352,6 +375,10 @@ LAP_TABLE_COLUMNS = [
     "s2_at",
     "s3_at",
     "valid",
+    "base_valid",
+    "del_at",
+    "reinst_at",
+    "del_reason",
     "Compound",
     "TyreLife",
     "FreshTyre",
@@ -360,12 +387,103 @@ LAP_TABLE_COLUMNS = [
 ]
 
 
-def lap_table(laps: pd.DataFrame | None) -> pd.DataFrame:
+# FastF1's own patterns (fastf1.core.Session._set_laps_deleted_from_rcm):
+# FastF1 sets ``Deleted`` from these race-control messages, which arrive
+# minutes after the lap ended (REPLAY-20).
+DELETED_MESSAGE = re.compile(r"CAR (\d{1,2}) .* TIME (\d:\d\d\.\d\d\d) DELETED - (.*)")
+REINSTATED_MESSAGE = re.compile(r"CAR (\d{1,2}) .* TIME (\d:\d\d\.\d\d\d) .*REINSTATED.*")
+_LOCAL_CLOCK = re.compile(r"\d\d:\d\d:\d\d")
+
+
+def _deletion_messages(
+    control: pd.DataFrame | None,
+) -> tuple[dict[tuple[str, float], tuple[float, str]], dict[tuple[str, float], list[float]]]:
+    """``(car, lap seconds) -> (when, reason)`` for deletions, and the
+    reinstatement times per lap, from race control on the session clock."""
+    deleted: dict[tuple[str, float], tuple[float, str]] = {}
+    reinstated: dict[tuple[str, float], list[float]] = {}
+    if control is None or control.empty or "Message" not in control.columns:
+        return deleted, reinstated
+    stamps = _event_seconds(control)
+    for moment, message in zip(stamps.tolist(), control["Message"].tolist(), strict=True):
+        if np.isnan(moment) or not isinstance(message, str):
+            continue
+        match = DELETED_MESSAGE.match(message)
+        if match:
+            key = (match[1], to_seconds(match[2]) or 0.0)
+            reason = " ".join(_LOCAL_CLOCK.sub("", match[3]).split())
+            if key not in deleted or moment < deleted[key][0]:
+                deleted[key] = (float(moment), reason)
+            continue
+        match = REINSTATED_MESSAGE.match(message)
+        if match:
+            key = (match[1], to_seconds(match[2]) or 0.0)
+            reinstated.setdefault(key, []).append(float(moment))
+    return deleted, reinstated
+
+
+def _deletion_windows(
+    work: pd.DataFrame, end: np.ndarray, lap_s: np.ndarray, control: pd.DataFrame | None
+) -> tuple[np.ndarray, np.ndarray, list]:
+    """When each lap was deleted and reinstated (``inf`` = never).
+
+    A lap counts as valid from its end until ``del_at`` and again from
+    ``reinst_at``. A lap marked ``Deleted`` without a matching message (a
+    source without race control) is deleted from the moment it ends, which
+    is what the tower showed before REPLAY-20.
+    """
+    count = len(work)
+    del_at = np.full(count, np.inf)
+    reinst_at = np.full(count, np.inf)
+    reasons: list = [None] * count
+    final = _flags(work, "Deleted", False)
+    if "DeletedReason" in work.columns:
+        for index, reason in enumerate(work["DeletedReason"].tolist()):
+            if isinstance(reason, str) and reason.strip():
+                reasons[index] = " ".join(reason.split())
+    messages, reinstatements = _deletion_messages(control)
+    numbers = (
+        work["DriverNumber"].astype(str).tolist()
+        if messages and "DriverNumber" in work.columns
+        else None
+    )
+    for index in range(count):
+        found = None
+        if numbers is not None and not np.isnan(lap_s[index]):
+            key = (numbers[index], round(float(lap_s[index]), 3))
+            found = messages.get(key)
+        if found is not None:
+            when, reason = found
+            if not np.isnan(end[index]):
+                when = max(when, float(end[index]))
+            del_at[index] = when
+            reasons[index] = reasons[index] or reason or None
+            later = [m for m in reinstatements.get(key, []) if m >= when]
+            if later:
+                reinst_at[index] = min(later)
+        elif final[index]:
+            del_at[index] = float(end[index]) if not np.isnan(end[index]) else -np.inf
+    return del_at, reinst_at, reasons
+
+
+def valid_at(lap, moment: float) -> bool:
+    """Whether a lap-table row counts as a valid lap at ``moment``."""
+    return bool(lap.base_valid) and not (lap.del_at <= moment < lap.reinst_at)
+
+
+def session_lap_table(session_data: dict) -> pd.DataFrame:
+    """:func:`lap_table` with the deletion times from the session's race control."""
+    return lap_table(session_data.get("laps"), session_data.get("race_control"))
+
+
+def lap_table(laps: pd.DataFrame | None, race_control: pd.DataFrame | None = None) -> pd.DataFrame:
     """Laps with every time as float session seconds, sorted per driver.
 
     ``row`` is the lap's position in the frame passed in. Sector session
     times fall back to ``LapStartTime`` plus the sector durations when
-    FastF1 did not record them.
+    FastF1 did not record them. ``valid`` is the final verdict;
+    ``base_valid``/``del_at``/``reinst_at`` say when it was known
+    (:func:`valid_at`, REPLAY-20).
     """
     if laps is None or laps.empty or "Driver" not in laps.columns:
         return pd.DataFrame(columns=LAP_TABLE_COLUMNS)
@@ -387,7 +505,7 @@ def lap_table(laps: pd.DataFrame | None) -> pd.DataFrame:
             "s1_at": _seconds(work, "Sector1SessionTime"),
             "s2_at": _seconds(work, "Sector2SessionTime"),
             "s3_at": _seconds(work, "Sector3SessionTime"),
-            "valid": ~_flags(work, "Deleted", False) & _flags(work, "IsAccurate", True),
+            "valid": False,
             "Compound": work.get("Compound", missing),
             "TyreLife": pd.to_numeric(work.get("TyreLife", missing), errors="coerce"),
             "FreshTyre": work.get("FreshTyre", missing),
@@ -398,7 +516,15 @@ def lap_table(laps: pd.DataFrame | None) -> pd.DataFrame:
     table["s1_at"] = table["s1_at"].fillna(table["start"] + table["s1"])
     table["s2_at"] = table["s2_at"].fillna(table["s1_at"] + table["s2"])
     table["s3_at"] = table["s3_at"].fillna(table["end"])
-    table["valid"] &= table["lap_s"].notna()
+    base_valid = _flags(work, "IsAccurate", True) & table["lap_s"].notna().to_numpy()
+    del_at, reinst_at, reasons = _deletion_windows(
+        work, table["end"].to_numpy(float), table["lap_s"].to_numpy(float), race_control
+    )
+    table["base_valid"] = base_valid
+    table["del_at"] = del_at
+    table["reinst_at"] = reinst_at
+    table["del_reason"] = pd.Series(reasons, dtype=object)
+    table["valid"] = base_valid & ~((del_at < np.inf) & np.isinf(reinst_at))
     return table.sort_values(["Driver", "LapNumber"], kind="stable").reset_index(drop=True)
 
 
@@ -466,17 +592,46 @@ def flag_state(session_data: dict) -> str:
     """
     info = session_data.get("session_info") or {}
     moment = info.get("replay_time")
-    flags = chequered_times(session_data)
-    if flags and (moment is None or flags[0] <= moment):
-        return "CHEQUERED"
+    for start, end in chequered_windows(session_data):
+        if moment is None and np.isinf(end):
+            return "CHEQUERED"
+        if moment is not None and start <= moment < end:
+            return "CHEQUERED"
     status = session_data.get("track_status")
     if status is not None and not status.empty and "Status" in status.columns:
         return TRACK_STATUS_FLAGS.get(str(status["Status"].iloc[-1]), "GREEN")
     return "GREEN"
 
 
-def flag_timeline(session_data: dict) -> list[tuple[float, str]]:
-    """Every change of the flag state, for the player's timeline and tint."""
+def chequered_windows(session_data: dict) -> list[tuple[float, float]]:
+    """``[start, end)`` spans in which the chequered flag is the flag state.
+
+    A race ends at its first chequered flag. Qualifying shows a track-wide
+    CHEQUERED at the end of every segment (Q1-Q3, SQ1-SQ3), and each one
+    lasts only until the next segment starts (REPLAY-17). Practice ends at
+    its last one.
+    """
+    flags = chequered_times(session_data)
+    if not flags:
+        return []
+    info = session_data.get("session_info") or {}
+    kind = _session_kind(info)
+    if kind == "race":
+        return [(flags[0], np.inf)]
+    starts = sorted(float(s) for s in (info.get("segment_starts") or []))
+    if kind != "qualifying" or not starts:
+        return [(flags[-1], np.inf)]
+    windows = []
+    bounds = [*starts[1:], np.inf]
+    for index, segment_start in enumerate(starts):
+        upto = bounds[index]
+        inside = [f for f in flags if (index == 0 or f >= segment_start) and f < upto]
+        if inside:
+            windows.append((inside[0], upto))
+    return windows
+
+
+def _status_points(session_data: dict) -> list[tuple[float, str]]:
     points: list[tuple[float, str]] = []
     status = session_data.get("track_status")
     if status is not None and not status.empty and "Status" in status.columns:
@@ -484,10 +639,19 @@ def flag_timeline(session_data: dict) -> list[tuple[float, str]]:
         for moment, code in zip(_event_seconds(status).tolist(), codes, strict=True):
             if not np.isnan(moment):
                 points.append((float(moment), TRACK_STATUS_FLAGS.get(code, "GREEN")))
-    flags = chequered_times(session_data)
-    if flags:
-        points = [p for p in points if p[0] < flags[0]]
-        points.append((flags[0], "CHEQUERED"))
+    return sorted(points, key=lambda point: point[0])
+
+
+def flag_timeline(session_data: dict) -> list[tuple[float, str]]:
+    """Every change of the flag state, for the player's timeline and tint."""
+    points = _status_points(session_data)
+    status_now = _series(points)
+    for start, end in chequered_windows(session_data):
+        points = [p for p in points if not start <= p[0] < end]
+        points.append((start, "CHEQUERED"))
+        if np.isfinite(end):
+            # The next segment starts under whatever the track status says.
+            points.append((end, status_now.at(end, "GREEN")))
     series = _series(points)
     return list(zip(series.t.tolist(), series.v, strict=True))
 
@@ -641,32 +805,112 @@ def _status_series(
     return _series((moment, state(moment)) for moment in sorted(candidates))
 
 
+class _BestTracker:
+    """The quickest of a changing set of laps; ties go to the earlier lap."""
+
+    def __init__(self) -> None:
+        self.active: dict[int, tuple[float, float, object]] = {}
+        self._best: tuple[float, float, object] | None = None
+        self._stale = False
+
+    def add(self, lap) -> None:
+        key = (float(lap.lap_s), float(lap.end), lap)
+        self.active[lap.row] = key
+        if not self._stale and (self._best is None or key[:2] < self._best[:2]):
+            self._best = key
+
+    def remove(self, lap) -> None:
+        if self.active.pop(lap.row, None) is not None and self._best is not None:
+            self._stale = self._stale or self._best[2].row == lap.row
+
+    def best(self):
+        if self._stale:
+            self._best = min(self.active.values(), key=lambda k: k[:2], default=None)
+            self._stale = False
+        return self._best[2] if self._best is not None else None
+
+
+def _validity_events(laps: pd.DataFrame) -> list[tuple[float, int, object]]:
+    """``(moment, order, lap)``: order 0 = becomes valid, 1 = deleted.
+
+    A lap becomes valid when it ends (unless it is already deleted then) and
+    again when reinstated; it stops being valid when the deletion is
+    announced. Sorted, so a sweep sees the session as it unfolded.
+    """
+    found: list[tuple[float, int, object]] = []
+    for lap in laps.itertuples():
+        if not lap.base_valid or pd.isna(lap.end):
+            continue
+        if valid_at(lap, lap.end):
+            found.append((float(lap.end), 0, lap))
+        if np.isfinite(lap.del_at) and lap.del_at > lap.end:
+            found.append((float(lap.del_at), 1, lap))
+        if np.isfinite(lap.reinst_at):
+            found.append((float(lap.reinst_at), 0, lap))
+    found.sort(key=lambda item: (item[0], item[1], item[2].row))
+    return found
+
+
+def _running_best(laps: pd.DataFrame) -> list[tuple[float, object]]:
+    """Change points of the quickest valid lap among ``laps``, as known."""
+    tracker = _BestTracker()
+    points: list[tuple[float, object]] = []
+    for moment, order, lap in _validity_events(laps):
+        if order == 0:
+            tracker.add(lap)
+        else:
+            tracker.remove(lap)
+        current = tracker.best()
+        if not points or points[-1][1] is not current:
+            if points and points[-1][0] == moment:
+                points[-1] = (moment, current)
+            else:
+                points.append((moment, current))
+    return points
+
+
 def _lap_fields(kind: str, own: pd.DataFrame, total_laps: int | None) -> dict[str, FieldSeries]:
     """Fields that change only with the driver's own laps."""
     completed = own[own["end"].notna()].sort_values("end", kind="stable")
     lap_points: list[tuple[float, object]] = [(BEFORE_EVERYTHING, 1 if kind == "race" else 0)]
     last: list[tuple[float, object]] = []
     last_s: list[tuple[float, object]] = []
-    best: list[tuple[float, object]] = []
-    best_s: list[tuple[float, object]] = []
-    running_best = None
-    for count, lap in enumerate(completed.itertuples(), start=1):
+    deleted: list[tuple[float, object]] = []
+    reason: list[tuple[float, object]] = []
+    ordered = list(completed.itertuples())
+    for count, lap in enumerate(ordered, start=1):
         lap_value = count + 1 if kind == "race" else count
         if kind == "race" and total_laps:
             lap_value = min(lap_value, int(total_laps))
         lap_points.append((lap.end, lap_value))
         last.append((lap.end, format_laptime(lap.lap_s)))
         last_s.append((lap.end, lap.lap_s))
-        if lap.valid and (running_best is None or lap.lap_s < running_best):
-            running_best = float(lap.lap_s)
-            best.append((lap.end, format_laptime(running_best)))
-            best_s.append((lap.end, running_best))
+        # The last-lap cell is marked deleted from the stewards' message
+        # until the next lap replaces it (REPLAY-18, REPLAY-20).
+        deleted.append((lap.end, False))
+        reason.append((lap.end, None))
+        following = ordered[count].end if count < len(ordered) else np.inf
+        if np.isfinite(lap.del_at) or lap.del_at == -np.inf:
+            start = max(lap.del_at, lap.end)
+            if start < following:
+                deleted.append((start, True))
+                reason.append((start, lap.del_reason))
+                if lap.reinst_at < following:
+                    deleted.append((lap.reinst_at, False))
+                    reason.append((lap.reinst_at, None))
 
     fields = {
         "lap": _series(lap_points),
         "last": _series(last),
         "last_s": _series(last_s),
+        "last_deleted": _series(deleted),
+        "last_deleted_reason": _series(reason),
     }
+    best: list[tuple[float, object]] = []
+    best_s: list[tuple[float, object]] = []
+    for moment, lap in _running_best(completed):
+        best.append((moment, format_laptime(lap.lap_s) if lap is not None else MISSING))
+        best_s.append((moment, float(lap.lap_s) if lap is not None else None))
     if kind != "qualifying":  # qualifying bests are per segment
         fields["best"] = _series(best)
         fields["best_s"] = _series(best_s)
@@ -734,21 +978,36 @@ def _flying_series(own: pd.DataFrame) -> FieldSeries:
 def _last_flags(table: pd.DataFrame) -> dict[str, FieldSeries]:
     """Purple (session best) / green (personal best) on each completed lap."""
     completed = table[table["end"].notna()].sort_values("end", kind="stable")
-    session_best = None
-    personal: dict[str, float] = {}
     points: dict[str, list] = {}
+    next_end: dict[int, float] = {}
+    for _, own in completed.groupby("Driver", sort=False):
+        ends, rows = own["end"].tolist(), own["row"].tolist()
+        next_end.update(zip(rows, [*ends[1:], np.inf], strict=True))
     for lap in completed.itertuples():
-        flag = None
-        if lap.valid:
-            mine = personal.get(lap.Driver)
-            if session_best is None or lap.lap_s < session_best:
+        points.setdefault(lap.Driver, []).append((lap.end, None))
+
+    # Each flag is decided when the lap ends, against the laps valid then; a
+    # deletion announced later clears it while it is still the last lap.
+    session = _BestTracker()
+    personal: dict[str, _BestTracker] = {}
+    for moment, order, lap in _validity_events(completed):
+        mine = personal.setdefault(lap.Driver, _BestTracker())
+        if order == 1:
+            session.remove(lap)
+            mine.remove(lap)
+            if moment < next_end.get(lap.row, np.inf):
+                points[lap.Driver].append((moment, None))
+            continue
+        if moment == lap.end:
+            best, own_best = session.best(), mine.best()
+            flag = None
+            if best is None or lap.lap_s < best.lap_s:
                 flag = "sb"
-                session_best = float(lap.lap_s)
-            elif mine is None or lap.lap_s < mine:
+            elif own_best is None or lap.lap_s < own_best.lap_s:
                 flag = "pb"
-            if mine is None or lap.lap_s < mine:
-                personal[lap.Driver] = float(lap.lap_s)
-        points.setdefault(lap.Driver, []).append((lap.end, flag))
+            points[lap.Driver].append((lap.end, flag))
+        session.add(lap)
+        mine.add(lap)
     return {code: _series(values) for code, values in points.items()}
 
 
@@ -890,6 +1149,7 @@ def _timed_fields(
     table: pd.DataFrame,
     codes: list[str],
     segment_starts: list[float],
+    names: tuple[str, ...] = SEGMENT_NAMES,
 ) -> tuple[dict[str, dict[str, list]], dict[str, float]]:
     """Qualifying and practice: order by best valid lap, as it stood.
 
@@ -898,9 +1158,12 @@ def _timed_fields(
     the segment they went out in, once that segment has ended. Returns the
     per-field points and each knocked-out driver's KO time.
     """
-    completed = table[table["end"].notna() & table["valid"]].sort_values("end", kind="stable")
+    completed = table[table["end"].notna() & table["base_valid"]].sort_values("end", kind="stable")
     laps = list(completed.itertuples())
-    moments = sorted(set(completed["end"].tolist()) | set(segment_starts))
+    # A deletion or reinstatement re-ranks the tower when it is announced.
+    windows = [completed["del_at"], completed["reinst_at"]]
+    announced = {float(t) for column in windows for t in column.tolist() if np.isfinite(t)}
+    moments = sorted(set(completed["end"].tolist()) | set(segment_starts) | announced)
     cutoffs = qualifying_cutoffs(len(codes))
     points: dict[str, dict[str, list]] = {
         code: {name: [] for name in TIMED_FIELDS} for code in codes
@@ -911,12 +1174,15 @@ def _timed_fields(
     def segment_of(moment: float) -> int:
         return bisect.bisect_right(segment_starts, moment) - 1
 
-    def bests(until: float, segment: int | None) -> dict[str, tuple[float, float]]:
-        """Best ``(time, when set)`` per driver among laps completed by ``until``."""
+    def bests(until: float, segment: int | None, known: float) -> dict[str, tuple[float, float]]:
+        """Best ``(time, when set)`` per driver among laps completed by
+        ``until`` and still valid as far as was known at ``known``."""
         found: dict[str, tuple[float, float]] = {}
         for lap in laps:
             if lap.end > until:
                 break
+            if lap.del_at <= known < lap.reinst_at:
+                continue
             if segment is not None and segment_of(lap.end) != segment:
                 continue
             current = found.get(lap.Driver)
@@ -945,17 +1211,19 @@ def _timed_fields(
         previous_rank: dict[str, int] = {}
         for finished in range(max(segment, 0)):
             # Segment `finished` is over: the next one has started.
-            times = bests(segment_starts[finished + 1], finished)
+            times = bests(segment_starts[finished + 1], finished, moment)
             order = ranked(active, times, previous_rank)
             keep = cutoffs[finished] if finished < len(cutoffs) else len(order)
             survivors, out = order[:keep], order[keep:]
-            groups.append((f"Eliminated in {SEGMENT_NAMES[finished]}", out, times))
+            groups.append((f"Eliminated in {names[finished]}", out, times))
             for code in out:
-                knocked_out.setdefault(code, segment_starts[finished + 1])
+                # When it became known: a later deletion can knock a car out
+                # of a segment that is already over (REPLAY-20).
+                knocked_out.setdefault(code, moment)
             previous_rank = {code: index for index, code in enumerate(survivors)}
             active = survivors
-        current = bests(moment, segment if segment >= 0 else None)
-        heading = SEGMENT_NAMES[segment] if groups and segment < len(SEGMENT_NAMES) else None
+        current = bests(moment, segment if segment >= 0 else None, moment)
+        heading = names[segment] if groups and segment < len(names) else None
         rows: Ranked = [
             (code, current.get(code), heading if index == 0 else None)
             for index, code in enumerate(ranked(active, current, previous_rank))
@@ -1001,7 +1269,7 @@ def _timed_fields(
         if kind == "qualifying" and segment_starts:
             record(moment, qualifying_rows(moment))
         else:
-            current = bests(moment, None)
+            current = bests(moment, None, moment)
             record(moment, [(code, current.get(code), None) for code in ranked(codes, current, {})])
     return points, knocked_out
 
@@ -1014,7 +1282,7 @@ def tower_series(session_data: dict) -> TowerSeries:
     """
     info = session_data.get("session_info") or {}
     kind = _session_kind(info)
-    table = lap_table(session_data.get("laps"))
+    table = session_lap_table(session_data)
     stream = session_data.get("timing_stream")
     if stream is None or stream.empty or "Driver" not in stream.columns:
         stream = pd.DataFrame(columns=["Time", "Driver", "Position"])
@@ -1028,6 +1296,7 @@ def tower_series(session_data: dict) -> TowerSeries:
     if not total_laps and kind == "race" and table["LapNumber"].notna().any():
         total_laps = int(table["LapNumber"].max())
     segment_starts = [float(s) for s in (info.get("segment_starts") or [])]
+    names = segment_names(info)
     samples = _sample_times(session_data.get("positions"))
 
     fields: dict[str, dict[str, FieldSeries]] = {code: {} for code in codes}
@@ -1050,7 +1319,7 @@ def tower_series(session_data: dict) -> TowerSeries:
             for code, lap_points in _race_from_laps(table, codes).items():
                 fields[code].update({name: _series(p) for name, p in lap_points.items()})
     else:
-        timed, knocked_out = _timed_fields(kind, table, codes, segment_starts)
+        timed, knocked_out = _timed_fields(kind, table, codes, segment_starts, names)
         for code, timed_points in timed.items():
             fields[code].update({name: _series(p) for name, p in timed_points.items()})
 
@@ -1088,6 +1357,8 @@ def tower_series(session_data: dict) -> TowerSeries:
         chequered=chequered,
         estimated=estimated,
         order_hint={code: index for index, code in enumerate(codes)},
+        segment_names=names,
+        suspensions=tuple(red_flag_windows(session_data)),
     )
 
 
@@ -1159,6 +1430,15 @@ def _snapshot_laps(
 
     snapshot = work.loc[done + [index for _, index in in_progress]].copy()
     snapshot["IsInProgress"] = False
+    # Deleted as far as the stewards had said at `moment` (REPLAY-20).
+    del_at = by_row["del_at"].reindex(snapshot.index).to_numpy(float)
+    reinst_at = by_row["reinst_at"].reindex(snapshot.index).to_numpy(float)
+    deleted_now = (del_at <= moment) & (moment < reinst_at)
+    if "Deleted" in snapshot.columns or deleted_now.any():
+        snapshot["Deleted"] = deleted_now
+    if "DeletedReason" in snapshot.columns:
+        reasons = by_row["del_reason"].reindex(snapshot.index)
+        snapshot["DeletedReason"] = reasons.where(deleted_now, "").fillna("").to_numpy()
     if not in_progress:
         return snapshot.reset_index(drop=True)
 
@@ -1236,7 +1516,7 @@ def snapshot_at(session_data: dict, moment: float, series: TowerSeries | None = 
     info = dict(session_data.get("session_info") or {})
     clock = session_clock(session_data)
     standings = series.standings_at(moment)
-    table = lap_table(session_data.get("laps"))
+    table = session_lap_table(session_data)
 
     snapshot = dict(session_data)
     snapshot["laps"] = _snapshot_laps(session_data.get("laps"), table, series, moment)
@@ -1252,12 +1532,69 @@ def snapshot_at(session_data: dict, moment: float, series: TowerSeries | None = 
         current_lap=series.leader_lap.at(moment) if len(series.leader_lap) else None,
         total_laps=series.total_laps,
         elapsed=moment - clock.lights_out,
-        segment=SEGMENT_NAMES[segment] if segment is not None and segment < 3 else None,
-        segment_elapsed=(moment - series.segment_starts[segment] if segment is not None else None),
+        segment=(
+            series.segment_names[segment]
+            if segment is not None and segment < len(series.segment_names)
+            else None
+        ),
+        segment_elapsed=segment_elapsed(series, moment),
+        segment_remaining=segment_remaining(series, moment),
         gaps_estimated=series.estimated,
     )
     snapshot["session_info"] = info
     return snapshot
+
+
+def red_flag_windows(session_data: dict) -> list[tuple[float, float]]:
+    """``[start, end)`` spans under a red flag (track status 5).
+
+    The end is the next status change (``inf`` while still red). Callers
+    only ever use the part of a span before the moment they draw.
+    """
+    windows: list[tuple[float, float]] = []
+    start = None
+    for moment, state in _status_points(session_data):
+        if state == "RED" and start is None:
+            start = moment
+        elif state != "RED" and start is not None:
+            windows.append((start, moment))
+            start = None
+    if start is not None:
+        windows.append((start, np.inf))
+    return windows
+
+
+# Scheduled segment lengths in seconds: Q1-Q3 and SQ1-SQ3.
+SEGMENT_SECONDS = {
+    SEGMENT_NAMES: (18 * 60.0, 15 * 60.0, 12 * 60.0),
+    SPRINT_SEGMENT_NAMES: (12 * 60.0, 10 * 60.0, 8 * 60.0),
+}
+
+
+def segment_elapsed(series: TowerSeries, moment: float) -> float | None:
+    """Running time of the current qualifying segment at ``moment``.
+
+    The segment clock stops under a red flag, so the time spent in
+    red-flag spans inside the segment is not counted (REPLAY-24).
+    """
+    segment = series.segment_at(moment)
+    if segment is None:
+        return None
+    start = series.segment_starts[segment]
+    stopped = sum(
+        max(0.0, min(end, moment) - max(begin, start)) for begin, end in series.suspensions
+    )
+    return max(moment - start - stopped, 0.0)
+
+
+def segment_remaining(series: TowerSeries, moment: float) -> float | None:
+    """Scheduled time left in the segment (18/15/12 min; sprint 12/10/8)."""
+    segment = series.segment_at(moment)
+    lengths = SEGMENT_SECONDS.get(series.segment_names)
+    elapsed = segment_elapsed(series, moment)
+    if segment is None or lengths is None or segment >= len(lengths) or elapsed is None:
+        return None
+    return max(lengths[segment] - elapsed, 0.0)
 
 
 def race_clock_text(info: dict) -> tuple[str, str]:
@@ -1295,7 +1632,7 @@ def events(session_data: dict, series: TowerSeries | None = None) -> list[tuple[
                 found.append((float(moment), kind, label))
             previous = code
 
-    table = lap_table(session_data.get("laps"))
+    table = session_lap_table(session_data)
     if series.kind == "race":
         found.extend(
             (float(lap.pit_in), "pit", f"Pit stop - {lap.Driver}")
@@ -1309,19 +1646,26 @@ def events(session_data: dict, series: TowerSeries | None = None) -> list[tuple[
                 found.append((float(moment), "out", f"Retirement - {code}"))
                 break
 
-    completed = table[table["end"].notna() & table["valid"]].sort_values("end", kind="stable")
-    best = None
-    for lap in completed.itertuples():
-        if best is None or lap.lap_s < best:
-            best = float(lap.lap_s)
-            label = f"Fastest lap - {lap.Driver} {format_laptime(best)}"
+    # A new fastest lap as it happened: one deleted later still was, at the
+    # time (REPLAY-20); the deletion itself is in race control.
+    tracker = _BestTracker()
+    for moment, order, lap in _validity_events(table[table["end"].notna()]):
+        if order == 1:
+            tracker.remove(lap)
+            continue
+        best = tracker.best()
+        if moment == lap.end and (best is None or lap.lap_s < best.lap_s):
+            label = f"Fastest lap - {lap.Driver} {format_laptime(lap.lap_s)}"
             found.append((float(lap.end), "fastest", label))
+        tracker.add(lap)
 
-    control = session_data.get("race_control")
-    if control is not None and not control.empty and "Flag" in control.columns:
-        flags = control["Flag"].astype(str).str.upper().tolist()
-        for moment, flag in zip(_event_seconds(control).tolist(), flags, strict=True):
-            if flag == "CHEQUERED" and not np.isnan(moment):
-                found.append((float(moment), "flag", "Chequered flag"))
-                break
+    # One chequered flag per race, per qualifying segment, per practice.
+    windows = chequered_windows(session_data)
+    names = segment_names(session_data.get("session_info") or {})
+    for start, _ in windows:
+        label = "Chequered flag"
+        segment = series.segment_at(start) if series.kind == "qualifying" else None
+        if segment is not None and len(windows) > 1 and segment < len(names):
+            label = f"Chequered flag - {names[segment]}"
+        found.append((float(start), "flag", label))
     return sorted(found, key=lambda item: item[0])

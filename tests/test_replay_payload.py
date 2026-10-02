@@ -251,13 +251,16 @@ class TestFocusedDriverCard:
 
     def test_the_interval_trend_is_sampled_every_five_seconds(self, built, race):
         payload, series = built
+        from processing.replay_payload import decode_trend
+
         trend = payload["trend"]
-        values = trend["values"]["C"]
+        values = decode_trend(trend)["C"]  # packed since REPLAY-29
         index = int((1200.0 - trend["t0"]) // trend["step"])
 
         assert trend["step"] == 5.0
+        assert len(values) == trend["samples"]
         assert values[index] == pytest.approx(
-            series.value("C", "interval_s", trend["t0"] + index * 5.0)
+            series.value("C", "interval_s", trend["t0"] + index * 5.0), abs=0.005
         )
 
     def test_the_card_is_in_the_player(self):
@@ -287,3 +290,78 @@ def test_analyse_this_lap_opens_the_lap_chart():
     assert app.session_state["asked"] == 3
     assert app.session_state["again"] is None  # asked once, then forgotten
     assert app.session_state["analysis_section"] == "Lap times"
+
+
+class TestCompactEncoding:
+    """REPLAY-29: positions and the interval trend are packed, losslessly
+    after quantisation, and the JavaScript decoder reads the same bytes."""
+
+    def test_positions_round_trip_through_the_packing(self):
+        from processing.replay_payload import _pack_positions
+
+        rng = np.random.default_rng(7)
+        frames, drivers = 500, 4
+        walk = np.cumsum(rng.integers(-40, 41, size=(frames, drivers, 2)), axis=0) + 2500
+        walk[100] = [[0, 0], [5000, 3800], [-6000, 6000], [6000, -6000]]  # jumps
+        absent = rng.random((frames, drivers)) < 0.1
+        absent[:20, 1] = True  # absent from the start
+        absent[-30:, 2] = True  # and to the end
+        pos = {"frames": frames, "drivers": drivers, "scale": 5}
+        pos["xy_z"] = _pack_positions(walk, absent)
+
+        decoded = decode_positions(pos)
+
+        assert np.isnan(decoded[absent]).all()
+        assert np.array_equal(decoded[~absent] * 5, walk[~absent].astype(float))
+
+    def test_quantisation_is_within_a_tenth_of_a_unit(self, built, race):
+        payload, _ = built
+
+        assert payload["pos"]["scale"] >= 5  # 0.5 / scale <= 0.1 viewBox units
+        assert payload["pos"]["encoding"] == "dd-zigzag-shuffle-deflate"
+
+    def test_a_smooth_race_packs_to_well_under_half(self):
+        from tests.test_replay_model import _big_race
+
+        session = _big_race()
+        angle = np.linspace(0, 2 * np.pi, 300)
+        session["location"] = {
+            "D00": pd.DataFrame({"X": np.cos(angle) * 5000, "Y": np.sin(angle) * 3000})
+        }
+        grid = np.arange(3600.0, 9200.0, 0.5)
+        codes = [f"D{index:02d}" for index in range(22)]
+        phase = np.repeat(np.arange(22) * 0.05, len(grid))
+        session["positions"] = pd.DataFrame(
+            {
+                "Time": np.tile(grid, len(codes)),
+                "Driver": np.repeat(codes, len(grid)),
+                "X": np.cos(np.tile(grid, len(codes)) / 14 + phase) * 5000,
+                "Y": np.sin(np.tile(grid, len(codes)) / 14 + phase) * 3000,
+            }
+        )
+        payload, _ = _payload(session)
+        pos = payload["pos"]
+        int16_base64 = 4 * pos["frames"] * pos["drivers"] * 4 / 3  # the old xy_b64
+
+        assert len(pos["xy_z"]) < 0.35 * int16_base64
+        assert len(json.dumps(payload["trend"])) < 20_000
+
+    def test_the_trend_marks_a_missing_interval(self):
+        from processing.replay import ReplayClock
+        from processing.replay_model import _series
+        from processing.replay_payload import _interval_trend, decode_trend
+
+        class Series:
+            drivers = ["A", "B"]
+            fields = {
+                "A": {"interval_s": _series([(0.0, None), (10.0, 1.234), (20.0, None)])},
+                "B": {"interval_s": _series([(0.0, 700.0)])},
+            }
+
+        clock = ReplayClock(start=0.0, lights_out=0.0, end=25.0, step=0.5)
+        trend = _interval_trend(Series(), clock)
+        values = decode_trend(trend)
+
+        assert trend["samples"] == 6
+        assert values["A"] == [None, None, 1.23, 1.23, None, None]
+        assert values["B"][0] == 655.34  # clipped, never mistaken for missing

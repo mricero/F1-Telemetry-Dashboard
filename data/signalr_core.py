@@ -42,6 +42,7 @@ import contextlib
 import enum
 import json
 import logging
+import re
 import threading
 import time
 import urllib.parse
@@ -53,6 +54,36 @@ from typing import Any
 import requests
 
 logger = logging.getLogger(__name__)
+
+# websockets logs every handshake header (``Authorization: Bearer <JWT>``), the
+# ``?id=<connectionToken>`` path and every frame at DEBUG. The connection gets
+# its own logger pinned to INFO, so LOG_LEVEL=DEBUG never writes the token to
+# a log (SEC-01); a redacting filter is the second line of defence.
+_WS_LOGGER = logging.getLogger(f"{__name__}.ws")
+_WS_LOGGER.setLevel(logging.INFO)
+
+
+class _RedactSecrets(logging.Filter):
+    """Masks bearer tokens and connection ids in any record that gets through."""
+
+    PATTERNS = (
+        (re.compile(r"(Bearer\s+)[\w.\-~+/=]+", re.IGNORECASE), r"\1<redacted>"),
+        (re.compile(r"([?&]id=)[^&\s'\"]+"), r"\1<redacted>"),
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        text = record.getMessage()
+        redacted = text
+        for pattern, replacement in self.PATTERNS:
+            redacted = pattern.sub(replacement, redacted)
+        if redacted != text:
+            record.msg, record.args = redacted, None
+        return True
+
+
+_REDACTOR = _RedactSecrets()
+for _name in (_WS_LOGGER.name, "websockets", "websockets.client"):
+    logging.getLogger(_name).addFilter(_REDACTOR)
 
 NEGOTIATE_URL = "https://livetiming.formula1.com/signalrcore/negotiate"
 CONNECTION_URL = "wss://livetiming.formula1.com/signalrcore"
@@ -84,6 +115,20 @@ BACKOFF_MAX = 60.0
 BLOCKED_BACKOFF = 120.0
 HTTP_TIMEOUT = 15.0
 
+# Topics F1 has gated behind an F1TV subscription token since the 2025 Dutch
+# GP. A connection made without a token does not subscribe to them: they would
+# never deliver anything, and the rest of the feed works perfectly well alone.
+AUTH_TOPICS = frozenset(
+    {
+        "CarData.z",
+        "Position.z",
+        "PitStopSeries",
+        "ChampionshipPrediction",
+        "DriverRaceInfo",
+        "TeamRadio",
+    }
+)
+
 
 class FeedStatus(enum.Enum):
     """What the connection is doing, for the status chip in the UI."""
@@ -97,6 +142,11 @@ class FeedStatus(enum.Enum):
     AUTH_REQUIRED = "auth_required"  # 401 on negotiate (token missing/expired)
     BLOCKED = "blocked"  # 403: F1 refused this client or IP
     STOPPED = "stopped"  # stopped by the user
+
+
+# Why a configured token is not being sent; the free feed carries on (LIVE-26).
+TOKEN_REJECTED = "Token rejected – timing only"  # noqa: S105, RUF001 - UI copy
+TOKEN_EXPIRED = "Token expired – timing only"  # noqa: S105, RUF001 - UI copy
 
 
 # Plain words for each state, shown next to the chip.
@@ -192,6 +242,18 @@ def split_frames(raw: str | bytes) -> list[dict]:
     return messages
 
 
+def refusal_status(exc: BaseException) -> int | None:
+    """The HTTP status of a refused websocket upgrade, else None.
+
+    ``websockets`` raises ``InvalidStatus`` (``exc.response.status_code``)
+    when the upgrade itself answers 401/403/429; that is a refusal like a
+    refused negotiate, not a dropped connection (LIVE-30).
+    """
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status if isinstance(status, int) and status >= 400 else None
+
+
 def negotiate(http: requests.Session, token: str | None = None) -> tuple[str, dict[str, str]]:
     """Run the two-step negotiate; return the connection token and headers."""
     headers = dict(BASE_HEADERS)
@@ -231,6 +293,7 @@ def _default_connect(url: str, headers: dict[str, str]):
     return connect(
         url,
         additional_headers=headers,
+        logger=_WS_LOGGER,  # never DEBUG: it would log the bearer token (SEC-01)
         user_agent_header=None,  # the User-Agent above is already in headers
         max_size=None,  # snapshots of a full session are large
         open_timeout=HTTP_TIMEOUT,
@@ -249,6 +312,11 @@ class SignalRCoreClient:
     every feed update. Both run on the client thread and must be quick.
     ``http_factory`` and ``connect`` are injectable so tests can drive the
     whole protocol without a network.
+
+    ``auth_topics`` are subscribed only on a connection that sends a token.
+    A token that has expired is not sent, and one the endpoint refuses (401)
+    is dropped at once in favour of the free feed (LIVE-26): timing, race
+    control and weather need no subscription.
     """
 
     def __init__(
@@ -258,6 +326,7 @@ class SignalRCoreClient:
         on_snapshot: Callable[[dict], None],
         token_provider: Callable[[], str | None] | None = None,
         *,
+        auth_topics: frozenset[str] = AUTH_TOPICS,
         http_factory: Callable[[], requests.Session] = requests.Session,
         connect: Callable[[str, dict[str, str]], Any] = _default_connect,
         silence_timeout: float = SILENCE_TIMEOUT,
@@ -266,8 +335,10 @@ class SignalRCoreClient:
         backoff_max: float = BACKOFF_MAX,
         blocked_backoff: float = BLOCKED_BACKOFF,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.topics = list(topics)
+        self.auth_topics = frozenset(auth_topics)
         self.on_message = on_message
         self.on_snapshot = on_snapshot
         self.token_provider = token_provider or (lambda: None)
@@ -279,14 +350,25 @@ class SignalRCoreClient:
         self.backoff_max = backoff_max
         self.blocked_backoff = blocked_backoff
         self._clock = clock
+        self._wall_clock = wall_clock
 
         self.stats = FeedStats()
         self._status = FeedStatus.IDLE
         self._status_lock = threading.Lock()
+        # One Event per run: a thread that outlives stop()'s join still holds
+        # its own (set) event and exits, while a new start() gets a fresh one.
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._socket: Any = None
         self._invocation = 0
+        # Set by the current connection once feed data arrived (LIVE-25).
+        self._had_data = False
+        # The token the endpoint refused, so it is not sent again (LIVE-26).
+        self._rejected_token: str | None = None
+        # Why the configured token is not in use (expired/rejected), or None.
+        self.token_notice: str | None = None
+        # Whether the current connection was made with a token.
+        self.sent_token = False
 
     # ------------------------------------------------------------------ state
     @property
@@ -294,8 +376,11 @@ class SignalRCoreClient:
         with self._status_lock:
             return self._status
 
-    def _set_status(self, status: FeedStatus) -> None:
+    def _set_status(self, status: FeedStatus, stop: threading.Event | None = None) -> None:
         with self._status_lock:
+            # Nothing a lingering connection does may overwrite STOPPED (LIVE-33).
+            if (stop or self._stop).is_set() and status is not FeedStatus.STOPPED:
+                return
             if self._status is not status:
                 logger.info("Live feed: %s", STATUS_TEXT[status])
             self._status = status
@@ -306,10 +391,15 @@ class SignalRCoreClient:
     # -------------------------------------------------------------- lifecycle
     def start(self) -> None:
         """Start the background thread (no-op when already running)."""
-        if self.is_running():
+        if self.is_running() and not self._stop.is_set():
             return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self.run, name="f1-signalr", daemon=True)
+        lingering = self._thread
+        if lingering is not None and lingering.is_alive():
+            lingering.join(timeout=1.0)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self.run, args=(self._stop,), name="f1-signalr", daemon=True
+        )
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -324,47 +414,66 @@ class SignalRCoreClient:
             thread.join(timeout=timeout)
         self._set_status(FeedStatus.STOPPED)
 
-    def run(self) -> None:
+    def run(self, stop: threading.Event | None = None) -> None:
         """Connect-and-stream loop with backoff. Blocks until stopped."""
+        stop = stop or self._stop
         backoff = self.backoff_start
-        while not self._stop.is_set():
+        while not stop.is_set():
             wait = backoff
+            started = self._clock()
             try:
-                received_data = self._stream_once()
-                # A session that delivered data resets the backoff.
-                backoff = (
-                    self.backoff_start if received_data else min(backoff * 2, self.backoff_max)
-                )
-                wait = self.backoff_start if received_data else backoff
+                self._stream_once(stop)
+                # Only a stop ends a connection without raising.
+                wait = self.backoff_start
             except NegotiateError as exc:
                 self.stats.last_error = str(exc)
-                if exc.status_code == 401:
-                    self._set_status(FeedStatus.AUTH_REQUIRED)
+                if exc.status_code == 401 and self.sent_token:
+                    # The token was refused: drop it and reconnect at once on
+                    # the free feed instead of retrying it for ever (LIVE-26).
+                    self._rejected_token = self._current_token()
+                    self.token_notice = TOKEN_REJECTED
+                    logger.warning("Live feed: token rejected, continuing without it")
+                    wait = 0.0
+                elif exc.status_code == 401:
+                    self._set_status(FeedStatus.AUTH_REQUIRED, stop)
                     wait = self.blocked_backoff
                 elif exc.status_code in (403, 429):
-                    self._set_status(FeedStatus.BLOCKED)
+                    self._set_status(FeedStatus.BLOCKED, stop)
                     wait = self.blocked_backoff
                 else:
-                    wait = backoff
-                    backoff = min(backoff * 2, self.backoff_max)
-                logger.warning("Live feed negotiate failed: %s", exc)
+                    wait, backoff = self._next_backoff(backoff, started)
+                logger.warning("Live feed refused: %s", exc)
             except Exception as exc:  # network errors, closed sockets, bad frames
                 self.stats.last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning("Live feed dropped: %s", self.stats.last_error)
-                wait = backoff
-                backoff = min(backoff * 2, self.backoff_max)
+                wait, backoff = self._next_backoff(backoff, started)
             finally:
                 self._socket = None
 
-            if self._stop.is_set():
+            if stop.is_set():
                 break
             if self.status not in (FeedStatus.AUTH_REQUIRED, FeedStatus.BLOCKED):
-                self._set_status(FeedStatus.RECONNECTING)
+                self._set_status(FeedStatus.RECONNECTING, stop)
             self.stats.reconnects += 1
             self.stats.retry_at = time.time() + wait
-            self._stop.wait(wait)
+            stop.wait(wait)
         self.stats.retry_at = None
-        self._set_status(FeedStatus.STOPPED)
+        self._set_status(FeedStatus.STOPPED, stop)
+
+    def _next_backoff(self, backoff: float, started: float) -> tuple[float, float]:
+        """``(wait now, backoff for next time)`` after a dropped connection.
+
+        A connection that delivered data, or stayed up longer than the
+        silence timeout, was healthy: the drop is F1 recycling it (it cuts
+        long connections about every two hours), so the next attempt starts
+        from ``backoff_start`` again. Before LIVE-25 every real drop raised
+        past the reset, the backoff only ever doubled, and late in a weekend
+        every reconnect cost a minute of timing.
+        """
+        healthy = self._had_data or self._clock() - started >= self.silence_timeout
+        if healthy:
+            backoff = self.backoff_start
+        return backoff, min(backoff * 2, self.backoff_max)
 
     # --------------------------------------------------------------- protocol
     def _next_invocation(self) -> str:
@@ -374,23 +483,68 @@ class SignalRCoreClient:
     def _send(self, socket: Any, message: dict) -> None:
         socket.send(json.dumps(message, separators=(",", ":")) + RECORD_SEPARATOR)
 
-    def _stream_once(self) -> bool:
+    def _current_token(self) -> str | None:
+        try:
+            return self.token_provider()
+        except Exception:
+            logger.warning("Live feed: could not read the subscription token")
+            return None
+
+    def _token_to_send(self) -> str | None:
+        """The configured token, unless it has expired or was refused."""
+        token = self._current_token()
+        if not token:
+            self.token_notice = None
+            return None
+        if token == self._rejected_token:
+            self.token_notice = TOKEN_REJECTED
+            return None
+        expiry = token_expiry(token)
+        if expiry is not None and expiry <= self._wall_clock():
+            self.token_notice = TOKEN_EXPIRED
+            return None
+        self.token_notice = None
+        return token
+
+    def subscribe_topics(self, with_token: bool) -> list[str]:
+        """The topics one connection subscribes to."""
+        if with_token:
+            return list(self.topics)
+        return [topic for topic in self.topics if topic not in self.auth_topics]
+
+    def _stream_once(self, stop: threading.Event | None = None) -> bool:
         """One connection: negotiate, handshake, subscribe, read until it ends.
 
-        Returns whether any feed data arrived, so the caller knows whether
-        the backoff should reset.
+        Returns whether any feed data arrived. A stop during negotiate or the
+        socket upgrade is honoured as soon as that step returns (LIVE-33):
+        nothing is opened, subscribed or seeded after it.
         """
-        self._set_status(FeedStatus.CONNECTING)
-        token = self.token_provider()
+        stop = stop or self._stop
+        self._had_data = False
+        self._set_status(FeedStatus.CONNECTING, stop)
+        token = self._token_to_send()
+        self.sent_token = token is not None
         http = self._http_factory()
         try:
             connection_token, headers = negotiate(http, token)
         finally:
             with contextlib.suppress(Exception):
                 http.close()
+        if stop.is_set():
+            return False
 
         url = f"{CONNECTION_URL}?{urllib.parse.urlencode({'id': connection_token})}"
-        socket = self._connect(url, headers)
+        try:
+            socket = self._connect(url, headers)
+        except Exception as exc:
+            status = refusal_status(exc)
+            if status is not None:
+                raise NegotiateError(status, f"websocket upgrade answered {status}") from exc
+            raise
+        if stop.is_set():
+            with contextlib.suppress(Exception):
+                socket.close()
+            return False
         self._socket = socket
         got_data = False
         try:
@@ -407,7 +561,7 @@ class SignalRCoreClient:
                     "type": MSG_INVOCATION,
                     "invocationId": subscribe_id,
                     "target": "Subscribe",
-                    "arguments": [self.topics],
+                    "arguments": [self.subscribe_topics(self.sent_token)],
                 },
             )
             now = self._clock()
@@ -415,15 +569,15 @@ class SignalRCoreClient:
             last_heard = now
             last_ping = now
             last_data = None
-            self._set_status(FeedStatus.WAITING)
+            self._set_status(FeedStatus.WAITING, stop)
 
-            while not self._stop.is_set():
+            while not stop.is_set():
                 now = self._clock()
                 if now - last_ping >= self.ping_interval:
                     self._send(socket, {"type": MSG_PING})
                     last_ping = now
                 if now - last_heard > self.silence_timeout:
-                    self._set_status(FeedStatus.STALE)
+                    self._set_status(FeedStatus.STALE, stop)
                     raise TimeoutError(f"no message for {self.silence_timeout:.0f} s")
                 try:
                     raw = socket.recv(timeout=1.0)
@@ -431,8 +585,9 @@ class SignalRCoreClient:
                     continue
                 last_heard = self._clock()
                 self.stats.last_message_at = time.time()
-                if self._handle_frame(raw, subscribe_id):
+                if self._handle_frame(raw, subscribe_id, stop):
                     got_data = True
+                    self._had_data = True
                     last_data = last_heard
                 elif (
                     last_data is not None
@@ -441,13 +596,15 @@ class SignalRCoreClient:
                 ):
                     # Pings still arrive but the session has gone quiet
                     # (it ended, or is suspended): connected, not live.
-                    self._set_status(FeedStatus.WAITING)
+                    self._set_status(FeedStatus.WAITING, stop)
             return got_data
         finally:
             with contextlib.suppress(Exception):
                 socket.close()
 
-    def _handle_frame(self, raw: str | bytes, subscribe_id: str) -> bool:
+    def _handle_frame(
+        self, raw: str | bytes, subscribe_id: str, stop: threading.Event | None = None
+    ) -> bool:
         """Dispatch one frame. Returns True when it carried race data."""
         carried = False
         for message in split_frames(raw):
@@ -475,7 +632,7 @@ class SignalRCoreClient:
             # MSG_PING needs no reply beyond our own periodic pings.
         if carried:
             self.stats.last_data_at = time.time()
-            self._set_status(FeedStatus.LIVE)
+            self._set_status(FeedStatus.LIVE, stop)
         return carried
 
     def _count(self, topic: str) -> None:

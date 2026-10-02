@@ -102,6 +102,10 @@ def render_replay_player(
     cursor (a jump chosen outside the player) it bumps ``seek`` and the
     player follows. The player's own moves come back through
     ``on_cursor_change``.
+
+    ``focus`` is read only when the player mounts, so pass the focus as of
+    the last seek, not the live one: any change to ``data`` re-sends the
+    whole payload (UI-11).
     """
     data = {**payload, "cursor": cursor, "seek": seek, "focus": focus}
     return _player()(

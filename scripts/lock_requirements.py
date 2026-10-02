@@ -1,66 +1,53 @@
-"""Write requirements.lock from the versions currently installed (REPO-02).
+"""Re-lock requirements*.lock from requirements*.txt with uv (REPO-20).
 
-Without a lock, CI and a new contributor resolve different versions - and
-this project has already been bitten by a livef1 patch release changing
-parsing shapes. The floors in ``requirements*.txt`` say what the code needs;
-the lock says what is known to work.
+Both locks are universal (one file for every OS and Python from the 3.11
+floor up; uv writes the environment markers itself) and carry hashes, so CI
+installs them with ``--require-hashes``. CI re-runs this script and fails on
+any diff, which is what makes a stale lock turn the build red.
 
-    python -m pip install -r requirements-dev.txt
-    python scripts/lock_requirements.py
+    python scripts/lock_requirements.py            # keep current pins where possible
+    python scripts/lock_requirements.py --upgrade  # move everything to the newest allowed
 """
 
+import shutil
+import subprocess
 import sys
-from importlib import metadata
 from pathlib import Path
 
-from packaging.requirements import Requirement
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ("requirements.txt", "requirements-dev.txt")
-LOCK_FILE = PROJECT_ROOT / "requirements.lock"
-
-HEADER = """\
-# Pinned versions this project is known to work with.
-#
-# Regenerate after changing requirements*.txt:
-#   python -m pip install -r requirements-dev.txt
-#   python scripts/lock_requirements.py
-#
-# Install exactly these with:  pip install -r requirements.lock
-"""
+LOCKS = {"requirements.txt": "requirements.lock", "requirements-dev.txt": "requirements-dev.lock"}
+PYTHON_FLOOR = "3.11"
 
 
-def direct_requirements() -> list:
-    names = []
-    for source in SOURCES:
-        for line in (PROJECT_ROOT / source).read_text(encoding="utf-8").splitlines():
-            line = line.split("#")[0].strip()
-            if not line or line.startswith("-"):
-                continue
-            names.append(Requirement(line).name)
-    return sorted(set(names), key=str.lower)
+def compile_command(source: str, output: str, upgrade: bool = False) -> list[str]:
+    command = [
+        "uv",
+        "pip",
+        "compile",
+        source,
+        "--universal",
+        "--python-version",
+        PYTHON_FLOOR,
+        "--generate-hashes",
+        "--quiet",
+        "--output-file",
+        output,
+    ]
+    if upgrade:
+        command.append("--upgrade")
+    return command
 
 
-def main() -> int:
-    pinned, missing = [], []
-    for name in direct_requirements():
-        try:
-            pinned.append(f"{name}=={metadata.version(name)}")
-        except metadata.PackageNotFoundError:
-            missing.append(name)
-
-    if missing:
-        print(
-            "not installed, so it cannot be locked: " + ", ".join(missing),
-            file=sys.stderr,
-        )
-        print("install the dev requirements first, then re-run", file=sys.stderr)
+def main(argv: list[str]) -> int:
+    if shutil.which("uv") is None:
+        print("uv is not installed: https://docs.astral.sh/uv/", file=sys.stderr)
         return 1
-
-    LOCK_FILE.write_text(HEADER + "\n" + "\n".join(pinned) + "\n", encoding="utf-8")
-    print(f"wrote {len(pinned)} pins to {LOCK_FILE.relative_to(PROJECT_ROOT)}")
+    upgrade = "--upgrade" in argv
+    for source, output in LOCKS.items():
+        subprocess.run(compile_command(source, output, upgrade), cwd=PROJECT_ROOT, check=True)
+        print(f"wrote {output}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

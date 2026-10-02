@@ -306,3 +306,64 @@ class TestTheAppLoadsOnlyOnLoad:
         loaded = (LOADS[0]["year"], LOADS[0]["gp"], LOADS[0]["session_type"])
         assert loaded == (2023, "Bahrain Grand Prix", "R")
         assert app.selectbox(key="picker_gp").value == "Bahrain Grand Prix"
+
+
+class TestSharedLinksAreValidated:
+    """UI-17: a link loads only what the picker itself would offer."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        LOADS.clear()
+        yield
+        LOADS.clear()
+
+    @staticmethod
+    def _open(**params) -> AppTest:
+        app = AppTest.from_function(_counting_app_script, default_timeout=30)
+        for name, value in params.items():
+            app.query_params[name] = value
+        app.run()
+        assert not app.exception, app.exception
+        return app
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"year": "2017", "gp": "Bahrain Grand Prix", "session": "R"},
+            {"year": "2023", "gp": "Nope Grand Prix", "session": "R"},
+            {"year": "2023", "gp": "Bahrain Grand Prix", "session": "XYZ"},
+            {"year": "soon", "gp": "Bahrain Grand Prix", "session": "R"},
+        ],
+        ids=["before-2018", "unknown-gp", "unknown-session", "not-a-year"],
+    )
+    def test_a_bad_link_loads_nothing_and_says_so(self, params):
+        app = self._open(**params)
+
+        assert LOADS == []
+        assert app.session_state["selection"] is None
+        assert any("Link refers to an unknown session" in w.value for w in app.warning)
+
+    def test_a_valid_link_leaves_the_picker_showing_what_loaded(self):
+        app = self._open(year="2023", gp="Monaco Grand Prix", session="Q")
+
+        assert len(LOADS) == 1
+        loaded = LOADS[0]
+        assert app.selectbox(key="picker_year").value == loaded["year"] == 2023
+        assert app.selectbox(key="picker_gp").value == loaded["gp"] == "Monaco Grand Prix"
+        assert app.selectbox(key="picker_session").value == loaded["session_type"] == "Q"
+        assert not app.warning
+
+
+class TestSidebarOnPhones:
+    """UI-19: the sidebar opens expanded only while the picker is all there is."""
+
+    def test_nothing_selected_and_no_link_expands_it(self):
+        from ui.layout import sidebar_state
+
+        assert sidebar_state(None, {}) == "expanded"
+
+    def test_a_shared_link_or_a_selection_lets_the_browser_decide(self):
+        from ui.layout import sidebar_state
+
+        assert sidebar_state(None, {"year": "2023", "gp": "Bahrain Grand Prix"}) == "auto"
+        assert sidebar_state({"source": "fastf1"}, {}) == "auto"

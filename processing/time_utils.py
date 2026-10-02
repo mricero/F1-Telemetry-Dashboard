@@ -10,88 +10,96 @@ NumPy's deprecated "generic" timedelta unit. Everything routes through
 import re
 from datetime import timedelta as _dt_timedelta
 
+import numpy as np
 import pandas as pd
 
-# 'M:SS.mmm' / 'M:SS.ssss' as emitted by the live timing feed.
-_M_S_RE = re.compile(r"^(\d{1,2}):(\d{1,2}(?:\.\d+)?)$")
-# Plain seconds with decimals, e.g. sector times like '31.105'.
-_SECONDS_RE = re.compile(r"^\d{1,3}\.\d{1,4}$")
+# One grammar for the scalar and the vector parser (CORE-01):
+#   [D days ]H:MM:SS[.f]  - the live session clock, str(Timedelta)
+#   M:SS[.f]              - live lap times
+#   SS[.f]                - sector times, plain seconds
+# ASCII digits only. Anything else - unit strings like "1 L" or "5s" included -
+# is None: no string ever reaches pd.to_timedelta.
+_TIME_PATTERN = (
+    r"^(?:([0-9]{1,5}) days? )?"  # days
+    r"(?:(?:([0-9]{1,3}):)?([0-9]{1,2}):)?"  # [hours:]minutes:
+    r"([0-9]{1,4}(?:\.[0-9]+)?)$"  # seconds
+)
+_TIME_RE = re.compile(_TIME_PATTERN)
+_UNIT_SECONDS = (86400.0, 3600.0, 60.0)
+
+
+def _round3(value: float) -> float:
+    # numpy's rounding, so the scalar and the vector parser agree bit for bit.
+    return float(np.round(value, 3))
+
+
+def _parse_text(text: str) -> float | None:
+    match = _TIME_RE.match(text.strip())
+    if not match:
+        return None
+    days, hours, minutes, seconds = match.groups()
+    total = 0.0
+    for part, unit in zip((days, hours, minutes), _UNIT_SECONDS):
+        total = total + (float(part) if part is not None else 0.0) * unit
+    return _round3(total + float(seconds))
 
 
 def to_seconds(value) -> float | None:
-    """Coerce lap/sector times to seconds.
+    """Coerce lap/sector/clock times to seconds.
 
     Accepts pandas Timedelta (FastF1), ``'M:SS.mmm'`` strings (live feed),
-    ``'SS.mmm'``, numeric seconds, or None/NaN.
+    ``'H:MM:SS'`` (the live session clock), ``str(Timedelta)``, ``'SS.mmm'``,
+    numeric seconds, or None/NaN. Booleans and unit strings (``'1 L'``) are
+    None.
     """
-    if value is None:
+    if value is None or isinstance(value, (bool, np.bool_)):
         return None
+    if isinstance(value, np.timedelta64):
+        value = pd.Timedelta(value)
     if isinstance(value, pd.Timedelta):
-        return None if pd.isna(value) else round(value.total_seconds(), 3)
+        return None if pd.isna(value) else _round3(value.total_seconds())
     if isinstance(value, _dt_timedelta):
-        return round(value.total_seconds(), 3)
-    if isinstance(value, (int, float)) and pd.notna(value):
-        return float(value)
-
-    # NaT / NaN / pd.NA and anything else already ruled out above
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
-
-    text = str(value).strip()
-    m = _M_S_RE.match(text)
-    if m:
-        return round(int(m.group(1)) * 60 + float(m.group(2)), 3)
-    if _SECONDS_RE.match(text):
-        return round(float(text), 3)
-    # Only hand colon/unit-bearing strings to to_timedelta; bare numbers
-    # would hit its deprecated "generic" timedelta unit.
-    if ":" not in text and not re.search(r"[A-Za-z]", text):
-        return None
-    try:
-        td = pd.to_timedelta(text, errors="coerce")
-        if pd.isna(td):
-            return None
-        return round(float(td.total_seconds()), 3)
-    except (ValueError, TypeError):
-        return None
-
-
-# Same shapes as the scalar parser, as one regex for str.extract.
-_M_S_EXTRACT = r"^(?:(\d{1,2}):)?(\d{1,3}(?:\.\d{1,4})?)$"
+        return _round3(value.total_seconds())
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return None if pd.isna(value) else float(value)
+    if isinstance(value, str):
+        return _parse_text(value)
+    # NaT / pd.NA and anything else: never guessed at.
+    return None
 
 
 def seconds_series(values: pd.Series) -> pd.Series:
     """Vectorised :func:`to_seconds` over a Series -> float Series (NaN-safe).
 
-    Timedelta and numeric columns convert in one call; string columns go
-    through a single ``str.extract`` rather than a Python-level loop, which
-    is what this used to be despite the docstring.
+    ``seconds_series(s)`` equals ``s.map(to_seconds)`` as float64 for every
+    input (a property test holds it to that). Timedelta and numeric columns
+    convert in one call; all-string columns go through a single
+    ``str.extract``; mixed object columns fall back to the scalar parser.
     """
     if values is None or len(values) == 0:
         return pd.Series([], dtype="float64")
+    index = values.index
 
+    if pd.api.types.is_bool_dtype(values):
+        return pd.Series(np.nan, index=index, dtype="float64")
     if pd.api.types.is_timedelta64_dtype(values):
         return values.dt.total_seconds().round(3).astype("float64")
     if pd.api.types.is_numeric_dtype(values):
         return pd.to_numeric(values, errors="coerce").astype("float64")
 
-    text = values.astype("string").str.strip()
-    parts = text.str.extract(_M_S_EXTRACT)
-    minutes = pd.to_numeric(parts[0], errors="coerce").fillna(0.0)
-    seconds = pd.to_numeric(parts[1], errors="coerce")
-    result = (minutes * 60 + seconds).round(3)
+    kind = pd.api.types.infer_dtype(values, skipna=True)
+    if kind not in ("string", "empty"):
+        mapped = [to_seconds(value) for value in values]
+        return pd.Series(mapped, index=index, dtype="float64")
 
-    # Anything the pattern did not match (Timedelta objects in an object
-    # column, odd strings) falls back to the scalar parser - a handful of
-    # values, not the whole column.
-    unmatched = result.isna() & values.notna()
-    if unmatched.any():
-        fallback = [to_seconds(value) for value in values[unmatched]]
-        result.loc[unmatched] = pd.Series(fallback, index=values[unmatched].index, dtype="float64")
-    return pd.Series(result, index=values.index, dtype="float64")
+    text = values.astype("string").str.strip()
+    parts = text.str.extract(_TIME_PATTERN)
+    total = pd.Series(0.0, index=index)
+    for column, unit in zip((0, 1, 2), _UNIT_SECONDS):
+        number = pd.to_numeric(parts[column], errors="coerce").astype("float64")
+        total = total + number.fillna(0.0) * unit
+    seconds = pd.to_numeric(parts[3], errors="coerce").astype("float64")
+    return pd.Series((total + seconds).round(3), index=index, dtype="float64")
 
 
 # Timing-screen gap cells (REPLAY-02). The leader's own cell reads "LAP 23"

@@ -17,6 +17,7 @@ Position.z.
 import argparse
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,11 +32,16 @@ def main(duration: int = 30, record: str | None = None) -> int:
     token = subscription_token()
     if token:
         expiry = token_expiry(token)
-        print(
-            f"Subscription token: set (expires {expiry:%Y-%m-%d %H:%M} UTC)"
-            if expiry
-            else "Subscription token: set (expiry unknown)"
-        )
+        if expiry is None:
+            print("Subscription token: set (expiry unknown)")
+        elif expiry <= datetime.now(UTC):
+            print(
+                f"WARNING: the subscription token expired {expiry:%Y-%m-%d %H:%M} UTC. "
+                "It will not be sent; timing, race control and weather still arrive. "
+                "Renew F1TV_SUBSCRIPTION_TOKEN for car data and positions."
+            )
+        else:
+            print(f"Subscription token: set (expires {expiry:%Y-%m-%d %H:%M} UTC)")
     else:
         print("Subscription token: not set - CarData.z / Position.z will not arrive")
     if record:
@@ -69,6 +75,11 @@ def main(duration: int = 30, record: str | None = None) -> int:
         print(f"snapshots: {stats.snapshots}  reconnects: {stats.reconnects}")
     if stats is not None and stats.last_error:
         print(f"last error: {stats.last_error}")
+    notice = getattr(adapter.client, "token_notice", None)
+    if notice:
+        print(f"token: {notice}")
+    if adapter.recorder_error:
+        print(adapter.recorder_error)
 
     print("\n--- what the dashboard would show ---")
     from data.source_manager import DataSourceManager

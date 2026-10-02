@@ -82,77 +82,22 @@ class TestReplaySchema:
             manager._load_replay(str(target), allow_pickle=True)
 
 
-class TestCircuitMapping:
-    def test_known_names(self):
-        from data.source_manager import DataSourceManager as M
-
-        assert M._gp_to_circuit_short("Bahrain Grand Prix") == "Sakhir"
-        assert M._gp_to_circuit_short("Abu Dhabi Grand Prix") == "Yas Marina"
-        assert M._gp_to_circuit_short("United States Grand Prix") == "Austin"
-
-    def test_suffix_and_none(self):
-        from data.source_manager import DataSourceManager as M
-
-        assert M._gp_to_circuit_short(None) is None
-        assert M._gp_to_circuit_short("Miami GP") == "Miami"
-        assert M._gp_to_circuit_short("Unknown Circuit") == "Unknown Circuit"
-
-
-class TestLiveLapNumbers:
-    def test_numberoflaps_drives_lap_rows(self, manager):
-        timing = [
-            {
-                "driver_number": "44",
-                "timestamp": f"t{i}",
-                # lap counter climbs over time; LastLapTime lands after each lap
-            }
-            for i in range(6)
-        ]
-        values = [
-            ("NumberOfLaps", None),
-            ("NumberOfLaps", 1),
-            ("LastLapTime_Value", "1:33.00"),
-            ("NumberOfLaps", 2),
-            ("LastLapTime_Value", "1:32.50"),
-        ]
-        for i, (key, val) in enumerate(values):
-            timing[i][key] = val
-            timing[i]["Sectors_1_Value"] = "30.00"
-
-        df = manager._laps_from_timing(pd.DataFrame(timing), {"44": "HAM"})
-        laps = df[df["Driver"] == "HAM"]
-        done = laps[laps["LapTime"].notna()]
-        assert sorted(done["LapNumber"]) == [1, 2]
-        assert set(done["LapTime"]) == {"1:33.00", "1:32.50"}
-        in_progress = laps[laps["LapTime"].isna()]
-        assert list(in_progress["LapNumber"]) == [3]
-
-    def test_fallback_without_numberoflaps(self, manager):
-        timing = [
-            {
-                "driver_number": "44",
-                "timestamp": "t",
-                "BestLapTime_Value": "1:31.20",
-                "Sectors_1_Value": "31.10",
-            }
-        ]
-        df = manager._laps_from_timing(pd.DataFrame(timing), {"44": "HAM"})
-        assert df["LapTime"].iloc[0] == "1:31.20"
-
-
 class TestGpsDistances:
     @staticmethod
     def _prime_driver_list(adapter):
-        adapter._data_buffer["DriverList"] = [
+        adapter.handle_message(
+            "DriverList",
             {
-                "RacingNumber": "44",
-                "Tla": "HAM",
-                "TeamColour": "00d2be",
-                "FirstName": "Lewis",
-                "LastName": "Hamilton",
-                "TeamName": "Ferrari",
-            }
-        ]
+                "44": {
+                    "RacingNumber": "44",
+                    "Tla": "HAM",
+                    "TeamColour": "00d2be",
+                    "FirstName": "Lewis",
+                    "LastName": "Hamilton",
+                    "TeamName": "Ferrari",
+                }
+            },
+        )
 
     def _prime_gps_stream(self, adapter, n=40):
         # Car moves +10 X-units per second; timestamps are ISO so they parse.

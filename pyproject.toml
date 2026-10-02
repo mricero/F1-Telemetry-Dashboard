@@ -1,3 +1,77 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "f1dash"
+# The one place the version is written (REPO-23). config.__version__ reads it
+# back: from the installed metadata, or from this file in a checkout.
+version = "0.9.0"
+description = "Formula 1 replay, timing and telemetry dashboard built on Streamlit"
+readme = "readme.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "F1 Telemetry Dashboard Contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+# Equal to requirements.txt, which stays the file the locks are compiled
+# from; tests/test_packaging.py fails when the two drift (DIST-01).
+dependencies = [
+    "streamlit>=1.55,<2",
+    "plotly>=5.22,<8",
+    "pandas>=2.2,<3",
+    "numpy>=1.26,<2.6",
+    "fastf1>=3.8.0,<4",
+    "requests>=2.31,<3",
+    "python-dotenv>=1.0,<2",
+    "pyarrow>=16,!=25.0.0,<26",
+    "websockets>=15,<17",
+    "platformdirs>=4,<5",
+]
+
+[project.urls]
+Homepage = "https://github.com/mricero/F1-Telemetry-Dashboard"
+Changelog = "https://github.com/mricero/F1-Telemetry-Dashboard/blob/main/CHANGELOG.md"
+
+[project.scripts]
+f1dash = "f1dash_cli:main"
+
+[tool.hatch.build.targets.wheel]
+# Flat layout for now (REPO-10 moves it under src/f1dash/). The player's
+# js/css/html, the fonts and .streamlit/config.toml are data files the app
+# finds next to app.py, so the wheel keeps the checkout's relative layout.
+only-include = [
+    "app.py",
+    "config.py",
+    "f1dash_cli.py",
+    "data",
+    "processing",
+    "ui",
+    ".streamlit/config.toml",
+]
+exclude = ["__pycache__", "*.pyc"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "app.py",
+    "config.py",
+    "f1dash_cli.py",
+    "data",
+    "processing",
+    "ui",
+    ".streamlit/config.toml",
+    "pyproject.toml",
+    "readme.md",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md",
+    "requirements.txt",
+]
+exclude = ["__pycache__", "*.pyc"]
+
 [tool.black]
 line-length = 100
 # 3.11 is the declared floor (readme). Targeting py312 made black warn

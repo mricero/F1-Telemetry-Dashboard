@@ -3,7 +3,7 @@
 One JSON-safe dict carries everything the player needs to animate a whole
 session without asking Python again: the clock, the track outline, every
 car's position (projected into the map's viewBox with the same transform as
-the server-drawn map, quantised to Int16 and base64-encoded), each tower
+the server-drawn map, quantised and packed: ``_pack_positions``), each tower
 field as its own change-point series (display strings already formatted),
 flags, race control, weather, lap marks and events.
 
@@ -16,6 +16,7 @@ Pure: no Streamlit, no network.
 import base64
 import bisect
 import math
+import zlib
 
 import numpy as np
 import pandas as pd
@@ -23,7 +24,6 @@ import pandas as pd
 from processing.replay import ReplayClock, build_position_cube
 from processing.replay_model import (
     FIELD_DEFAULTS,
-    SEGMENT_NAMES,
     TowerSeries,
     _event_seconds,
     events,
@@ -32,12 +32,19 @@ from processing.replay_model import (
 from processing.time_utils import seconds_series
 from processing.track_geometry import VIEW_H, VIEW_W, path_from, track_geometry
 
-PAYLOAD_VERSION = 1
+# 2: packed positions (``xy_z``) and interval trend (``trend.z``), REPLAY-29.
+PAYLOAD_VERSION = 2
 
-# Position frames are stored in viewBox units x10 as little-endian Int16, so
-# the largest value (10 000) fits comfortably; this marks a car with no sample.
-POSITION_SCALE = 10
+# Car positions are quantised to 1/POSITION_SCALE viewBox units (0.2 units:
+# a fifth of a pixel on a 1000-unit-wide map, under 2 % of a car marker's
+# radius), then packed compactly (REPLAY-29, see ``_pack_positions``).
+POSITION_SCALE = 5
+# Quantised coordinates are clipped to this, so every second difference
+# fits a 16-bit zigzag code; the viewBox is 0..1000 x 0..760.
+POSITION_LIMIT = 6000
+# A car with no sample in the decoded Int16 frames (never a real value).
 POSITION_ABSENT = -32768
+POSITION_ENCODING = "dd-zigzag-shuffle-deflate"
 
 # Series field name in the model -> short name in the payload.
 TOWER_FIELDS = {
@@ -47,6 +54,9 @@ TOWER_FIELDS = {
     "lap": "lap",
     "last": "last",
     "last_flag": "last_flag",
+    # The last lap was deleted (True) and the stewards' reason (REPLAY-18).
+    "last_deleted": "last_del",
+    "last_deleted_reason": "last_del_why",
     "best": "best",
     "tyre": "tyre",
     "age": "age",
@@ -66,8 +76,11 @@ MS_TO_KMH = 3.6
 CLOSE_INTERVAL_SECONDS = 1.0
 
 # The focused-driver card's gap trend: the interval to the car ahead,
-# sampled this often (REPLAY-10).
+# sampled this often (REPLAY-10), in hundredths of a second, with
+# TREND_MISSING for "no interval" (REPLAY-29).
 TREND_STEP_SECONDS = 5.0
+TREND_SCALE = 100
+TREND_MISSING = 65535
 
 
 def _json(value):
@@ -104,28 +117,78 @@ def _positions(session_data: dict, geometry, clock: ReplayClock) -> dict | None:
     flat = cube.xy.reshape(-1, 2).astype(float)
     absent = np.isnan(flat).any(axis=1)
     projected = geometry.project(np.nan_to_num(flat)) * POSITION_SCALE
-    packed = np.clip(np.rint(projected), -32767, 32767).astype("<i2")
-    packed[absent] = POSITION_ABSENT
+    quantised = np.clip(np.rint(projected), -POSITION_LIMIT, POSITION_LIMIT).astype(np.int64)
+    frames, drivers = cube.frames, len(cube.codes)
     return {
         "t0": round(cube.t0, 3),
         "step": cube.step,
-        "frames": cube.frames,
-        "drivers": len(cube.codes),
+        "frames": frames,
+        "drivers": drivers,
         "codes": list(cube.codes),
         "scale": POSITION_SCALE,
         "absent": POSITION_ABSENT,
-        "xy_b64": base64.b64encode(packed.tobytes()).decode("ascii"),
+        "encoding": POSITION_ENCODING,
+        "xy_z": _pack_positions(
+            quantised.reshape(frames, drivers, 2), absent.reshape(frames, drivers)
+        ),
     }
 
 
+def _deflate(raw: bytes) -> str:
+    """Raw DEFLATE (no zlib header, as ``DecompressionStream("deflate-raw")``
+    reads it), base64-encoded for JSON."""
+    packer = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS, 9)
+    return base64.b64encode(packer.compress(raw) + packer.flush()).decode("ascii")
+
+
+def _inflate(text: str) -> bytes:
+    return zlib.decompress(base64.b64decode(text), -zlib.MAX_WBITS)
+
+
+def _pack_positions(quantised: np.ndarray, absent: np.ndarray) -> str:
+    """``(F, D, 2)`` quantised coordinates -> the compact ``xy_z`` string (REPLAY-29).
+
+    Raw Int16 frames were 1.2-1.6 MB of base64 for a race. Cars move
+    smoothly, so the second difference along time of each coordinate is
+    small; DEFLATE packs those far better than the coordinates themselves.
+    The inflated bytes are, with ``N = drivers * frames``:
+
+    1. ``ceil(N / 8)`` bytes: the absent flags, driver-major (``d * F + f``),
+       most significant bit first (``numpy.packbits``);
+    2. ``2N`` low bytes, then 3. ``2N`` high bytes, of 16-bit zigzag codes of
+       the second differences, ordered driver, coordinate (x then y), frame.
+
+    An absent frame repeats the car's last value, so it costs nothing.
+    """
+    frames, drivers, _ = quantised.shape
+    index = np.where(~absent, np.arange(frames)[:, None], 0)
+    held = np.take_along_axis(quantised, np.maximum.accumulate(index, axis=0)[..., None], axis=0)
+    planar = np.ascontiguousarray(held.transpose(1, 2, 0))  # driver, coordinate, frame
+    second = np.diff(np.diff(planar, axis=2, prepend=0), axis=2, prepend=0)
+    codes = ((second << 1) ^ (second >> 63)).astype("<u2").reshape(-1)
+    flags = np.packbits(np.ascontiguousarray(absent.T).reshape(-1))
+    low = (codes & 0xFF).astype(np.uint8)
+    high = (codes >> 8).astype(np.uint8)
+    return _deflate(flags.tobytes() + low.tobytes() + high.tobytes())
+
+
 def decode_positions(pos: dict) -> np.ndarray:
-    """``xy_b64`` back to an ``(F, D, 2)`` float array in viewBox units (NaN absent).
+    """``xy_z`` back to an ``(F, D, 2)`` float array in viewBox units (NaN absent).
 
     What the player's JavaScript does, for tests and tools.
     """
-    raw = np.frombuffer(base64.b64decode(pos["xy_b64"]), dtype="<i2")
-    xy = raw.reshape(pos["frames"], pos["drivers"], 2).astype(float)
-    xy[xy == pos["absent"]] = np.nan
+    frames, drivers = pos["frames"], pos["drivers"]
+    count = frames * drivers
+    raw = np.frombuffer(_inflate(pos["xy_z"]), dtype=np.uint8)
+    flag_bytes = (count + 7) // 8
+    absent = np.unpackbits(raw[:flag_bytes])[:count].astype(bool).reshape(drivers, frames)
+    low = raw[flag_bytes : flag_bytes + 2 * count].astype(np.int64)
+    high = raw[flag_bytes + 2 * count : flag_bytes + 4 * count].astype(np.int64)
+    codes = low | (high << 8)
+    second = (codes >> 1) ^ -(codes & 1)
+    planar = np.cumsum(np.cumsum(second.reshape(drivers, 2, frames), axis=2), axis=2)
+    xy = planar.transpose(2, 0, 1).astype(float)  # frame, driver, coordinate
+    xy[absent.T] = np.nan
     return xy / pos["scale"]
 
 
@@ -218,9 +281,9 @@ def _drivers(session_data: dict, series: TowerSeries) -> list[dict]:
 
 def _driver_laps(session_data: dict, series: TowerSeries) -> dict[str, list[list]]:
     """Every completed lap per driver: ``[time, lap, display, flag]``."""
-    from processing.replay_model import format_laptime, lap_table
+    from processing.replay_model import format_laptime, session_lap_table
 
-    table = lap_table(session_data.get("laps"))
+    table = session_lap_table(session_data)
     found: dict[str, list[list]] = {code: [] for code in series.drivers}
     completed = table[table["end"].notna()].sort_values("end", kind="stable")
     for lap in completed.itertuples():
@@ -235,17 +298,46 @@ def _driver_laps(session_data: dict, series: TowerSeries) -> dict[str, list[list
 
 
 def _interval_trend(series: TowerSeries, clock: ReplayClock) -> dict:
-    """The interval to the car ahead every few seconds, for the card's sparkline."""
+    """The interval to the car ahead every few seconds, for the card's sparkline.
+
+    Sampled in Python (the player only looks the samples up) and packed
+    (REPLAY-29): hundredths of a second as little-endian UInt16, one row of
+    ``samples`` per driver in ``codes`` order, ``TREND_MISSING`` where there
+    is no interval (no timing yet, or leading - REPLAY-21), raw DEFLATE and
+    base64 in ``z``. As JSON lists it was ~160-200 KB for a race.
+    """
     moments = np.arange(clock.start, clock.end + TREND_STEP_SECONDS, TREND_STEP_SECONDS)
-    values = {}
+    codes, rows = [], []
     for code in series.drivers:
         field = series.fields.get(code, {}).get("interval_s")
         if field is None or len(field) == 0:
             continue
         index = np.searchsorted(field.t, moments, side="right") - 1
         picked = [field.v[i] if i >= 0 else None for i in index.tolist()]
-        values[code] = [_json(value) for value in picked]
-    return {"t0": round(float(clock.start), 3), "step": TREND_STEP_SECONDS, "values": values}
+        values = np.array([np.nan if _json(v) is None else float(v) for v in picked])
+        scaled = np.clip(np.rint(values * TREND_SCALE), 0, TREND_MISSING - 1)
+        rows.append(np.where(np.isnan(values), TREND_MISSING, scaled).astype("<u2"))
+        codes.append(code)
+    packed = np.concatenate(rows).tobytes() if rows else b""
+    return {
+        "t0": round(float(clock.start), 3),
+        "step": TREND_STEP_SECONDS,
+        "samples": len(moments),
+        "codes": codes,
+        "scale": TREND_SCALE,
+        "missing": TREND_MISSING,
+        "z": _deflate(packed),
+    }
+
+
+def decode_trend(trend: dict) -> dict[str, list[float | None]]:
+    """``trend["z"]`` back to seconds per driver (None where missing), as the player reads it."""
+    raw = np.frombuffer(_inflate(trend["z"]), dtype="<u2")
+    rows = raw.reshape(len(trend["codes"]), trend["samples"]) if trend["codes"] else raw
+    return {
+        code: [None if v == trend["missing"] else v / trend["scale"] for v in row.tolist()]
+        for code, row in zip(trend["codes"], rows, strict=True)
+    }
 
 
 def _close_series(interval):
@@ -310,8 +402,8 @@ def build_replay_payload(
         "leader_laps": _series_json(leader, floor) if len(leader) else [[], []],
         "events": [[round(t, 3), kind, label] for t, kind, label in events(session_data, series)],
         "segments": [
-            [round(start, 3), SEGMENT_NAMES[index]]
-            for index, start in enumerate(series.segment_starts[: len(SEGMENT_NAMES)])
+            [round(start, 3), series.segment_names[index]]
+            for index, start in enumerate(series.segment_starts[: len(series.segment_names)])
         ],
         "estimated": bool(series.estimated),
         "laps": _driver_laps(session_data, series),

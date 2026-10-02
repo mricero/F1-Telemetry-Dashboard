@@ -16,7 +16,7 @@ from tests import live_fixtures
 @pytest.fixture
 def adapter_with_session_info():
     adapter = SignalRLiveAdapter()
-    adapter._data_buffer["SessionInfo"] = [live_fixtures.first_payload("SessionInfo")]
+    adapter.handle_message("SessionInfo", live_fixtures.first_payload("SessionInfo"))
     return adapter
 
 
@@ -169,19 +169,6 @@ class TestRealTyreStintShape:
 
         assert partial, "the feed does send compound-less stint updates"
         assert any("TotalLaps" in fields for fields in partial)
-
-    def test_the_record_parser_cannot_read_these_messages(self):
-        """Why LIVE-05 exists: the per-message parser never saw this shape.
-
-        ``parse_tyre_stints`` expects a flat list of records that already
-        carry a ``Compound``; handed the feed's actual ``{"Stints": {...}}``
-        payload it finds nothing to work with. Kept as a record of what the
-        state layer replaced - the parser itself goes with LIVE-16.
-        """
-        payload = live_fixtures.first_payload("TyreStintSeries")
-
-        with pytest.raises(AttributeError):
-            LiveDataProcessor.parse_tyre_stints(payload)
 
     def test_the_state_layer_keeps_them(self):
         from data.live_state import LiveState

@@ -19,8 +19,10 @@ from ui.layout import (
     render_live_dashboard,
     render_position_changes,
     render_race_control,
+    render_delay_input,
     render_telemetry_charts,
     render_tire_strategy,
+    render_token_helper,
     render_weather,
 )
 from ui.replay_view import (
@@ -40,8 +42,12 @@ PAGE_RESULTS = "Results"
 PAGE_ANALYSIS = "Analysis"
 PAGE_RECORDS = "Records"
 PAGE_LIVE = "Live"
-# Which page ran last, so the replay can tell it is being re-entered.
+# Which page runs now and which ran on the previous script run, so the replay
+# can tell it is being re-entered. app.main() sets both from st.navigation's
+# result (UI-10): a page that forgot to set it (Records, Live) used to make the
+# replay remount at the last Python seek instead of the reported cursor.
 LAST_PAGE_KEY = "last_page"
+PREVIOUS_PAGE_KEY = "previous_page"
 # The lap "Analyse this lap" picked in the player, per session.
 ANALYSIS_LAP_PREFIX = "analysis_lap"
 
@@ -62,6 +68,12 @@ SCOPE_NOTES = {
 }
 
 
+def enter_page(title: str) -> None:
+    """Record that ``title`` is the page this script run draws (UI-10)."""
+    st.session_state[PREVIOUS_PAGE_KEY] = st.session_state.get(LAST_PAGE_KEY)
+    st.session_state[LAST_PAGE_KEY] = title
+
+
 def _context() -> dict:
     return st.session_state[CONTEXT_KEY]
 
@@ -77,11 +89,10 @@ def replay_page() -> None:
     results = pages.get(PAGE_RESULTS)
     # Back on the replay: a lap picked earlier no longer overrides the cursor.
     st.session_state.pop(f"{ANALYSIS_LAP_PREFIX}:{context['session_key']}", None)
-    if st.session_state.get(LAST_PAGE_KEY) != PAGE_REPLAY:
+    if st.session_state.get(PREVIOUS_PAGE_KEY) != PAGE_REPLAY:
         # The player was unmounted while away; it remounts at the moment it
         # last reported, not at the last Python seek.
         sync_seek_cursor(context["session_key"])
-    st.session_state[LAST_PAGE_KEY] = PAGE_REPLAY
     render_session_replay(
         context["session_data"],
         context["session_key"],
@@ -98,7 +109,6 @@ def replay_page() -> None:
 
 def results_page() -> None:
     """How the session ended: classification, sectors, dominance, strategy."""
-    st.session_state[LAST_PAGE_KEY] = "other"
     context = _context()
     render_dashboard(context["session_data"])
     st.subheader("Tyre strategy")
@@ -131,7 +141,6 @@ def replay_moment(context: dict) -> dict:
 
 def analysis_page() -> None:
     """One analysis panel at a time: only the chosen one is computed."""
-    st.session_state[LAST_PAGE_KEY] = "other"
     context = _context()
     session_data = context["session_data"]
     moment = replay_moment(context)
@@ -148,6 +157,9 @@ def analysis_page() -> None:
             default=ANALYSIS_SECTIONS[0],
             key="analysis_section",
             label_visibility="collapsed",
+            # Kept across page switches: Weather -> Replay -> Analysis comes
+            # back on Weather instead of resetting to Telemetry (UI-21).
+            persist_state="session",
         )
         or ANALYSIS_SECTIONS[0]
     )
@@ -202,6 +214,9 @@ def live_page() -> None:
     """The live timing screen, polled from the SignalR buffers."""
     context = _context()
     live_client = context["session_data"].get("live_client")
+    # Outside the 3 s fragment: an input inside it would be redrawn under the
+    # cursor while someone types.
+    render_delay_input()
     if live_client is None:
         st.info("No live client is available in this process.")
     elif not live_client.is_running():
@@ -216,7 +231,9 @@ def live_page() -> None:
         # Status chip, reconnects and the dashboard refresh every 3 s inside
         # the fragment; between sessions it shows the last session's state.
         render_live_dashboard(context["data_manager"], context["processor"])
-    # Buffer counts, raw-stream recording and Stop Live (LIVE-12).
+    render_token_helper()
+    # Buffer counts, raw-stream recording and Stop Live (LIVE-12), for the
+    # person running the app only (LIVE-29).
     render_live_controls(live_client)
 
 

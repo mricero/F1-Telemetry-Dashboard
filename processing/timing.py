@@ -217,7 +217,7 @@ def _laps_completed(laps: pd.DataFrame) -> int:
     it would put every car one lap ahead of where it is.
     """
     if "IsInProgress" in laps.columns:
-        return int((~laps["IsInProgress"].fillna(False).astype(bool)).sum())
+        return int((~_in_progress(laps)).sum())
     return len(laps)
 
 
@@ -238,10 +238,23 @@ def _valid_laps(laps: pd.DataFrame) -> pd.DataFrame:
     """
     valid = laps
     if "Deleted" in valid.columns:
-        valid = valid[~valid["Deleted"].fillna(False).astype(bool)]
+        # .eq/.ne, not fillna(...).astype(bool): an all-None object column
+        # (race control failed to load) must not rely on silent downcasting.
+        valid = valid[~valid["Deleted"].eq(True)]
     if "IsAccurate" in valid.columns:
-        valid = valid[valid["IsAccurate"].fillna(True).astype(bool)]
+        valid = valid[valid["IsAccurate"].ne(False)]
     return valid
+
+
+def _deletion(lap: pd.Series) -> tuple[bool, str | None]:
+    """Whether a lap was deleted, and the stewards' reason when known."""
+    deleted = lap.get("Deleted")
+    if deleted is not True and not (isinstance(deleted, (bool, np.bool_)) and bool(deleted)):
+        return False, None
+    reason = lap.get("DeletedReason")
+    if reason is None or pd.isna(reason) or not str(reason).strip():
+        return True, None
+    return True, str(reason).strip()
 
 
 def _best_sectors(laps: pd.DataFrame) -> list[float | None]:
@@ -296,8 +309,10 @@ _LAPS_DOWN = re.compile(r"^\+(\d+)\s+laps?$", re.IGNORECASE)
 def status_badge(official_status: str | None) -> str | None:
     """``session.results.Status`` -> a tower badge, or None when unknown.
 
-    FIN / +NL / DNF / DSQ / DNS, so a retirement is not presented as a
-    classified finish.
+    FIN / DNF / DSQ / DNS, so a retirement is not presented as a
+    classified finish. A lapped finisher is a finish (``FIN``): the laps
+    down belong in the gap column (``+1 LAP``, UI guideline 5.6), see
+    :func:`official_laps_down`.
     """
     if official_status is None or pd.isna(official_status):
         return None
@@ -307,14 +322,26 @@ def status_badge(official_status: str | None) -> str | None:
     lowered = status.lower()
     if lowered == "finished":
         return "FIN"
-    laps_down = _LAPS_DOWN.match(lowered)
-    if laps_down:
-        return f"+{int(laps_down.group(1))}L"
+    if _LAPS_DOWN.match(lowered):
+        return "FIN"
     if lowered in DSQ_STATUSES:
         return "DSQ"
     if lowered in DNS_STATUSES:
         return "DNS"
     return "DNF"
+
+
+def official_laps_down(official_status: str | None) -> int:
+    """``'+2 Laps'`` -> ``2``; anything else -> ``0``."""
+    if official_status is None or pd.isna(official_status):
+        return 0
+    match = _LAPS_DOWN.match(str(official_status).strip())
+    return int(match.group(1)) if match else 0
+
+
+# Badges a non-race session can carry: a qualifying or practice row has no
+# finish to classify, so FIN/DNF chips there are noise (UI-13).
+NON_RACE_BADGES = {"DSQ", "DNS"}
 
 
 def _flag_is_set(laps: pd.DataFrame, column: str) -> bool:
@@ -326,7 +353,7 @@ def _flag_is_set(laps: pd.DataFrame, column: str) -> bool:
     if column not in laps.columns:
         return False
     values = laps[column]
-    return bool(values.fillna(False).astype(bool).any())
+    return bool(values.eq(True).any())
 
 
 def _live_status(laps: pd.DataFrame) -> str:
@@ -346,24 +373,35 @@ def _live_status(laps: pd.DataFrame) -> str:
     return "ON TRACK"
 
 
-def _status(laps: pd.DataFrame, is_live: bool, official_status: str | None = None) -> str:
-    """Driver state badge.
+def _status(
+    laps: pd.DataFrame, is_live: bool, official_status: str | None = None, race: bool = True
+) -> str:
+    """Driver state in the model's vocabulary (UI guideline 5.6).
 
-    Live sessions report where the car is now; a finished session reports how
-    the driver was classified (a DNF is not "CLASSIFIED").
+    Live sessions report where the car is now; a finished race reports how
+    the driver was classified (a DNF is not a finish). Everything else - a
+    classified qualifying or practice row, a race without results - is
+    ``ON TRACK``, which the tower shows as an empty cell.
     """
     if laps.empty:
         return "OUT"
     if is_live:
         return _live_status(laps)
-    return status_badge(official_status) or "CLASSIFIED"
+    badge = status_badge(official_status)
+    if badge is None or (not race and badge not in NON_RACE_BADGES):
+        return "ON TRACK"
+    return badge
 
 
 def fastest_lap_row(laps_df: pd.DataFrame, driver: str) -> pd.Series | None:
-    """The driver's quickest lap, or None when they never set a time."""
+    """The driver's quickest valid lap, or None when they never set one.
+
+    Deleted and inaccurate laps are skipped (REPLAY-18), as in FastF1's
+    ``pick_fastest()``, which picks the telemetry the strips are drawn on.
+    """
     if laps_df is None or laps_df.empty or "Driver" not in laps_df.columns:
         return None
-    own = laps_df[laps_df["Driver"].astype(str) == str(driver)]
+    own = _valid_laps(laps_df[laps_df["Driver"].astype(str) == str(driver)])
     if own.empty or "LapTime" not in own.columns:
         return None
     seconds = own["LapTime"].map(to_seconds)
@@ -616,15 +654,20 @@ def theoretical_best(rows: Sequence[dict]) -> float | None:
     return _ideal_lap(session_bests)
 
 
+def _best_key(row: dict) -> tuple[float, float]:
+    """Best lap, then the session time it was set: an equal lap set later
+    ranks behind (REPLAY-26)."""
+    at = row.get("best_at")
+    return (row["best_seconds"], at if at is not None else float("inf"))
+
+
 def _classify_by_best_lap(rows: list[dict]) -> list[dict]:
     """Practice / qualifying order: quickest personal best first.
 
     Gap is the lap-time delta to the session best and Interval the delta to
     the car ahead on the timing screen.
     """
-    timed = sorted(
-        (r for r in rows if r["best_seconds"] is not None), key=lambda r: r["best_seconds"]
-    )
+    timed = sorted((r for r in rows if r["best_seconds"] is not None), key=_best_key)
     untimed = [r for r in rows if r["best_seconds"] is None]
     ordered = timed + untimed
 
@@ -643,7 +686,15 @@ def _classify_by_best_lap(rows: list[dict]) -> list[dict]:
     return ordered
 
 
-def _classify_qualifying(rows: list[dict], results: dict[str, dict]) -> list[dict]:
+def _entry_count(rows: list[dict], results: dict[str, dict], meta: dict[str, dict]) -> int:
+    """Cars entered: a car that never ran still counts toward the cut-offs
+    (REPLAY-22), so count results and the drivers table, not timed rows."""
+    return len({row["code"] for row in rows} | set(results) | set(meta))
+
+
+def _classify_qualifying(
+    rows: list[dict], results: dict[str, dict], entries: int | None = None
+) -> list[dict]:
     """Qualifying order: segment reached first, then time within it.
 
     A driver's row shows the time from the segment they went out in, not
@@ -659,12 +710,13 @@ def _classify_qualifying(rows: list[dict], results: dict[str, dict]) -> list[dic
         # No per-segment times (live, or a source without results): fall back
         # to best-lap order and the regulation cut-offs for the entry list.
         ordered = _classify_by_best_lap(rows)
-        survivors = qualifying_cutoffs(len(ordered))[-1]
+        survivors = qualifying_cutoffs(entries or len(ordered))[-1]
         for index, row in enumerate(ordered):
             row["knocked_out"] = index >= survivors
         return ordered
 
-    q2_places, q3_places = qualifying_cutoffs(len(rows))
+    q2_places, q3_places = qualifying_cutoffs(entries or len(rows))
+    rank_of = {segment: index for index, segment in enumerate(QUALIFYING_SEGMENTS)}
     for row in rows:
         entry = results.get(row["code"], {})
 
@@ -688,6 +740,12 @@ def _classify_qualifying(rows: list[dict], results: dict[str, dict]) -> list[dic
                 if row["official_position"] <= q3_places
                 else "Q2" if row["official_position"] <= q2_places else "Q1"
             )
+            # A time set in a later segment proves the car reached it.
+            for reached in ("Q3", "Q2"):
+                if reached in entry and pd.notna(entry[reached]):
+                    if rank_of[reached] < rank_of[row["segment"]]:
+                        row["segment"] = reached
+                    break
         else:
             row["official_position"] = None
             row["segment"] = next(
@@ -768,7 +826,8 @@ def _classify_race(rows: list[dict], results: dict[str, dict]) -> list[dict]:
 
     leader_laps = ordered[0]["laps_completed"]
     for row in ordered:
-        laps_down = leader_laps - row["laps_completed"]
+        official = official_laps_down(results.get(row["code"], {}).get("Status"))
+        laps_down = max(leader_laps - row["laps_completed"], official)
         row["laps_down"] = max(laps_down, 0)
         row["gap_seconds"] = None if laps_down > 0 else _race_gap_seconds(row, results)
 
@@ -800,7 +859,7 @@ def _in_progress(laps: pd.DataFrame) -> pd.Series:
     """Rows standing for the lap a driver is on, not a completed one."""
     if "IsInProgress" not in laps.columns:
         return pd.Series(False, index=laps.index)
-    return laps["IsInProgress"].astype("boolean").fillna(False).astype(bool)
+    return laps["IsInProgress"].eq(True)
 
 
 def _value(value):
@@ -869,13 +928,16 @@ def _rows_from_standings(session_data: dict, standings: pd.DataFrame) -> list[di
                 "last_seconds": float(last_seconds) if last_seconds is not None else None,
                 "last_is_session_best": record.get("LastFlag") == "sb",
                 "last_is_personal_best": record.get("LastFlag") == "pb",
+                "last_deleted": bool(_value(record.get("LastDeleted"))),
+                "last_deleted_reason": _value(record.get("LastDeletedReason")),
                 "sectors": sectors,
                 "best_sectors": best_sectors,
                 "personal_ideal": _ideal_lap(best_sectors),
                 "tyre_history": _tyre_history(
                     own, _driver_stints(session_data.get("stints"), code)
                 ),
-                "speed_kmh": 0.0 if status == "IN PIT" else speed,
+                # A car in the pit lane has no trap speed: missing, not 0.
+                "speed_kmh": None if status == "IN PIT" else speed,
                 "laps_completed": len(done),
                 "last_position": None,
                 "pits": _value(record.get("Pits")),
@@ -885,11 +947,7 @@ def _rows_from_standings(session_data: dict, standings: pd.DataFrame) -> list[di
             }
         )
 
-    fastest = min(
-        (r for r in rows if r["best_seconds"] is not None),
-        key=lambda r: r["best_seconds"],
-        default=None,
-    )
+    fastest = min((r for r in rows if r["best_seconds"] is not None), key=_best_key, default=None)
     best_possible = theoretical_best(rows)
     for row in rows:
         row["is_overall_best"] = row is fastest
@@ -932,22 +990,25 @@ def build_timing_rows(session_data: dict) -> list[dict]:
             per_driver_segments[str(code)] = times
     states = segment_states(per_driver_segments)
 
+    race = is_race_session(session_data.get("session_info"))
     rows = []
     for code, driver_laps in laps_df.groupby("Driver", sort=False):
         driver_laps = driver_laps.sort_values("LapNumber")
         lap_seconds = driver_laps["LapTime"].map(to_seconds)
-        valid = lap_seconds.dropna()
+        # Best and session best come from valid laps only (REPLAY-18); a
+        # deleted lap still shows as the last lap, marked as deleted.
+        valid = lap_seconds.loc[_valid_laps(driver_laps).index].dropna()
 
         best_seconds = float(valid.min()) if not valid.empty else None
         last_value = lap_seconds.iloc[-1]
         last_seconds = float(last_value) if pd.notna(last_value) else None
+        last_deleted, last_reason = _deletion(driver_laps.iloc[-1])
 
-        # Sector times come from the driver's own quickest lap.
+        # Sector times come from the driver's own quickest valid lap.
         best_lap_row = (
-            driver_laps.loc[lap_seconds.idxmin()]
-            if best_seconds is not None
-            else driver_laps.iloc[-1]
+            driver_laps.loc[valid.idxmin()] if best_seconds is not None else driver_laps.iloc[-1]
         )
+        best_at = to_seconds(best_lap_row.get("Time")) if best_seconds is not None else None
         default_states = ["NONE"] * TOTAL_SEGMENTS
         sectors = []
         for index in range(1, SECTORS + 1):
@@ -974,11 +1035,16 @@ def build_timing_rows(session_data: dict) -> list[dict]:
                 "full_name": info.get("full_name", str(code)),
                 "team_name": info.get("team_name", ""),
                 "team_colour": info.get("team_colour", ""),
-                "status": _status(driver_laps, is_live, results.get(str(code), {}).get("Status")),
+                "status": _status(
+                    driver_laps, is_live, results.get(str(code), {}).get("Status"), race
+                ),
                 "best_seconds": best_seconds,
+                "best_at": best_at,
                 "best_lap": format_lap(best_seconds),
                 "last_lap": format_lap(last_seconds),
                 "last_seconds": last_seconds,
+                "last_deleted": last_deleted,
+                "last_deleted_reason": last_reason,
                 # Set once every row is known (spec section 3.4).
                 "last_is_session_best": False,
                 "sectors": sectors,
@@ -1001,15 +1067,13 @@ def build_timing_rows(session_data: dict) -> list[dict]:
     if is_race_session(session_info):
         ordered = _classify_race(rows, results)
     elif is_qualifying_session(session_info):
-        ordered = _classify_qualifying(rows, results)
+        ordered = _classify_qualifying(rows, results, _entry_count(rows, results, meta))
     else:
         # Practice: everyone is simply ranked, nobody is knocked out.
         ordered = _classify_by_best_lap(rows)
 
     fastest = min(
-        (r for r in ordered if r["best_seconds"] is not None),
-        key=lambda r: r["best_seconds"],
-        default=None,
+        (r for r in ordered if r["best_seconds"] is not None), key=_best_key, default=None
     )
     session_best = fastest["best_seconds"] if fastest else None
     for position, row in enumerate(ordered, start=1):
@@ -1018,12 +1082,13 @@ def build_timing_rows(session_data: dict) -> list[dict]:
         # A last lap that *is* the session best gets the purple treatment.
         row["last_is_session_best"] = bool(
             session_best is not None
+            and not row["last_deleted"]
             and row["last_seconds"] is not None
             and abs(row["last_seconds"] - session_best) < 1e-6
         )
-        # A car in the pit lane is not doing any speed (spec section 3.13).
+        # A car in the pit lane has no trap speed: missing, not 0 (UI-13).
         if row["status"] == "IN PIT":
-            row["speed_kmh"] = 0.0
+            row["speed_kmh"] = None
 
     best_possible = theoretical_best(ordered)
     for row in ordered:

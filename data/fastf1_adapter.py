@@ -1,7 +1,9 @@
 """FastF1 Historical Data Adapter"""
 
 import logging
+import threading
 import warnings
+from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -192,31 +194,101 @@ def latest_completed_event(schedule: pd.DataFrame) -> pd.Series | None:
     return finished.loc[race_start.loc[finished.index].idxmax()]
 
 
+# FastF1's cache is process-wide: enabling it again builds a new HTTP cache
+# session without closing the old one, possibly in the middle of another
+# tab's load (HIST-10). It is enabled once per directory.
+_cache_lock = threading.Lock()
+_enabled_cache_dir: str | None = None
+
+# Loaded sessions, newest last, shared by every tab (HIST-08): switching the
+# telemetry scope or reopening a session re-derives frames instead of
+# reloading. Three sessions bound the memory a long-lived process holds.
+SESSION_CACHE_SIZE = 3
+_session_cache: OrderedDict[tuple, fastf1.core.Session] = OrderedDict()
+# Per-driver frames derived from a cached session, keyed (session id, driver,
+# scope): the merge is the slow part of a load.
+_frame_cache: dict[tuple, tuple[pd.DataFrame, pd.DataFrame]] = {}
+
+# How long after its end a session may still be missing from F1's archive or
+# be revised there (HIST-09). Such sessions are not kept in the runtime cache.
+ARCHIVE_SETTLE_TIME = pd.Timedelta(3, unit="h")
+
+
+class SessionNotArchivedError(RuntimeError):
+    """The session has run but F1's archive does not have its timing yet."""
+
+
+def enable_cache_once(cache_dir: str) -> None:
+    global _enabled_cache_dir
+    resolved = str(Path(cache_dir).resolve())
+    with _cache_lock:
+        if _enabled_cache_dir == resolved:
+            return
+        fastf1.Cache.enable_cache(cache_dir)
+        _enabled_cache_dir = resolved
+
+
+def clear_session_cache() -> None:
+    """Drop the loaded sessions and their derived frames (tests, Settings)."""
+    with _cache_lock:
+        _session_cache.clear()
+        _frame_cache.clear()
+
+
+def _is_cached_session(session) -> bool:
+    return any(session is held for held in _session_cache.values())
+
+
+def _schedule_years(years) -> list[int]:
+    if years is None:
+        # The current season plus the previous one: hardcoding seasons left
+        # "most recent completed race" a year behind once the year rolled.
+        this_year = _utcnow().year
+        return [this_year, this_year - 1]
+    if isinstance(years, int):
+        return [years]
+    return list(years)
+
+
+def first_session_end(event: pd.Series) -> pd.Timestamp | None:
+    """When an event's first session can have ended, or None if unknown."""
+    for index in range(1, MAX_SESSIONS_PER_EVENT + 1):
+        name = event.get(f"Session{index}")
+        if name is None or pd.isna(name):
+            continue
+        start = pd.to_datetime(event.get(f"Session{index}DateUtc"), utc=True, errors="coerce")
+        if pd.isna(start):
+            continue
+        code = SESSION_NAME_TO_CODE.get(str(name).strip())
+        return start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
+    return None
+
+
 class FastF1Adapter:
     """Loads historical F1 sessions with local caching."""
 
-    def __init__(self, cache_dir: str = "./ff1_cache"):
+    def __init__(self, cache_dir: str | None = None):
+        if cache_dir is None:
+            from config import config
+
+            cache_dir = config.fastf1_cache_dir
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         # Pass the original string so callers can round-trip the exact path
-        fastf1.Cache.enable_cache(cache_dir)
+        enable_cache_once(cache_dir)
 
-    def get_available_sessions(self, years: list[int] | None = None) -> pd.DataFrame:
-        """Returns DataFrame of all completed race weekends from the schedule.
+    def get_schedule(self, years: list[int] | int | None = None) -> pd.DataFrame:
+        """Every championship event of the given seasons, run or not.
 
         Pre-season testing events are excluded: they appear twice per season,
         carry no Race/Qualifying session, and would break session loading if
-        picked from the Grand Prix dropdown.
+        picked from the Grand Prix dropdown. The live check reads this
+        unfiltered schedule: the date-filtered one hid every event until its
+        last day, so no practice, sprint or qualifying was ever "live"
+        (LIVE-28).
         """
-        if years is None:
-            # The current season plus the previous one: hardcoding seasons left
-            # "most recent completed race" a year behind once the year rolled.
-            this_year = _utcnow().year
-            years = [this_year, this_year - 1]
-        elif isinstance(years, int):
-            years = [years]
         all_schedules = []
-        for year in years:
+        for year in _schedule_years(years):
             schedule = fastf1.get_event_schedule(year)
             # Add Year column for consistency
             schedule["Year"] = year
@@ -228,21 +300,88 @@ class FastF1Adapter:
             combined = combined[combined["EventFormat"].astype(str) != "testing"]
         elif not combined.empty and "RoundNumber" in combined.columns:
             combined = combined[pd.to_numeric(combined["RoundNumber"], errors="coerce") > 0]
+        return combined
 
-        # Filter to completed sessions only.
-        # FastF1 EventDate tz-awareness varies by version, so normalize both sides to UTC-aware.
-        if "EventDate" in combined.columns and not combined.empty:
+    def get_available_sessions(self, years: list[int] | None = None) -> pd.DataFrame:
+        """Returns DataFrame of the race weekends that have started running.
+
+        An event is offered once its first session has ended (CACHE-03): the
+        old filter on ``EventDate`` (the last session's date at 00:00) hid a
+        weekend's practice, sprint and qualifying until race day. Which of an
+        event's sessions can be picked is decided per session by
+        :func:`session_codes_for_event`.
+        """
+        combined = self.get_schedule(years)
+        if combined.empty:
+            return combined
+        now = _utcnow()
+        ended = [first_session_end(event) for _, event in combined.iterrows()]
+        if any(end is not None for end in ended):
+            keep = [end is not None and end <= now for end in ended]
+            return combined[keep]
+        # Older schedule shapes only carry the event date.
+        if "EventDate" in combined.columns:
             event_dates = pd.to_datetime(combined["EventDate"], utc=True)
-            completed = combined[event_dates < _utcnow()]
-        else:
-            completed = combined
-        return completed
+            return combined[event_dates < now]
+        return combined
 
     def load_session(self, year: int, gp: str, session_type: str) -> fastf1.core.Session:
-        """Load session with automatic caching."""
+        """Load a session, reusing one already loaded in this process (HIST-08).
+
+        A session that has run but is not in F1's archive yet (usually for an
+        hour or two afterwards) loads without laps; FastF1 then raises
+        ``DataNotLoadedError`` on the first ``session.laps``. That is turned
+        into :class:`SessionNotArchivedError` with a message that says so
+        (HIST-09).
+        """
+        key = (int(year), str(gp).strip().lower(), str(session_type).upper(), str(self.cache_dir))
+        with _cache_lock:
+            cached = _session_cache.get(key)
+            if cached is not None:
+                _session_cache.move_to_end(key)
+                return cached
         session = fastf1.get_session(year, gp, session_type)
         session.load(telemetry=True, laps=True, weather=True, messages=True)
+        self._require_laps(session, year, gp, session_type)
+        with _cache_lock:
+            _session_cache[key] = session
+            while len(_session_cache) > SESSION_CACHE_SIZE:
+                _, dropped = _session_cache.popitem(last=False)
+                for frame_key in [k for k in _frame_cache if k[0] == id(dropped)]:
+                    _frame_cache.pop(frame_key, None)
         return session
+
+    @staticmethod
+    def _require_laps(session, year, gp, session_type) -> None:
+        from fastf1.exceptions import DataNotLoadedError
+
+        try:
+            laps = session.laps
+        except DataNotLoadedError as exc:
+            raise SessionNotArchivedError(
+                f"{year} {gp} {session_type} is not in F1's archive yet "
+                "(usually 1-2 h after the session). Try again later."
+            ) from exc
+        if isinstance(laps, pd.DataFrame) and laps.empty:
+            raise SessionNotArchivedError(
+                f"{year} {gp} {session_type} has no lap timing in F1's archive yet "
+                "(usually 1-2 h after the session). Try again later."
+            )
+
+    @staticmethod
+    def ended_recently(session, now: pd.Timestamp | None = None) -> bool:
+        """Whether the session ended less than ``ARCHIVE_SETTLE_TIME`` ago.
+
+        Such a session may still be partial in the archive, so the app does
+        not keep it in the runtime cache (HIST-09).
+        """
+        start = pd.to_datetime(getattr(session, "date", None), utc=True, errors="coerce")
+        if not isinstance(start, pd.Timestamp) or pd.isna(start):
+            return False
+        name = str(getattr(session, "name", "") or "")
+        code = SESSION_NAME_TO_CODE.get(name.strip())
+        end = start + SESSION_DURATIONS.get(code, pd.Timedelta(2, unit="h"))
+        return bool((now if now is not None else _utcnow()) - end < ARCHIVE_SETTLE_TIME)
 
     def _pick_laps(self, session: fastf1.core.Session, driver: str, scope: str):
         """Select the laps a telemetry request should cover.
@@ -294,13 +433,24 @@ class FastF1Adapter:
         X/Y/Z trail - so a session load does it once per driver rather than
         twice.
         """
+        key = (id(session), driver, scope)
+        with _cache_lock:
+            cached = _frame_cache.get(key) if _is_cached_session(session) else None
+        if cached is not None:
+            return cached
         selection = self._pick_laps(session, driver, scope)
         if selection is None:
             return pd.DataFrame(), pd.DataFrame()
         merged = self._merged_telemetry(selection)
         if merged.empty:
             return pd.DataFrame(), pd.DataFrame()
-        return self._telemetry_columns(merged), self._location_columns(merged)
+        frames = self._telemetry_columns(merged), self._location_columns(merged)
+        with _cache_lock:
+            # Only frames of a session held in the session cache are kept:
+            # id() is unique only while that session object is alive.
+            if _is_cached_session(session):
+                _frame_cache[key] = frames
+        return frames
 
     @staticmethod
     def _telemetry_columns(telemetry: pd.DataFrame) -> pd.DataFrame:
@@ -522,7 +672,11 @@ class FastF1Adapter:
             # Lap validity: a deleted or inaccurately timed lap must not set
             # a sector best (see processing.timing._valid_laps).
             "Deleted",
+            "DeletedReason",
             "IsAccurate",
+            # FastF1's per-lap track status string ("1", "24", "4" ...): pace
+            # analysis must leave out SC/VSC laps (FEAT-03).
+            "TrackStatus",
         ]
         available = [c for c in cols if c in laps.columns]
         result = pd.DataFrame(laps[available]).reset_index(drop=True)
@@ -734,7 +888,9 @@ class FastF1Adapter:
         """Boolean pit-out flag per lap, from whichever column the source has."""
         for col in ("IsPitOutLap", "PitOutLap"):
             if col in laps.columns:
-                return laps[col].fillna(False).astype(bool)
+                # .eq(True), not fillna(False).astype(bool): the silent
+                # object-to-bool downcast is gone in pandas 3 (CORE-02).
+                return laps[col].eq(True)
         if "PitOutTime" in laps.columns:
             return laps["PitOutTime"].notna()
         return pd.Series(False, index=laps.index, dtype=bool)

@@ -1,0 +1,32 @@
+F1 Telemetry Dashboard (f1dash)
+Copyright (c) 2026 F1 Telemetry Dashboard Contributors
+
+The project's own source code is licensed under the MIT License (LICENSE).
+The MIT License does not cover the third-party content listed below, which
+is included under its own terms.
+
+1. Titillium Web font
+   Files:     ui/assets/fonts/titillium-web-latin-600-normal.woff2
+              ui/assets/fonts/titillium-web-latin-700-normal.woff2
+   Copyright: (c) 2009-2011 by Accademia di Belle Arti di Urbino and students
+              of MA course of Visual design.
+   License:   SIL Open Font License, Version 1.1 (OFL-1.1). The full text is
+              in ui/assets/fonts/OFL.txt.
+
+2. Recorded F1 live-timing data (test fixtures)
+   Files:     tests/fixtures/live/ (see manifest.json for the source session:
+              2023 Bahrain Grand Prix, Race, a three-minute window)
+   Copyright: (c) Formula One World Championship Limited.
+   Terms:     Excerpts of F1's public live-timing archive, included only so
+              the test suite can replay real message shapes offline. They are
+              not licensed under the MIT License, are not part of the
+              installable package, and must not be redistributed for any
+              other purpose.
+
+Data the app fetches at runtime (FastF1, Jolpica, F1 live timing) is not
+part of this repository; see "Data sources and terms" in readme.md.
+
+This project is unofficial and is not associated in any way with the
+Formula 1 companies. F1, FORMULA ONE, FORMULA 1, FIA FORMULA ONE WORLD
+CHAMPIONSHIP, GRAND PRIX and related marks are trade marks of Formula One
+Licensing B.V.

@@ -591,3 +591,283 @@ class TestNoFinalOrderBeforeTiming:
         session["results"] = session["results"].assign(GridPosition=[3.0, 1.0, 2.0])  # B, C, A
 
         assert self._order(session, fx.LIGHTS_OUT + 1.0) == ["C", "A", "B"]
+
+
+# --- REPLAY-20: deletions are known only once the stewards announce them ----
+
+
+def _with_control(session: dict, messages: list[tuple[float, str]]) -> dict:
+    """A copy whose race control also carries ``(session seconds, text)`` rows."""
+    copy = dict(session)
+    copy["laps"] = session["laps"].copy()
+    added = pd.DataFrame(
+        {
+            "Time": pd.Timestamp("2026-06-07 13:00:00")
+            + pd.to_timedelta([t for t, _ in messages], unit="s"),
+            "SessionTime": pd.to_timedelta([t for t, _ in messages], unit="s"),
+            "Lap": [None] * len(messages),
+            "Category": ["Other"] * len(messages),
+            "Flag": [None] * len(messages),
+            "Scope": [None] * len(messages),
+            "Message": [text for _, text in messages],
+        }
+    )
+    control = session.get("race_control")
+    frames = [control, added] if control is not None and not control.empty else [added]
+    copy["race_control"] = pd.concat(frames, ignore_index=True)
+    return copy
+
+
+def _deletion_text(number: str, code: str, lap_s: float, lap: int) -> str:
+    return (
+        f"CAR {number} ({code}) TIME {format_laptime(lap_s)} DELETED - "
+        f"TRACK LIMITS AT TURN 4 LAP {lap} 14:07:31"
+    )
+
+
+E_LAP_END = 503.0  # practice: E's 1:30.500, the session best
+
+
+def _late_deleted_practice(reinstated_at: float | None = None) -> dict:
+    session = fx.practice_session()
+    messages = [(E_LAP_END + 90.0, _deletion_text("4", "E", 90.5, 2))]
+    if reinstated_at is not None:
+        messages.append((reinstated_at, "CAR 4 (E) TIME 1:30.500 LAP 2 REINSTATED"))
+    session = _with_control(session, messages)
+    laps = session["laps"]
+    e_two = (laps["Driver"] == "E") & (laps["LapNumber"] == 2.0)
+    laps["Deleted"] = e_two if reinstated_at is None else False
+    laps["DeletedReason"] = np.where(e_two & (reinstated_at is None), "TRACK LIMITS", "")
+    return session
+
+
+class TestLateDeletions:
+    def test_a_lap_is_session_best_until_the_deletion_is_announced(self):
+        session = _late_deleted_practice()
+        series = tower_series(session)
+
+        before = build_timing_rows(snapshot_at(session, E_LAP_END + 30.0, series))
+        after = build_timing_rows(snapshot_at(session, E_LAP_END + 120.0, series))
+
+        assert before[0]["code"] == "E" and before[0]["is_overall_best"]
+        assert before[0]["best_lap"] == "1:30.500"
+        assert not before[0]["last_deleted"]
+        e_after = next(row for row in after if row["code"] == "E")
+        assert after[0]["code"] == "A" and after[0]["is_overall_best"]
+        assert e_after["best_lap"] == "1:32.500"
+        assert e_after["last_lap"] == "1:30.500" and e_after["last_deleted"]
+        # FastF1's reason minus the local clock time.
+        assert e_after["last_deleted_reason"] == "TRACK LIMITS"
+
+    def test_the_message_reason_is_used_when_the_laps_have_none(self):
+        session = _late_deleted_practice()
+        session["laps"] = session["laps"].drop(columns=["DeletedReason"])
+
+        row = _row(session, E_LAP_END + 120.0, "E")
+
+        assert row["last_deleted_reason"] == "TRACK LIMITS AT TURN 4 LAP 2"
+
+    def test_the_purple_last_lap_is_cleared_by_the_deletion(self):
+        session = _late_deleted_practice()
+        series = tower_series(session)
+
+        assert series.value("E", "last_flag", E_LAP_END + 30.0) == "sb"
+        assert series.value("E", "last_flag", E_LAP_END + 120.0) is None
+
+    def test_a_reinstated_lap_counts_again(self):
+        session = _late_deleted_practice(reinstated_at=E_LAP_END + 150.0)
+        series = tower_series(session)
+
+        assert _order(session, E_LAP_END + 120.0, series)[0] == "A"
+        assert _order(session, E_LAP_END + 200.0, series)[0] == "E"
+        assert not _row(session, E_LAP_END + 200.0, "E", series)["last_deleted"]
+
+    def test_the_fastest_lap_event_is_kept_as_it_happened(self):
+        found = events(_late_deleted_practice())
+
+        assert (E_LAP_END, "fastest", "Fastest lap - E 1:30.500") in found
+
+    def test_a_lap_deleted_at_its_end_never_counts(self):
+        session = fx.practice_session()
+        laps = session["laps"]
+        laps["Deleted"] = (laps["Driver"] == "E") & (laps["LapNumber"] == 2.0)
+        series = tower_series(session)
+
+        assert _order(session, E_LAP_END + 1.0, series)[0] == "A"
+        assert series.value("E", "last_flag", E_LAP_END + 1.0) is None
+
+
+def _late_deletions(session: dict, moment: float, seed: int) -> dict:
+    """A copy where laps completed by ``moment`` are deleted *after* it."""
+    rng = np.random.default_rng(seed)
+    laps = session["laps"]
+    ends = laps["Time"].dt.total_seconds()
+    done = laps[(ends <= moment) & laps["LapTime"].notna()]
+    if done.empty:
+        return session
+    picked = done.sample(n=min(2, len(done)), random_state=seed)
+    messages = [
+        (
+            moment + float(rng.uniform(0.5, 40)),
+            _deletion_text(
+                str(lap.DriverNumber),
+                str(lap.Driver),
+                lap.LapTime.total_seconds(),
+                int(lap.LapNumber),
+            ),
+        )
+        for lap in picked.itertuples()
+    ]
+    copy = _with_control(session, messages)
+    copy["laps"]["Deleted"] = copy["laps"].index.isin(picked.index)
+    return copy
+
+
+class TestNoFutureLeaksFromLateDeletions:
+    """REPLAY-20: a deletion announced after t leaves the snapshot at t alone."""
+
+    @pytest.mark.parametrize("seed", range(10))
+    @pytest.mark.parametrize("builder", ["race", "practice", "qualifying"])
+    def test_a_later_deletion_does_not_change_the_snapshot(self, builder, seed):
+        session = {
+            "race": fx.race_session,
+            "practice": fx.practice_session,
+            "qualifying": fx.qualifying_session,
+        }[builder]()
+        clock = session["session_info"]["replay_clock"]
+        moment = float(np.random.default_rng(seed).uniform(clock["start"], clock["end"]))
+
+        deleted = _late_deletions(session, moment, seed)
+        expected = _comparable(snapshot_at(session, moment, tower_series(session)))
+        actual = _comparable(snapshot_at(deleted, moment, tower_series(deleted)))
+
+        assert actual == expected
+
+
+# --- REPLAY-17: one chequered flag per qualifying segment -------------------
+
+Q1_FLAG, Q2_FLAG, Q3_FLAG = 1440.0, 2640.0, 3900.0
+Q2_RED, Q2_RESTART = 1800.0, 1900.0
+
+
+def _flagged_qualifying(session_type: str = "Q") -> dict:
+    session = fx.qualifying_session()
+    session["session_info"] = {**session["session_info"], "session_type": session_type}
+    session["track_status"] = pd.DataFrame(
+        {
+            "Time": [0.0, Q2_RED, Q2_RESTART],
+            "Status": ["1", "5", "1"],
+            "Message": ["AllClear", "Red", "AllClear"],
+        }
+    )
+    stamps = [Q1_FLAG, Q2_FLAG, Q3_FLAG]
+    session["race_control"] = pd.DataFrame(
+        {
+            "Time": pd.Timestamp("2026-06-06 14:00:00") + pd.to_timedelta(stamps, unit="s"),
+            "SessionTime": pd.to_timedelta(stamps, unit="s"),
+            "Lap": [None, None, None],
+            "Category": ["Flag"] * 3,
+            "Flag": ["CHEQUERED"] * 3,
+            "Scope": ["Track"] * 3,
+            "Message": ["CHEQUERED FLAG"] * 3,
+        }
+    )
+    return session
+
+
+def _flag_at(session: dict, moment: float) -> str:
+    return flag_state(snapshot_at(session, moment, tower_series(session)))
+
+
+class TestQualifyingChequeredFlags:
+    def test_a_q2_red_flag_survives_the_q1_chequered_flag(self):
+        timeline = flag_timeline(_flagged_qualifying())
+
+        assert (Q2_RED, "RED") in timeline
+        assert [t for t, state in timeline if state == "CHEQUERED"] == [
+            Q1_FLAG,
+            Q2_FLAG,
+            Q3_FLAG,
+        ]
+        assert (fx.Q_STARTS[1], "GREEN") in timeline
+
+    @pytest.mark.parametrize(
+        ("moment", "expected"),
+        [
+            (1000.0, "GREEN"),
+            (Q1_FLAG + 10.0, "CHEQUERED"),
+            (1600.0, "GREEN"),
+            (1850.0, "RED"),
+            (2000.0, "GREEN"),
+            (Q2_FLAG + 10.0, "CHEQUERED"),
+            (3000.0, "GREEN"),
+            (Q3_FLAG + 10.0, "CHEQUERED"),
+        ],
+    )
+    def test_the_flag_state_returns_to_track_status_each_segment(self, moment, expected):
+        assert _flag_at(_flagged_qualifying(), moment) == expected
+
+    def test_one_flag_event_per_segment(self):
+        found = [item for item in events(_flagged_qualifying()) if item[1] == "flag"]
+
+        assert found == [
+            (Q1_FLAG, "flag", "Chequered flag - Q1"),
+            (Q2_FLAG, "flag", "Chequered flag - Q2"),
+            (Q3_FLAG, "flag", "Chequered flag - Q3"),
+        ]
+
+    def test_sprint_qualifying_labels_its_segments(self):
+        found = [label for _, kind, label in events(_flagged_qualifying("SQ")) if kind == "flag"]
+
+        assert found[0] == "Chequered flag - SQ1"
+
+    def test_practice_ends_at_its_last_chequered_flag(self):
+        session = _flagged_qualifying("FP2")
+        session["session_info"]["segment_starts"] = []
+
+        timeline = flag_timeline(session)
+
+        assert [t for t, state in timeline if state == "CHEQUERED"] == [Q3_FLAG]
+        # A snapshot cannot know a later flag exists; after the last it is over.
+        assert _flag_at(session, Q3_FLAG + 10.0) == "CHEQUERED"
+
+    def test_a_race_still_ends_at_its_first_chequered_flag(self, race):
+        timeline = flag_timeline(race)
+
+        assert timeline[-1] == (1450.0, "CHEQUERED")
+
+
+# --- REPLAY-24: the segment clock stops under a red flag --------------------
+
+
+class TestSegmentClock:
+    def test_the_segment_clock_is_frozen_under_a_red_flag(self):
+        session = _flagged_qualifying()
+        series = tower_series(session)
+
+        def elapsed(moment: float) -> float:
+            return snapshot_at(session, moment, series)["session_info"]["segment_elapsed"]
+
+        q2 = fx.Q_STARTS[1]
+        assert elapsed(Q2_RED) == pytest.approx(Q2_RED - q2)
+        assert elapsed(Q2_RED + 50.0) == pytest.approx(Q2_RED - q2)
+        assert elapsed(Q2_RESTART) == pytest.approx(Q2_RED - q2)
+        assert elapsed(Q2_RESTART + 60.0) == pytest.approx(Q2_RED - q2 + 60.0)
+
+    def test_the_remaining_time_counts_down_from_the_schedule(self):
+        session = _flagged_qualifying()
+        series = tower_series(session)
+
+        info = snapshot_at(session, fx.Q_STARTS[0] + 60.0, series)["session_info"]
+
+        assert info["segment"] == "Q1"
+        assert info["segment_remaining"] == pytest.approx(17 * 60.0)
+
+    def test_sprint_segments_are_named_sq(self):
+        session = _flagged_qualifying("SQ")
+        series = tower_series(session)
+
+        info = snapshot_at(session, fx.Q_STARTS[1] + 60.0, series)["session_info"]
+
+        assert info["segment"] == "SQ2"
+        assert info["segment_remaining"] == pytest.approx(9 * 60.0)
