@@ -10,6 +10,26 @@ has one line per item with the details.
 
 ## [Unreleased]
 
+### Added
+
+- Analysis: race trace, tyre pace (fuel-corrected, degradation per stint), speed-trap ranking and deleted laps, with a driver filter kept in the URL (FEAT-01, FEAT-03, FEAT-09, FEAT-11, UX-03).
+- Results: drivers' and constructors' championships after the round (FEAT-06).
+- A Settings page: clear cached schedules and loaded sessions, file locations, FastF1 cache size and delete, units, version (UI-22, UX-12).
+- Metric or imperial units, per viewer and in the URL (UX-12).
+- The sidebar shows the version and a newer release (DIST-05). A release workflow (DIST-06).
+
+### Changed
+
+- Records live in SQLite (`metrics_store.sqlite`), are recomputed from valid laps, written only on change and compared per circuit; an old JSON store is imported (CACHE-02, CACHE-05, REPLAY-18).
+- Replays are schema 8: corners stored as a table, `meta.json` validated, `app_version` stamped; pickle replays are no longer listed (REPLAY-19, SEC-02, REPO-23).
+- A race car is OUT only after 25 s without position or timing progress; red-flag pit entries are not stops; pit-lane starters wait IN PIT (REPLAY-23, REPLAY-25, REPLAY-27).
+
+### Fixed
+
+- The replay player's keyboard, screen-reader and modifier-key handling, the lingering SC chip and the empty driver card (UI-09, UI-14, UI-15, UI-16, UI-23); the leader no longer reads as "within a second" (REPLAY-21).
+- FP1 is detected as live (LIVE-28); a session that just ended is not cached as final (HIST-09).
+- Jolpica calls with keyword arguments, and an hour-long `Retry-After` no longer blocks the app (HIST-11).
+
 ## [0.9.0] - 2026-10-02
 
 The first versioned release. It collects the eight review rounds recorded in
