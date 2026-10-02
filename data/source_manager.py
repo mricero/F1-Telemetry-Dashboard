@@ -166,10 +166,13 @@ class DataSourceManager:
 
         Reads the event schedule's own session times rather than asking
         whether race day is within three days - that called an entire week
-        "live" and hid the historical selectors throughout it.
+        "live" and hid the historical selectors throughout it. The schedule
+        is the unfiltered one (LIVE-28): the selectable-events list leaves an
+        event out until its first session has ended, so FP1 - and before
+        CACHE-03 every session but the race - could never be found live.
         """
         try:
-            return live_session_now(self.fastf1.get_available_sessions())
+            return live_session_now(self.fastf1.get_schedule())
         except Exception as exc:
             logger.warning("Could not check for a live session: %s", exc)
             return None

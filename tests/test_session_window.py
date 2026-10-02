@@ -89,7 +89,7 @@ class TestManagerProbe:
 
         manager = DataSourceManager()
         manager.fastf1 = type(
-            "Stub", (), {"get_available_sessions": staticmethod(lambda *a, **kw: _schedule())}
+            "Stub", (), {"get_schedule": staticmethod(lambda *a, **kw: _schedule())}
         )()
         monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at("2026-09-06T14:00"))
 
@@ -104,9 +104,44 @@ class TestManagerProbe:
 
         manager = DataSourceManager()
         manager.fastf1 = type(
-            "Stub", (), {"get_available_sessions": staticmethod(lambda *a, **kw: _schedule())}
+            "Stub", (), {"get_schedule": staticmethod(lambda *a, **kw: _schedule())}
         )()
         monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at("2026-09-03T12:00"))
 
         assert manager.live_session() is None
         assert manager._is_race_weekend() is False
+
+
+class TestLiveDuringTheWeekend:
+    """LIVE-28: FP1 and Saturday qualifying are found live, not only the race."""
+
+    @staticmethod
+    def _manager(monkeypatch, now: str, tmp_path):
+        from unittest.mock import patch
+
+        from data.source_manager import DataSourceManager
+
+        monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at(now))
+        schedule = _schedule().assign(RoundNumber=16)
+        patcher = patch("data.fastf1_adapter.fastf1.get_event_schedule", return_value=schedule)
+        patcher.start()
+        manager = DataSourceManager(cache_dir=str(tmp_path / "cache"), replay_dir=str(tmp_path))
+        return manager, patcher
+
+    @pytest.mark.parametrize(
+        ("now", "session"),
+        [
+            ("2026-09-04T11:45", "Practice 1"),
+            ("2026-09-05T14:30", "Qualifying"),
+            ("2026-09-06T13:30", "Race"),
+        ],
+    )
+    def test_the_running_session_is_found(self, monkeypatch, tmp_path, now, session):
+        manager, patcher = self._manager(monkeypatch, now, tmp_path)
+        try:
+            found = manager.live_session()
+        finally:
+            patcher.stop()
+
+        assert found is not None
+        assert session in str(found)
