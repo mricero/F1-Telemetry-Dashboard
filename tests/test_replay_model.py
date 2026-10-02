@@ -19,7 +19,7 @@ from processing.replay_model import (
     MISSING,
     ON_TRACK,
     OUT,
-    OUT_AFTER_SECONDS,
+    RACE_OUT_AFTER_SECONDS,
     events,
     flag_state,
     flag_timeline,
@@ -145,12 +145,12 @@ class TestPitStop:
 
 
 class TestRetirementAndFinish:
-    def test_a_is_on_track_until_its_last_sample_plus_five_seconds(self, race, race_series):
+    def test_a_is_on_track_until_its_last_sample_plus_the_race_silence(self, race, race_series):
         last = fx.RACE_END_BY["A"]
 
         assert race_series.value("A", "status", fx.LIGHTS_OUT + 10) == ON_TRACK
-        assert race_series.value("A", "status", last + OUT_AFTER_SECONDS - 0.1) == ON_TRACK
-        assert race_series.value("A", "status", last + OUT_AFTER_SECONDS) == OUT
+        assert race_series.value("A", "status", last + RACE_OUT_AFTER_SECONDS - 0.1) == ON_TRACK
+        assert race_series.value("A", "status", last + RACE_OUT_AFTER_SECONDS) == OUT
 
     def test_cars_finish_when_they_cross_after_the_flag(self, race, race_series):
         assert race_series.value("B", "status", 1449.0) == ON_TRACK
@@ -871,3 +871,103 @@ class TestSegmentClock:
 
         assert info["segment"] == "SQ2"
         assert info["segment_remaining"] == pytest.approx(9 * 60.0)
+
+
+def _drop_samples(session: dict, code: str, start: float, end: float) -> dict:
+    positions = session["positions"]
+    keep = ~(
+        (positions["Driver"] == code) & (positions["Time"] >= start) & (positions["Time"] < end)
+    )
+    return {**session, "positions": positions[keep].reset_index(drop=True)}
+
+
+class TestGpsDropouts:
+    """REPLAY-23: a short loss of GPS is neither OUT nor a retirement."""
+
+    def test_a_seven_second_gap_is_not_out(self):
+        from processing.replay_model import events, tower_series
+
+        session = _drop_samples(fx.race_session(), "B", 1200.0, 1207.0)
+        series = tower_series(session)
+
+        for moment in np.arange(1200.0, 1210.0, 0.5):
+            assert series.value("B", "status", moment) == ON_TRACK
+        assert not [e for e in events(session, series) if e[2] == "Retirement - B"]
+
+    def test_a_long_gap_with_timing_progress_is_not_out(self):
+        from processing.replay_model import tower_series
+
+        # 40 s without positions, but B crosses the lap-3 sector lines in it.
+        session = _drop_samples(fx.race_session(), "B", 1205.0, 1245.0)
+        series = tower_series(session)
+
+        assert series.value("B", "status", 1240.0) == ON_TRACK
+
+    def test_a_car_that_stops_for_good_still_retires_once(self, race, race_series):
+        from processing.replay_model import events
+
+        retirements = [e for e in events(race, race_series) if e[1] == "out"]
+
+        assert [label for _, _, label in retirements] == ["Retirement - A"]
+
+    def test_no_out_under_a_red_flag(self):
+        from processing.replay_model import tower_series
+
+        session = fx.race_session()
+        session["track_status"] = pd.DataFrame(
+            {
+                "Time": [fx.LIGHTS_OUT - 10.0, 1190.0, 1260.0],
+                "Status": ["1", "5", "1"],
+                "Message": ["AllClear", "Red", "AllClear"],
+            }
+        )
+        # Positions stop for the whole suspension and no timing line is crossed.
+        session = _drop_samples(session, "C", 1190.0, 1265.0)
+        series = tower_series(session)
+
+        assert series.value("C", "status", 1240.0) == ON_TRACK
+        assert series.value("C", "status", 1262.0) == ON_TRACK
+
+
+class TestRedFlagPitEntries:
+    """REPLAY-25: entering the pit lane under a red flag is not a pit stop."""
+
+    def test_pits_and_events_leave_out_red_flag_entries(self):
+        from processing.replay_model import events, tower_series
+
+        session = fx.race_session()
+        red_at = fx.C_PIT_IN - 10.0
+        session["track_status"] = pd.DataFrame(
+            {
+                "Time": [fx.LIGHTS_OUT - 10.0, red_at, fx.C_PIT_OUT + 60.0],
+                "Status": ["1", "5", "1"],
+                "Message": ["AllClear", "Red", "AllClear"],
+            }
+        )
+        series = tower_series(session)
+
+        assert series.value("C", "pits", fx.C_PIT_OUT + 1) == 0
+        assert not [e for e in events(session, series) if e[1] == "pit"]
+
+    def test_a_green_flag_stop_still_counts(self, race, race_series):
+        assert race_series.value("C", "pits", fx.C_PIT_IN) == 1
+
+
+class TestPitLaneStart:
+    """REPLAY-27: a pit-lane starter waits IN PIT from lights out."""
+
+    def test_a_pit_lane_starter_is_in_the_pits_at_the_start(self):
+        from processing.replay_model import tower_series
+
+        session = fx.race_session()
+        laps = session["laps"].copy()
+        first = (laps["Driver"] == "C") & (laps["LapNumber"] == 1)
+        laps.loc[first, "PitOutTime"] = pd.Timedelta(fx.LIGHTS_OUT + 20.0, unit="s")
+        session["laps"] = laps
+        series = tower_series(session)
+
+        assert series.value("C", "status", fx.LIGHTS_OUT + 5.0) == IN_PIT
+        assert series.value("C", "status", fx.LIGHTS_OUT + 21.0) == ON_TRACK
+
+    def test_grid_starters_are_on_track(self, race, race_series):
+        assert race_series.value("A", "status", fx.LIGHTS_OUT + 5.0) == ON_TRACK
