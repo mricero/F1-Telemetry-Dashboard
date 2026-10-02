@@ -278,3 +278,48 @@ class TestFullFeedThroughTheRealIngestPath:
         html = " ".join(str(element.proto) for element in app.get("html"))
 
         assert "OFFLINE" in html  # no client started in this test
+
+
+def _weather_tab_script():
+    import streamlit as st
+
+    from data.source_manager import DataSourceManager
+    from processing.telemetry_processor import TelemetryProcessor
+    from tests import live_fixtures
+    from tests.test_live_view import _primed_adapter
+    from ui.layout import LIVE_TAB_KEY, render_live_dashboard
+
+    class Stub(DataSourceManager):
+        def __init__(self):
+            adapter = _primed_adapter()
+            for topic in ("WeatherData", "CarData.z", "Position.z"):
+                for timestamp, payload in live_fixtures.messages(topic):
+                    adapter.handle_message(topic, payload, timestamp)
+            super().__init__(live_adapter=adapter)
+
+    if "manager" not in st.session_state:
+        st.session_state["manager"] = Stub()
+    st.session_state.setdefault(LIVE_TAB_KEY, st.session_state.get("tab", "Telemetry"))
+    render_live_dashboard(st.session_state["manager"], TelemetryProcessor())
+
+
+class TestOnlyTheOpenTabIsDrawn:
+    """LIVE-35: with Weather open, the six telemetry figures were rebuilt every 3 s."""
+
+    def _charts(self, monkeypatch, tab: str) -> int:
+        import data.source_manager as source_manager
+
+        monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+        app = AppTest.from_function(_weather_tab_script, default_timeout=60)
+        app.session_state["tab"] = tab
+        app.run()
+        assert not app.exception, app.exception
+        app.run()  # a second pass, as the fragment's next tick redraws
+        assert not app.exception, app.exception
+        return len(app.get("plotly_chart"))
+
+    def test_the_weather_tab_draws_one_chart(self, monkeypatch):
+        assert self._charts(monkeypatch, "Weather") == 1
+
+    def test_the_telemetry_tab_draws_the_telemetry_charts(self, monkeypatch):
+        assert self._charts(monkeypatch, "Telemetry") > 1

@@ -22,6 +22,7 @@ from processing.timing import (
     build_timing_rows,
     dashboard_frames,
     format_lap,
+    is_raining,
     micro_sector_marks,
     micro_sector_times,
     sector_bounds_for_driver,
@@ -186,6 +187,11 @@ def header_html(session_data: dict) -> str:
     bg, fg, label = FLAG_STATES.get(flag, FLAG_STATES["FINISHED"])
     if _is_snapshot(session_data):
         clock_label, clock_value = race_clock_text(info)
+    elif session_data.get("is_live") and info.get("segment"):
+        # Live qualifying: the running segment and its clock, "Q2 0:07:41"
+        # (LIVE-19).
+        clock_label = f"{info['segment']} remaining"
+        clock_value = str(info.get("segment_remaining") or CLOCK_PLACEHOLDER)
     else:
         clock_label = "Remaining" if session_data.get("is_live") else "Duration"
         clock_value = _session_clock(session_data)
@@ -216,7 +222,7 @@ def header_html(session_data: dict) -> str:
         return f"{float(value):.{digits}f} {unit}"
 
     rain = latest.get("Rainfall")
-    rain_yes = bool(rain) and not pd.isna(rain)
+    rain_yes = is_raining(rain)
     wind_speed = wind_kmh(latest.get("WindSpeed"))
     direction = latest.get("WindDirection")
     wind = (

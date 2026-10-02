@@ -89,7 +89,7 @@ class TestManagerProbe:
 
         manager = DataSourceManager()
         manager.fastf1 = type(
-            "Stub", (), {"get_available_sessions": staticmethod(lambda *a, **kw: _schedule())}
+            "Stub", (), {"get_schedule": staticmethod(lambda *a, **kw: _schedule())}
         )()
         monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at("2026-09-06T14:00"))
 
@@ -104,9 +104,77 @@ class TestManagerProbe:
 
         manager = DataSourceManager()
         manager.fastf1 = type(
-            "Stub", (), {"get_available_sessions": staticmethod(lambda *a, **kw: _schedule())}
+            "Stub", (), {"get_schedule": staticmethod(lambda *a, **kw: _schedule())}
         )()
         monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at("2026-09-03T12:00"))
 
         assert manager.live_session() is None
         assert manager._is_race_weekend() is False
+
+
+def _sprint_weekend() -> pd.DataFrame:
+    """Singapore 2026 shape: FP1 + Sprint Qualifying Friday, Sprint + Q Saturday."""
+    return pd.DataFrame(
+        [
+            {
+                "RoundNumber": 18,
+                "EventName": "Singapore Grand Prix",
+                "EventFormat": "sprint_qualifying",
+                "EventDate": pd.Timestamp("2026-10-11"),
+                "Session1": "Practice 1",
+                "Session1DateUtc": pd.Timestamp("2026-10-09T09:30"),
+                "Session2": "Sprint Qualifying",
+                "Session2DateUtc": pd.Timestamp("2026-10-09T13:30"),
+                "Session3": "Sprint",
+                "Session3DateUtc": pd.Timestamp("2026-10-10T09:00"),
+                "Session4": "Qualifying",
+                "Session4DateUtc": pd.Timestamp("2026-10-10T13:00"),
+                "Session5": "Race",
+                "Session5DateUtc": pd.Timestamp("2026-10-11T12:00"),
+            }
+        ]
+    )
+
+
+class TestTheCurrentWeekend:
+    """LIVE-28 / CACHE-03 through the real adapter, with FastF1 and the clock frozen."""
+
+    @pytest.fixture
+    def manager(self, monkeypatch, tmp_path):
+        import fastf1
+
+        from data import fastf1_adapter
+        from data.source_manager import DataSourceManager
+
+        monkeypatch.setattr(fastf1, "get_event_schedule", lambda year: _sprint_weekend())
+        clock = {"now": _at("2026-10-09T10:00")}
+        monkeypatch.setattr(fastf1_adapter, "_utcnow", lambda: clock["now"])
+        manager = DataSourceManager(cache_dir=str(tmp_path / "ff1"), replay_dir=str(tmp_path))
+        return manager, clock
+
+    @pytest.mark.parametrize(
+        ("when", "code"),
+        [
+            ("2026-10-09T10:00", "FP1"),  # Friday morning: no session has ended yet
+            ("2026-10-09T14:00", "SQ"),
+            ("2026-10-10T13:30", "Q"),
+        ],
+    )
+    def test_go_live_appears_for_every_session_of_the_weekend(self, manager, when, code):
+        manager, clock = manager
+        clock["now"] = _at(when)
+
+        live = manager.live_session()
+
+        assert live is not None and live["session"] == code
+
+    def test_on_saturday_the_earlier_sessions_are_selectable(self, manager):
+        from data.fastf1_adapter import session_codes_for_event
+
+        manager, clock = manager
+        clock["now"] = _at("2026-10-10T11:00")  # after the Sprint, before Q
+
+        events = manager.fastf1.get_available_sessions(2026)
+
+        assert list(events["EventName"]) == ["Singapore Grand Prix"]
+        assert session_codes_for_event(events.iloc[0]) == ["FP1", "SQ", "S"]

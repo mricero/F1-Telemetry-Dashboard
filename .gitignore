@@ -84,3 +84,6 @@ _to_delete/
 
 # Output of scripts/preview_replay_player.py
 replay_preview.html
+
+# Claude Code agent worktrees (git worktrees of this repo, never content)
+.claude/worktrees/

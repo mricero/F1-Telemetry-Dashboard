@@ -143,7 +143,10 @@ class DataSourceManager:
         "live" and hid the historical selectors throughout it.
         """
         try:
-            return live_session_now(self.fastf1.get_available_sessions())
+            # The unfiltered schedule: the "has started" list only offers an
+            # event once its first session has ended, so FP1 could never be
+            # live (LIVE-28).
+            return live_session_now(self.fastf1.get_schedule())
         except Exception as exc:
             logger.warning("Could not check for a live session: %s", exc)
             return None

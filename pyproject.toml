@@ -85,13 +85,14 @@ extend-exclude = '''
   | ff1_cache
   | replay_sessions
   | test_cache
+  | \.claude
 )/
 '''
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = [".venv", ".venv311", "ff1_cache", "replay_sessions"]
+exclude = [".venv", ".venv311", "ff1_cache", "replay_sessions", ".claude"]
 
 [tool.ruff.lint]
 # Beyond the defaults, these are the rules that would have caught bugs this

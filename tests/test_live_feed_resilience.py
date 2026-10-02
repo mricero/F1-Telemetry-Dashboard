@@ -156,14 +156,25 @@ class TestTokenFallback:
             token_provider=lambda: "a.b.c",
             backoff_start=5.0,
         )
-        client.on_message = lambda *a: seen.set()
+        statuses = []
+        set_status = client._set_status
+
+        def record(status, *args):
+            statuses.append(status)
+            set_status(status, *args)
+            if status is FeedStatus.LIVE:
+                seen.set()
+
+        client._set_status = record
         started = time.time()
         client.start()
-        assert seen.wait(2.0)
+        assert seen.wait(2.0), statuses
         elapsed = time.time() - started
         client.stop()
 
         assert elapsed < client.backoff_start
+        assert FeedStatus.LIVE in statuses
+        assert FeedStatus.AUTH_REQUIRED not in statuses
 
     def test_an_expired_token_is_not_sent(self):
         posts = []

@@ -30,6 +30,7 @@ from processing.replay_model import (
     flag_timeline,
 )
 from processing.time_utils import seconds_series
+from processing.timing import is_raining
 from processing.track_geometry import VIEW_H, VIEW_W, path_from, track_geometry
 
 # 2: packed positions (``xy_z``) and interval trend (``trend.z``), REPLAY-29.
@@ -236,7 +237,7 @@ def _weather(session_data: dict) -> list[list]:
                 _number(row.get("AirTemp")),
                 _number(row.get("TrackTemp")),
                 _number(row.get("Humidity")),
-                bool(rain) if rain is not None and pd.notna(rain) else False,
+                is_raining(rain),
                 None if wind is None else round(float(wind) * MS_TO_KMH, 1),
                 _number(row.get("WindDirection")),
             ]

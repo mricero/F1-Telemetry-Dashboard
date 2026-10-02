@@ -22,7 +22,7 @@ from data.fastf1_adapter import session_codes_for_event
 from data.live_adapter import TOKEN_ENV_VAR, subscription_token
 from processing.telemetry_processor import TelemetryProcessor, max_lap_number
 from processing.time_utils import seconds_series
-from processing.timing import MISSING, format_lap
+from processing.timing import MISSING, format_lap, is_raining
 from processing.track_periods import lap_spans, lap_states
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
@@ -301,12 +301,18 @@ def render_header():
 # Both helpers below hit the network. Streamlit re-runs this module top to
 # bottom on every widget interaction, so without caching the schedule and the
 # race-weekend probe would be re-fetched on every click.
+# A session becomes selectable once it has started, so on a race weekend the
+# lists change every few hours; an hour-old list hid a session that had just
+# run (CACHE-03). Settings can clear them at once.
+SCHEDULE_TTL_SECONDS = 900
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def _is_race_weekend_cached(_data_manager) -> bool:
     return _data_manager._is_race_weekend()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=SCHEDULE_TTL_SECONDS, show_spinner=False)
 def _event_names_cached(_data_manager, year: int) -> list:
     meetings = _data_manager.fastf1.get_available_sessions(year)
     if meetings is None or meetings.empty or "EventName" not in meetings.columns:
@@ -319,7 +325,7 @@ def _event_names_cached(_data_manager, year: int) -> list:
 FALLBACK_SESSION_TYPES = ["FP1", "FP2", "FP3", "Q", "S", "R"]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=SCHEDULE_TTL_SECONDS, show_spinner=False)
 def _session_codes_cached(_data_manager, year: int, gp: str) -> list:
     meetings = _data_manager.fastf1.get_available_sessions(year)
     if meetings is None or meetings.empty or "EventName" not in meetings.columns:
@@ -911,6 +917,11 @@ def render_feed_status(live_client) -> None:
         f"{status_chip(label, state)}"
         f'<span class="f1-dim">{html.escape(" · ".join(parts))}</span></div>'
     )
+    # A failed recorder (disk full, folder gone) stops recording, not the
+    # feed; say so, or the raw stream silently ends (LIVE-31).
+    error = getattr(live_client, "recorder_error", None)
+    if error:
+        st.warning(error)
 
 
 DELAY_KEY = "live_delay"
@@ -1219,7 +1230,7 @@ def render_weather(
             value = convert(value)
         col.metric(label, f"{value:g} {unit}" if pd.notna(value) else MISSING)
 
-    if "Rainfall" in weather_df.columns and bool(weather_df["Rainfall"].any()):
+    if "Rainfall" in weather_df.columns and any(map(is_raining, weather_df["Rainfall"])):
         st.warning("Rainfall recorded during this session")
 
     x = _elapsed_minutes(weather_df)

@@ -21,6 +21,30 @@ from processing.time_utils import to_seconds
 
 # Missing values in the tower read as an en dash (UI guideline 5.7).
 MISSING = "\u2013"
+
+
+def is_raining(value) -> bool:
+    """Whether a ``Rainfall`` reading says rain (LIVE-34).
+
+    FastF1 gives a bool; the live feed gives ``"0"``/``"1"`` strings, and
+    ``bool("0")`` is True, which showed rain in every dry live session.
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "yes"}:
+            return True
+        try:
+            return float(text) == 1
+        except ValueError:
+            return False
+    try:
+        return not pd.isna(value) and float(value) == 1
+    except (TypeError, ValueError):
+        return False
+
+
 # The race leader's gap and interval cells (UI guideline 5.7).
 LEADER = "LEADER"
 

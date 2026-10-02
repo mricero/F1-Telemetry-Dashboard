@@ -480,3 +480,58 @@ class TestLapFlags:
         assert frame.loc[frame["driver_number"] == "4", "Retired"].all()
         assert not frame.loc[frame["driver_number"] == "99", "Retired"].any()
         assert (~frame["Retired"]).any()
+
+
+class TestLiveScreen:
+    """What the live snapshot draws: the segment clock (LIVE-19), dry weather
+    (LIVE-34) and the track-state chip on the map (LIVE-22)."""
+
+    def test_the_header_shows_the_running_segment_and_its_clock(self, manager):
+        from ui.dashboard import header_html
+
+        adapter = SignalRLiveAdapter()
+        adapter.seed_state(
+            {
+                "SessionInfo": QUALI,
+                "DriverList": DRIVERS,
+                "TimingData": TestLiveQualifying.TIMING,
+                "ExtrapolatedClock": {
+                    "Utc": "2026-10-10T13:30:00Z",
+                    "Remaining": "00:07:41",
+                    "Extrapolating": False,
+                },
+            }
+        )
+        header = header_html(manager(adapter).poll_live_data())
+
+        assert "Q2 remaining" in header
+        assert "0:07:41" in header
+
+    def test_a_dry_live_session_shows_no_rain(self, manager):
+        from ui.dashboard import header_html
+
+        adapter = SignalRLiveAdapter()
+        adapter.seed_state({"SessionInfo": RACE, "DriverList": DRIVERS})
+        for timestamp, payload in live_fixtures.messages("WeatherData"):
+            adapter.handle_message("WeatherData", payload, timestamp)
+        header = header_html(manager(adapter).poll_live_data())
+
+        assert "rain-yes" not in header
+        assert ">NO<" in header
+
+    def test_a_safety_car_tints_the_live_map_and_shows_the_chip(self, manager):
+        from ui.dashboard import track_state_marks
+        from ui.theme import FLAG_STATES
+
+        adapter = SignalRLiveAdapter()
+        adapter.seed_state(
+            {
+                "SessionInfo": RACE,
+                "DriverList": DRIVERS,
+                "TrackStatus": {"Status": "4", "Message": "SCDeployed"},
+            }
+        )
+        chip, tint = track_state_marks(manager(adapter).poll_live_data())
+
+        assert ">SC<" in chip
+        assert tint == FLAG_STATES["SAFETY CAR"][0]
