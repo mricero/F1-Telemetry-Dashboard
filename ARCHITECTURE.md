@@ -86,6 +86,7 @@ producing that dict, not touching `ui/`.
 | `processing/timing.py` | The timing-tower model: race order by classification with gap/interval, practice and qualifying by best lap, knock-out cut-offs, sector bests, mini-sector dominance. |
 | `processing/track_geometry.py` | The one circuit transform (FastF1 rotation, fit into a viewBox) shared by the SVG map and the browser player. |
 | `processing/track_periods.py` | Safety car, VSC and red-flag periods on the session clock and per lap, for chart shading and the degradation fit. |
+| `processing/lap_review.py` | Per-driver best valid lap per sector and per speed trap (I1, I2, FL, ST), ranked with the gap to the best; deleted and inaccurate laps excluded. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
 | `processing/pit_loss.py` | Pit rejoin predictor: green-flag pit lane times from `PitInTime -> PitOutTime`, a per-circuit seed table, and where a car would rejoin given the gaps to the leader. |
@@ -101,6 +102,7 @@ producing that dict, not touching `ui/`.
 |---|---|
 | `ui/layout.py` | The canonical rendering module: the sidebar session picker, charts (telemetry, head-to-head with the integrated time delta, lap times, positions, weather, race control), the live view and its controls, Settings. Network lookups on a rerun are wrapped in `@st.cache_data` with a TTL. |
 | `ui/pages.py` | The `st.navigation` pages: Replay, Results, Analysis, Records and Settings for a loaded session; Live, Records and Settings while live. |
+| `ui/lap_panels.py` | Analysis panels built from lap tables: the sector and speed-trap rankings (FEAT-09) and the deleted-laps review (FEAT-11). |
 | `ui/preferences.py` | Per-viewer preferences: the Analysis driver selection (`drivers=`) and favourite drivers (`fav=`), validated and mirrored in the URL (UX-03). |
 | `ui/replay_view.py` | The Replay page: the dashboard drawn from `snapshot_at()` at the cursor, with the browser player or the server fallback (`F1_REPLAY_PLAYER`). |
 | `ui/dashboard.py` | The timing dashboard assembly (`layout.md` sections 2-5): header bar, tower, sector top-3 widgets, map panel. |
@@ -281,6 +283,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   └── update_check.py
 ├── processing/
 │   ├── driver_selection.py
+│   ├── lap_review.py
 │   ├── metrics_store.py
 │   ├── pace.py
 │   ├── pit_loss.py
@@ -297,6 +300,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   ├── fonts.py
 │   ├── layout.py
 │   ├── pages.py
+│   ├── lap_panels.py
 │   ├── preferences.py
 │   ├── replay_view.py
 │   ├── status.py
