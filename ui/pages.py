@@ -25,6 +25,7 @@ from ui.layout import (
     render_telemetry_charts,
     render_tire_strategy,
     render_token_helper,
+    render_tyre_pace,
     render_weather,
 )
 from ui.replay_view import (
@@ -59,6 +60,7 @@ ANALYSIS_SECTIONS = (
     "Head-to-head",
     "Lap times",
     "Race trace",
+    "Tyre pace",
     "Positions",
     "Weather",
     "Race control",
@@ -200,6 +202,14 @@ def analysis_page() -> None:
             track_status=track_status,
             marker_lap=moment.get("lap"),
             key=f"trace:{context['session_key']}",
+            uirevision=revision,
+        )
+    elif section == "Tyre pace":
+        render_tyre_pace(
+            context["laps"],
+            session_data.get("session_info"),
+            track_status=track_status,
+            compound_colors=session_data.get("compound_colors"),
             uirevision=revision,
         )
     elif section == "Positions":

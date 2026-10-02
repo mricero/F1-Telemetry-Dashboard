@@ -334,3 +334,4 @@ IMPROVEMENTS.md revision 3 (2026-09-24, Azerbaijan GP weekend). Offline gates: 9
 ## Round 9 — revision 4 review
 
 - **FEAT-01** — Race trace on the Analysis page: `processing.timing.gap_trace` gives each car's gap at the timing line per lap (to the leader or a chosen reference driver, from lap completion times), drawn by `ui.layout.render_race_trace` with SC/VSC/red laps shaded, team colours (second car dashed) and the replay's lap marked. Races and sprints only; other sessions say why.
+- **FEAT-03** — Tyre pace on the Analysis page: `processing.pace` keeps clean laps (no first, in-, out-, SC/VSC/red or `IsAccurate == False` laps; `TrackStatus` is kept by `get_laps`), fuel-corrects them in races, and fits a per-stint slope and a per-compound median; `ui.layout.render_tyre_pace` draws lap time against tyre age with a degradation table.

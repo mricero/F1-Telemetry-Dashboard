@@ -85,6 +85,8 @@ producing that dict, not touching `ui/`.
 | `processing/timing.py` | The timing-tower model: race order by classification with gap/interval, practice and qualifying by best lap, knock-out cut-offs, sector bests, mini-sector dominance. |
 | `processing/track_geometry.py` | The one circuit transform (FastF1 rotation, fit into a viewBox) shared by the SVG map and the browser player. |
 | `processing/track_periods.py` | Safety car, VSC and red-flag periods on the session clock and per lap, for chart shading and the degradation fit. |
+| `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
+| `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
 | `processing/replay.py` | `ReplayClock` (start, lights out, end) and the `PositionCube`: every car's position on one regular time grid. |
 | `processing/replay_model.py` | `tower_series()` change-point series and `snapshot_at(t)`: the session as it stood at `t`, never reading rows stamped after it; `events()` for jump targets. |
 | `processing/replay_payload.py` | `build_replay_payload()`: the JSON-safe dict the browser player animates (clock, track, packed positions, tower series with display strings, flags, race control, weather, lap marks). |
@@ -274,6 +276,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   └── update_check.py
 ├── processing/
 │   ├── metrics_store.py
+│   ├── pace.py
 │   ├── replay.py
 │   ├── replay_model.py
 │   ├── replay_payload.py

@@ -1605,3 +1605,90 @@ def render_race_trace(
         "Gap when each car crossed the timing line to complete the lap. "
         "Shaded laps ran under a safety car, VSC or red flag."
     )
+
+
+def tyre_pace_figure(
+    pace: pd.DataFrame, compound_colors: dict[str, str] | None = None
+) -> go.Figure | None:
+    """Fuel-corrected lap time against tyre age, one marker colour per compound.
+
+    ``pace`` is :func:`processing.pace.stint_pace`'s output. The compound
+    letter is in the legend and the hover, so colour is not the only carrier.
+    """
+    if pace is None or pace.empty:
+        return None
+    palette = compound_palette(compound_colors)
+    fig = go.Figure()
+    for compound, rows in pace.groupby("Compound", sort=True):
+        fig.add_trace(
+            go.Scatter(
+                x=rows["TyreAge"],
+                y=rows["FuelCorrected"],
+                mode="markers",
+                name=str(compound),
+                marker={"color": palette.get(str(compound), NEUTRAL_GREY), "size": 6},
+                customdata=[
+                    f"{driver} lap {lap}"
+                    for driver, lap in zip(rows["Driver"], rows["LapNumber"], strict=True)
+                ],
+                hovertemplate=(
+                    "%{customdata}<br>tyre age %{x:.0f} laps<br>%{y:.3f} s<extra></extra>"
+                ),
+            )
+        )
+    fig.update_layout(
+        xaxis_title="Tyre age (laps)",
+        yaxis_title="Fuel-corrected lap time (s)",
+        showlegend=True,
+        height=480,
+    )
+    return fig
+
+
+def degradation_table(summary: pd.DataFrame) -> pd.DataFrame:
+    """Per-compound degradation formatted for display (seconds per lap of tyre age)."""
+    if summary is None or summary.empty:
+        return pd.DataFrame(columns=["Compound", "Stints", "Laps", "Loss s/lap"])
+    return pd.DataFrame(
+        {
+            "Compound": summary["Compound"],
+            "Stints": summary["Stints"],
+            "Laps": summary["Laps"],
+            "Loss s/lap": [f"{value:+.3f}" for value in summary["Slope"]],
+        }
+    )
+
+
+def render_tyre_pace(
+    laps: pd.DataFrame,
+    session_info: dict | None = None,
+    track_status: pd.DataFrame | None = None,
+    compound_colors: dict[str, str] | None = None,
+    uirevision: str | None = None,
+) -> None:
+    """Tyre degradation: clean laps against tyre age per compound (FEAT-03)."""
+    from processing.pace import compound_degradation, stint_pace
+
+    # Qualifying and practice fuel loads differ run to run, so only races are corrected.
+    race = is_race_session(session_info)
+    pace = stint_pace(laps, track_status, fuel_correct=race)
+    fig = tyre_pace_figure(pace, compound_colors)
+    if fig is None:
+        st.info(
+            "No clean laps with a tyre compound in this session, so there is no "
+            "degradation to show."
+        )
+        return
+    _plot(fig, width="stretch", uirevision=uirevision)
+    table = degradation_table(compound_degradation(pace))
+    if table.empty:
+        st.info("No stint has enough clean laps to fit a trend.")
+    else:
+        st.dataframe(table, hide_index=True, width="stretch")
+    st.caption(
+        "Loss per lap is the median across stints of a straight-line fit to lap time "
+        "against tyre age."
+        + (" Lap times are corrected for fuel burned." if race else "")
+        + " In-laps, out-laps, the first lap, safety car, VSC and red-flag laps and "
+        "inaccurately timed laps are left out."
+    )

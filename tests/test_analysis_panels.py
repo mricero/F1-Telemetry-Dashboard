@@ -119,13 +119,55 @@ class TestRenderRaceTrace:
         assert len(app_test.get("plotly_chart")) == 1
 
 
+class TestTyrePace:
+    def test_figure_has_one_series_per_compound_named_in_the_legend(self):
+        from processing.pace import stint_pace
+        from ui.layout import tyre_pace_figure
+
+        session = race_session()
+        fig = tyre_pace_figure(stint_pace(session["laps"], session["track_status"]), {})
+
+        assert fig is not None
+        assert {trace.name for trace in fig.data} <= {"SOFT", "HARD"}
+        assert fig.layout.xaxis.title.text == "Tyre age (laps)"
+
+    def test_no_clean_laps_no_figure(self):
+        from processing.pace import stint_pace
+        from ui.layout import tyre_pace_figure
+
+        assert tyre_pace_figure(stint_pace(None), {}) is None
+
+    def test_table_shows_signed_loss_per_lap(self):
+        import pandas as pd
+
+        from ui.layout import degradation_table
+
+        table = degradation_table(
+            pd.DataFrame({"Compound": ["SOFT"], "Stints": [3], "Laps": [30], "Slope": [0.0834]})
+        )
+
+        assert table["Loss s/lap"].tolist() == ["+0.083"]
+
+    def test_render_runs_in_a_script_context(self):
+        def render():
+            from tests.replay_fixtures import race_session
+            from ui.layout import render_tyre_pace
+
+            session = race_session()
+            render_tyre_pace(session["laps"], session["session_info"], session["track_status"])
+
+        app_test = AppTest.from_function(render).run()
+
+        assert not app_test.exception, app_test.exception
+
+
 def test_qualifying_fixture_is_not_a_race():
     from processing.timing import is_race_session
 
     assert not is_race_session(qualifying_session()["session_info"])
 
 
-NEW_SECTIONS = ["Race trace"]
+NEW_SECTIONS = ["Race trace", "Tyre pace"]
 
 
 class TestSectionsInTheApp:
