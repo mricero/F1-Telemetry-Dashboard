@@ -240,3 +240,16 @@ class TestReplayPositionLookup:
 
         assert len(markers) == drivers
         assert per_call < 0.002, f"{per_call * 1000:.2f} ms per lookup"
+
+
+class TestTowerSeries:
+    @pytest.mark.perf
+    def test_a_full_race_builds_in_under_150_milliseconds(self):
+        """REPLAY-28: 22 cars, 57 laps, ~31 k stream rows took ~0.45 s."""
+        from processing.replay_model import tower_series
+        from tests.test_replay_model import _big_race
+
+        race = _big_race()
+        tower_series(race)  # warm imports and caches
+
+        assert _elapsed(lambda: tower_series(race), repeat=5) < 0.15

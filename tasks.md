@@ -334,3 +334,4 @@ IMPROVEMENTS.md revision 3 (2026-09-24, Azerbaijan GP weekend). Offline gates: 9
 ## Round 9 — revision 4 review
 
 - **UX-03** — Analysis driver multiselect (default top five, `drivers=` in the URL, validated) drives Telemetry, Lap times and Positions; favourites (`fav=`, Settings) are underlined in the tower.
+- **REPLAY-28** — `tower_series` on the 22-car race 0.45 s → ~0.14 s: stream columns are cleaned with one vectorised NA test, change-point series come from numpy masks, lap rows from `tolist()`; an oracle test keeps the old builders and compares every series.

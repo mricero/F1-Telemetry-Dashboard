@@ -583,7 +583,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: in races, when lap 1 has `PitOutTime` and no earlier `PitInTime` (grid 0), open an IN PIT window `[lights_out, pit_out)`.
   - Acceptance: a fixture with a pit-lane starter shows IN PIT at lights out + 5 s.
 
-- [ ] **REPLAY-28** · P3 · M — **`tower_series` spends most of its time in per-value `pd.isna`**
+- [x] **REPLAY-28** · P3 · M — **`tower_series` spends most of its time in per-value `pd.isna`** — done
   - Files: `processing/replay_model.py:199-252`, `:784-821`.
   - Problem: a 22-car, 57-lap race (31 k stream rows) takes ~0.45 s. That includes ~637 k `pd.isna` calls through `_clean`; `_race_from_stream` is 80 % of it.
   - Fix: clean stream columns once per column with vectorised operations; build `_series` from numpy change masks (`v[1:] != v[:-1]`).
