@@ -235,7 +235,7 @@ class TestSourcesRenderEndToEnd:
             ("Weather", "No weather data"),
             ("Race control", "No race control messages"),
         ):
-            _open(app_test, "analysis", analysis_section=section)
+            _open(app_test, "analysis", section=section)
             assert not app_test.exception, app_test.exception
             # A panel that fell back to its "no data" notice would show up here.
             notices = " ".join(info.value for info in app_test.info)
@@ -290,10 +290,10 @@ class TestPages:
     def test_analysis_draws_only_the_chosen_panel(self):
         app_test = _run_for("fastf1")
 
-        telemetry = _open(app_test, "analysis", analysis_section="Telemetry")
+        telemetry = _open(app_test, "analysis", section="Telemetry")
         # One per channel; a 2026 session has no DRS channel (FEAT-12).
         assert len(telemetry.get("plotly_chart")) == 5
-        lap_times = _open(app_test, "analysis", analysis_section="Lap times")
+        lap_times = _open(app_test, "analysis", section="Lap times")
         assert len(lap_times.get("plotly_chart")) == 1
 
     def test_the_records_and_diagnostics_have_their_own_page(self):

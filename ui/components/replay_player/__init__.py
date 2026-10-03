@@ -95,6 +95,9 @@ def render_replay_player(
     on_focus_change,
     on_analyse_change=None,
     focus: str | None = None,
+    layout: dict | None = None,
+    units: dict | None = None,
+    start: str = "",
 ):
     """Mount the player.
 
@@ -106,8 +109,21 @@ def render_replay_player(
     ``focus`` is read only when the player mounts, so pass the focus as of
     the last seek, not the live one: any change to ``data`` re-sends the
     whole payload (UI-11).
+
+    ``layout`` is the viewer's choice of hidden tower columns and panels
+    (FEAT-10); it changes only when they edit it on the Settings page.
+    ``units`` (``speed``, ``temp``) and ``start`` (the session's start as a
+    time of day with its zone) are the viewer's unit choices (UX-12).
     """
-    data = {**payload, "cursor": cursor, "seek": seek, "focus": focus}
+    data = {
+        **payload,
+        "cursor": cursor,
+        "seek": seek,
+        "focus": focus,
+        "layout": layout or {"hide_cols": [], "hide_panels": []},
+        "units": units or {"speed": "kmh", "temp": "c"},
+        "start": start,
+    }
     return _player()(
         key=key,
         data=data,

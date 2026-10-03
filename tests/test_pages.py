@@ -88,12 +88,12 @@ class TestAnalysisSectionSurvivesPageSwitches:
     def test_the_section_comes_back(self):
         app_test = _loaded()
         _open(app_test, "analysis")
-        app_test.segmented_control(key="analysis_section").set_value("Weather").run()
+        app_test.segmented_control(key="section").set_value("Weather").run()
         _open(app_test, "replay")
         _open(app_test, "analysis")
 
         assert not app_test.exception, app_test.exception
-        assert app_test.segmented_control(key="analysis_section").value == "Weather"
+        assert app_test.segmented_control(key="section").value == "Weather"
 
 
 class TestSettingsPage:
@@ -149,3 +149,35 @@ class TestSettingsPage:
         from ui.layout import menu_items
 
         assert __version__ in menu_items()["About"]
+
+
+class TestSectionInTheLink:
+    """FEAT-14: ``?section=`` opens an Analysis section.
+
+    The write-back (widget -> URL) is done by the browser for a bound widget,
+    which AppTest does not emulate, so only the read side is tested here.
+    """
+
+    def _link(self, **params) -> AppTest:
+        from streamlit.util import calc_hash
+
+        from tests.test_preferences import SHARED
+
+        app_test = AppTest.from_function(_app_script, default_timeout=60)
+        for name, value in {**SHARED, **params}.items():
+            app_test.query_params[name] = value
+        app_test._page_hash = calc_hash("analysis")
+        app_test.run()
+        assert not app_test.exception, app_test.exception
+        return app_test
+
+    def test_a_link_opens_that_section(self):
+        app_test = self._link(section="Lap times")
+
+        assert app_test.segmented_control(key="section").value == "Lap times"
+
+    def test_an_unknown_section_falls_back_to_the_first(self):
+        app_test = self._link(section="<b>Nope</b>")
+
+        assert app_test.segmented_control(key="section").value == "Telemetry"
+        assert "section" not in app_test.query_params

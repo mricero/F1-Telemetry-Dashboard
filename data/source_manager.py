@@ -264,6 +264,7 @@ class DataSourceManager:
                 "session_type": session_type,
                 "session_name": session.name,
                 "country": self._event_country(session),
+                "gmt_offset": self._event_gmt_offset(session),
                 "date": session.date,
                 "telemetry_scope": telemetry_scope,
                 # Replay metadata (REPLAY-02), all JSON-safe for saved replays.
@@ -671,6 +672,26 @@ class DataSourceManager:
         }
 
     @staticmethod
+    def _event_gmt_offset(session) -> str:
+        """The circuit's UTC offset as ``HH:MM:SS`` (the live feed's shape), or "".
+
+        FastF1's schedule carries each session's local start (with its UTC
+        offset) beside the UTC one; the difference is the track's offset.
+        """
+        try:
+            local = session.event.get_session_date(session.name, utc=False)
+            delta = local.utcoffset()
+            if delta is None:
+                return ""
+            seconds = int(delta.total_seconds())
+        except Exception as exc:
+            logger.debug("No local start in the event schedule: %s", exc)
+            return ""
+        sign = "-" if seconds < 0 else ""
+        hours, rest = divmod(abs(seconds), 3600)
+        return f"{sign}{hours:02d}:{rest // 60:02d}:{rest % 60:02d}"
+
+    @staticmethod
     def _event_country(session) -> str:
         """Host country for the header badge, or "" when unavailable."""
         try:
@@ -725,8 +746,10 @@ class DataSourceManager:
     # those keys and load with empty defaults. v8 stores circuit_info.corners
     # as 'circuit_info.corners.parquet' (v7 wrote its repr string, which
     # loads as an empty frame) and session_info 'date' as an ISO string that
-    # loads back as a Timestamp (REPLAY-19).
-    REPLAY_SCHEMA_VERSION = 8
+    # loads back as a Timestamp (REPLAY-19). v9 adds session_info
+    # 'gmt_offset' (the circuit's UTC offset, "HH:MM:SS"; UX-12); older
+    # replays lack it and show times of day in UTC.
+    REPLAY_SCHEMA_VERSION = 9
 
     # Tables stored as their own Parquet file inside a replay directory.
     FRAME_KEYS = (

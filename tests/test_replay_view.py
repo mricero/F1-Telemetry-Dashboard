@@ -402,7 +402,7 @@ class TestAnalysisFollowsTheReplay:
     def test_the_lap_time_chart_marks_the_cursor_lap(self, race_app):
         import json
 
-        app = _open_page(race_app, "analysis", analysis_section="Lap times", **{CURSOR: 1185.0})
+        app = _open_page(race_app, "analysis", section="Lap times", **{CURSOR: 1185.0})
 
         assert not app.exception, app.exception
         (chart,) = app.get("plotly_chart")
@@ -410,7 +410,7 @@ class TestAnalysisFollowsTheReplay:
         assert any(shape["x0"] == 3 and shape["x1"] == 3 for shape in shapes)
 
     def test_it_offers_the_way_back_to_the_replay(self, race_app):
-        app = _open_page(race_app, "analysis", analysis_section="Lap times", **{CURSOR: 1185.0})
+        app = _open_page(race_app, "analysis", section="Lap times", **{CURSOR: 1185.0})
 
         links = [element.proto.label for element in app.get("page_link")]
         assert "Back to replay at lap 3" in links

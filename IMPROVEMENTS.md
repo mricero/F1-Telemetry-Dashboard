@@ -786,7 +786,7 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
 - [x] **UX-03** · P2 · S — **Driver selection and favourites.** Status: valid; every chart plots every driver. Fix: a global driver multiselect (default top 5) with favourites in `st.query_params`; highlight favourites in the tower. — done
 - [x] **UX-04** · P2 · M — **Head-to-head is speed-only and fastest-lap-only.** Status: valid (`ui/layout.py:861-948`). Fix: stacked Speed/Throttle/Brake/Gear/Δt sharing x; corner markers from `circuit_info.corners`; lap pickers per driver; keep the "approximate" caption. — done
 - [x] **UX-06** · P2 · S — **Race-control panel usability.** Status: valid. The key is still `"rc_categories"` (`ui/layout.py:836`), there is no search, and SC/VSC/red shading exists only on the player timeline. Fix: a per-session key, a search box, and SC/VSC/red shading on the lap-time and position charts. — done
-- [ ] **UX-12** · P3 · S — **Units, time zones, preferences.** Status: valid. km/h and °C are hard-coded; `gmt_offset` is stored (`source_manager.py:774`) but never read. Fix: km/h ↔ mph, °C ↔ °F, and local vs track time on the Settings page (UI-22) and in URL params.
+- [x] **UX-12** · P3 · S — **Units, time zones, preferences.** Status: valid. km/h and °C are hard-coded; `gmt_offset` is stored (`source_manager.py:774`) but never read. Fix: km/h ↔ mph, °C ↔ °F, and local vs track time on the Settings page (UI-22) and in URL params. — done
 
 ### 3.6 Tests and CI
 
@@ -912,10 +912,10 @@ Still valid. Each gets `Files:` and `Acceptance:` written in as the first step o
 - [x] **FEAT-06** · S — **Standings panels** via Jolpica (`get_driver_standings` / `get_constructor_standings` exist with no callers), with a points-after-this-race projection for live races. — done
 - [x] **FEAT-07** · S — **Linear track-position strip:** every car on a straight 0 → lap-length line, readable on mobile, good for spotting overtake-mode trains. — done
 - [x] **FEAT-09** · S — **Speed-trap and sector ranking panel.** Status: partly done (sector top-3 cards and a top-speed column exist); still missing the I1/I2/FL/ST ranking. — done
-- [ ] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params.
+- [x] **FEAT-10** · M — **Customisable layout:** column toggles and a panel checklist kept in query params. — done
 - [x] **FEAT-11** · S — **Track limits / deleted laps view** from race control and FastF1 `Deleted`/`DeletedReason`. Status: `DeletedReason` is not kept. REPLAY-18 and REPLAY-20 lay the groundwork. — done
 - [x] **FEAT-12** · S — **2026 regulation context:** hide the DRS channel for 2026+ instead of plotting a flat zero (the DRS tab is always rendered, `ui/layout.py:388-397`); label active aero and overtake mode where data exists. — done
-- [ ] **FEAT-14** · S — **Share links.** Status: partly done; year/gp/session and the page are in the URL. Still missing: the drivers, the analysis section and the replay cursor. Streamlit 1.59's widget `bind="query-params"` can carry them (with UI-21).
+- [x] **FEAT-14** · S — **Share links.** Status: partly done; year/gp/session and the page are in the URL. Still missing: the drivers, the analysis section and the replay cursor. Streamlit 1.59's widget `bind="query-params"` can carry them (with UI-21). — done
 
 ---
 

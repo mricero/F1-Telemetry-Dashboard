@@ -95,6 +95,8 @@ producing that dict, not touching `ui/`.
 | `processing/replay_model.py` | `tower_series()` change-point series and `snapshot_at(t)`: the session as it stood at `t`, never reading rows stamped after it; `events()` for jump targets. |
 | `processing/replay_payload.py` | `build_replay_payload()`: the JSON-safe dict the browser player animates (clock, track, packed positions, tower series with display strings, flags, race control, weather, lap marks). |
 | `processing/standings.py` | Jolpica standings parsed to frames, the calendar round of a session, and the points-after-this-race projection (race 25-18-..., sprint 8-7-..., no fastest-lap point since 2025). |
+| `processing/units.py` | Units and time zones (UX-12): km/h and mph, Celsius and Fahrenheit, the circuit's `gmt_offset` against the viewer's zone, and the `speed=`/`temp=`/`tz=` link parameters. Pure conversions; the Settings page chooses. |
+| `processing/view_params.py` | What a shared link carries besides the session: the replay cursor (`t=`) and, with FEAT-10, the layout toggles; every value is parsed defensively and clamped (FEAT-14). |
 | `processing/driver_selection.py` | Which drivers the Analysis charts plot: classification order, the top-five default and the `drivers=` URL form (UX-03). |
 | `processing/metrics_store.py` | `MetricsStore`: persistent fastest lap, sector bests and top speed per session and all-time, in SQLite (WAL mode). |
 
@@ -300,7 +302,9 @@ variable `PUBLISH_PYPI` is `true`.
 │   ├── time_utils.py
 │   ├── timing.py
 │   ├── track_geometry.py
-│   └── track_periods.py
+│   ├── track_periods.py
+│   ├── units.py
+│   └── view_params.py
 ├── ui/
 │   ├── dashboard.py
 │   ├── fonts.py

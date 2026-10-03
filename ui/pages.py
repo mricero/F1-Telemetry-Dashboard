@@ -32,7 +32,13 @@ from ui.layout import (
     render_tyre_pace,
     render_weather,
 )
-from ui.preferences import only_drivers, render_driver_picker, render_favourites_picker
+from ui.preferences import (
+    only_drivers,
+    render_driver_picker,
+    render_favourites_picker,
+    render_layout_pickers,
+    render_units_pickers,
+)
 from ui.replay_view import (
     FOCUS_PREFIX,
     cursor_key,
@@ -177,11 +183,14 @@ def analysis_page() -> None:
             "Section",
             ANALYSIS_SECTIONS,
             default=ANALYSIS_SECTIONS[0],
-            key="analysis_section",
+            key="section",
             label_visibility="collapsed",
             # Kept across page switches: Weather -> Replay -> Analysis comes
             # back on Weather instead of resetting to Telemetry (UI-21).
             persist_state="session",
+            # The section travels in the link as ``?section=Lap times``; an
+            # unknown value is dropped by Streamlit (FEAT-14).
+            bind="query-params",
         )
         or ANALYSIS_SECTIONS[0]
     )
@@ -274,7 +283,11 @@ def analysis_page() -> None:
     elif section == "Weather":
         render_weather(session_data.get("weather"), uirevision=revision)
     elif section == "Race control":
-        render_race_control(session_data.get("race_control"), key=f"rc:{context['session_key']}")
+        render_race_control(
+            session_data.get("race_control"),
+            key=f"rc:{context['session_key']}",
+            info=session_data.get("session_info"),
+        )
     elif section == "Team radio":
         render_team_radio(session_data)
 
@@ -346,6 +359,9 @@ def settings_page() -> None:
     session_data = context.get("session_data") or {}
     st.subheader("Preferences")
     render_favourites_picker(classification_order(session_data, context.get("laps")))
+    render_layout_pickers()
+    st.subheader("Units")
+    render_units_pickers()
     render_settings()
 
 

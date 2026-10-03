@@ -236,6 +236,6 @@ class TestSectionsInTheApp:
     def test_each_section_opens_without_an_exception(self, section):
         from tests.test_app_sources import _open, _run_for
 
-        app_test = _open(_run_for("fastf1"), "analysis", analysis_section=section)
+        app_test = _open(_run_for("fastf1"), "analysis", section=section)
 
         assert not app_test.exception, app_test.exception

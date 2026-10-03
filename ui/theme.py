@@ -265,6 +265,8 @@ APP_CSS = """
   display: grid; grid-template-columns: 44px 88px 1fr; gap: 8px;
   padding: 4px 0; border-bottom: 1px solid var(--line);
 }
+.f1-rc-timed .f1-rc-row { grid-template-columns: 112px 44px 88px 1fr; }
+.f1-rc-time { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .f1-rc-lap { color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
 .f1-rc-flag {
   font-family: var(--font-label); font-size: 11px; font-weight: 600;
@@ -307,7 +309,7 @@ DASHBOARD_CSS = f"""
   font-family: var(--font-label); font-size: 22px; font-weight: 700;
   letter-spacing: .02em; text-transform: uppercase;
 }}
-.f1-event-country, .f1-event-session {{
+.f1-event-country, .f1-event-session, .f1-event-start {{
   font-family: var(--font-label); font-size: 11px; font-weight: 600;
   color: var(--text-dim); letter-spacing: .06em; text-transform: uppercase;
 }}

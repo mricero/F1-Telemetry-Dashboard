@@ -389,3 +389,93 @@ describe("timed sessions", () => {
     assert.equal(rows(player).length, qualifying.drivers.length);
   });
 });
+
+describe("layout chosen by the viewer (FEAT-10)", () => {
+  const hiddenCells = (player) =>
+    [...player.root.querySelector(".rp-thead").children].filter((cell) => cell.classList.contains("rp-off"));
+
+  test("the default layout hides nothing", async () => {
+    const player = await open(race);
+
+    assert.equal(hiddenCells(player).length, 0);
+    assert.equal(player.root.className.includes("rp-hide-"), false);
+  });
+
+  test("a hidden column is hidden in the header and every row, and leaves the template", async () => {
+    const player = await open(race, { layout: { hide_cols: ["tyres", "pit"], hide_panels: [] } });
+
+    assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["Tyre", "Pit"]);
+    const row = rows(player)[0];
+    assert.equal([...row.children].filter((cell) => cell.classList.contains("rp-off")).length, 2);
+    const css = [...player.root.querySelectorAll("style")].map((node) => node.textContent).join("");
+    assert.match(css, /\.rp \.rp-cols-race \{ grid-template-columns: 28px 8px minmax\(64px, 1fr\) 76px 76px 44px; \}/);
+  });
+
+  test("hidden panels become classes on the root", async () => {
+    const player = await open(race, { layout: { hide_cols: [], hide_panels: ["map", "rc"] } });
+
+    assert.ok(player.root.classList.contains("rp-hide-map"));
+    assert.ok(player.root.classList.contains("rp-hide-rc"));
+    assert.equal(player.root.classList.contains("rp-hide-card"), false);
+  });
+
+  test("a new layout from Python applies without remounting", async () => {
+    const player = await open(race);
+
+    await player.rerun({ layout: { hide_cols: ["last"], hide_panels: ["strip"] } });
+
+    assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["Last"]);
+    assert.ok(player.root.classList.contains("rp-hide-strip"));
+    await player.rerun({ layout: { hide_cols: [], hide_panels: [] } });
+    assert.equal(hiddenCells(player).length, 0);
+  });
+
+  test("timed sessions treat the three sectors as one column", async () => {
+    const player = await open(qualifying, { layout: { hide_cols: ["sectors"], hide_panels: [] } });
+
+    assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["S1", "S2", "S3"]);
+  });
+});
+
+describe("units and the session start (UX-12)", () => {
+  const weather = (player) => player.root.querySelector(".rp-weather").textContent;
+  const withWeather = (payload) => ({
+    ...payload,
+    weather: [[0, 20, 30, 50, false, 36, 90]],
+  });
+
+  test("the default weather reads in Celsius and km/h", async () => {
+    const player = await open(withWeather(race));
+
+    assert.match(weather(player), /AIR 20\u00b0 {2}TRACK 30\u00b0/);
+    assert.match(weather(player), /WIND 36 km\/h E/);
+  });
+
+  test("Fahrenheit and mph convert the weather line", async () => {
+    const player = await open(withWeather(race), { units: { speed: "mph", temp: "f" } });
+
+    assert.match(weather(player), /AIR 68\u00b0F {2}TRACK 86\u00b0F/);
+    assert.match(weather(player), /WIND 22 mph E/);
+  });
+
+  test("a new unit applies on the next update", async () => {
+    const player = await open(withWeather(race));
+
+    await player.rerun({ units: { speed: "mph", temp: "f" } });
+    await seek(player, race.clock.lights_out + 1);
+
+    assert.match(weather(player), /AIR 68\u00b0F/);
+  });
+
+  test("the session start is shown in the header when Python sends it", async () => {
+    const player = await open(race, { start: "15:00:00 UTC+2" });
+
+    assert.equal(player.root.querySelector(".rp-start").textContent, "Start 15:00:00 UTC+2");
+  });
+
+  test("without a start the header has none", async () => {
+    const player = await open(race);
+
+    assert.equal(player.root.querySelector(".rp-start"), null);
+  });
+});

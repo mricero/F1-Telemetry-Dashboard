@@ -150,12 +150,12 @@ class TestAppSmoke:
             ("Race control", "No race control messages"),
             ("Positions", "No position data"),
         ):
-            self._open(app, "analysis", analysis_section=section)
+            self._open(app, "analysis", section=section)
             notices = [i.value for i in app.info] + [w.value for w in app.warning]
             assert not any(absent in n for n in notices), f"{absent!r} - panel got no data"
 
         # Weather readings render as st.metric tiles.
-        self._open(app, "analysis", analysis_section="Weather")
+        self._open(app, "analysis", section="Weather")
         metric_labels = [m.label for m in app.metric]
         assert "Air" in metric_labels and "Track" in metric_labels
 
