@@ -1539,7 +1539,11 @@ def render_driver_comparison(
         reference: f"{reference} {_lap_label(ref_lap)}" if ref_lap else reference,
         compare: f"{compare} {_lap_label(cmp_lap)}" if cmp_lap else compare,
     }
+    speed_unit = units().speed
     for row, (title, col, unit) in enumerate(panels, start=1):
+        if col == "Speed":
+            # Display only (UX-12): the delta above is integrated from km/h.
+            unit = speed_label(speed_unit)
         for driver, frame in ((reference, ref_g), (compare, cmp_g)):
             line = dict(color=color_map.get(driver, NEUTRAL_GREY), width=2)
             if driver == compare and col != "Speed":
@@ -1549,7 +1553,7 @@ def render_driver_comparison(
             fig.add_trace(
                 go.Scatter(
                     x=frame["Distance"],
-                    y=frame[col],
+                    y=speed_from_kmh(frame[col], speed_unit) if col == "Speed" else frame[col],
                     mode="lines",
                     name=names[driver],
                     legendgroup=driver,

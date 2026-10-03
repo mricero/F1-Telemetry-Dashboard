@@ -145,14 +145,17 @@ def _comparison_script():
     )
 
 
-def _run(with_corners: bool):
+def _run(with_corners: bool, query: dict | None = None):
     import ui.layout as layout
 
     layout.__dict__["_captured"] = []
     layout.__dict__["_with_corners"] = with_corners
     original = layout._plot
     try:
-        app = AppTest.from_function(_comparison_script, default_timeout=30).run()
+        app = AppTest.from_function(_comparison_script, default_timeout=30)
+        for name, value in (query or {}).items():
+            app.query_params[name] = value
+        app.run()
     finally:
         layout._plot = original
     assert not app.exception
@@ -184,3 +187,15 @@ class TestStackedComparison:
         app, without = _run(False)
         assert len(without.layout.annotations) == 0
         assert any("No corner positions" in c.value for c in app.caption)
+
+
+class TestComparisonUnits:
+    def test_speed_follows_the_viewer_unit_and_the_delta_does_not(self):
+        _, kmh = _run(True)
+        _, mph = _run(True, {"speed": "mph"})
+
+        assert kmh.layout.yaxis.title.text == "Speed (km/h)"
+        assert mph.layout.yaxis.title.text == "Speed (mph)"
+        assert max(mph.data[0].y) == pytest.approx(max(kmh.data[0].y) / 1.609344)
+        # The delta is integrated from km/h whatever the display unit.
+        assert list(mph.data[-1].y) == pytest.approx(list(kmh.data[-1].y))
