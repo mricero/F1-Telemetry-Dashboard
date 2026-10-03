@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.pace import (
+from f1dash.processing.pace import (
     FUEL_S_PER_LAP,
     compound_degradation,
     stint_pace,

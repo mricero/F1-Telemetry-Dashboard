@@ -7,7 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from streamlit.testing.v1 import AppTest
 
-from processing.view_params import format_cursor, parse_cursor
+from f1dash.processing.view_params import format_cursor, parse_cursor
 
 os.environ.setdefault("F1_METRICS_STORE", ":memory:")
 
@@ -43,8 +43,8 @@ class TestCursor:
 
 
 def _script():
+    from f1dash.ui.replay_view import render_session_replay
     from tests.replay_fixtures import race_session
-    from ui.replay_view import render_session_replay
 
     render_session_replay(race_session(), "fastf1:2026:Test Grand Prix:R")
 

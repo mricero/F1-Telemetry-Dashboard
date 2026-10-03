@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-import config
+from f1dash import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,7 +18,7 @@ def _pyproject_version() -> str:
 
 class TestVersion:
     def test_the_version_is_importable_from_config(self):
-        from config import __version__
+        from f1dash.config import __version__
 
         assert __version__ == _pyproject_version()
 

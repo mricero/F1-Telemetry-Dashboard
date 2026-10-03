@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PACKAGE = ROOT / "src" / "f1dash"  # src layout (REPO-10)
 
 # Pictographs and emoji presentation (guideline 5.12, check 1). Typographic
 # characters used in data - en dash, middle dot, degree sign, arrows in
@@ -54,13 +55,14 @@ COLOUR_PROPERTY = re.compile(
 
 
 def _python_files() -> list[Path]:
-    return [ROOT / "app.py", *sorted((ROOT / "ui").rglob("*.py"))]
+    files = [PACKAGE / "app.py", *sorted((PACKAGE / "ui").rglob("*.py"))]
+    assert len(files) > 1, f"no ui modules under {PACKAGE}"
+    return files
 
 
 def _component_files() -> list[Path]:
-    folder = ROOT / "ui" / "components"
-    if not folder.is_dir():
-        return []
+    folder = PACKAGE / "ui" / "components"
+    assert folder.is_dir(), folder
     return sorted(p for p in folder.rglob("*") if p.suffix in {".js", ".css", ".html"})
 
 
@@ -273,7 +275,7 @@ class TestStatusChips:
     """State indicators are words in the flag colours, not coloured icons."""
 
     def test_a_chip_says_what_it_means(self):
-        from ui.theme import FLAG_STATES, status_chip
+        from f1dash.ui.theme import FLAG_STATES, status_chip
 
         chip = status_chip("Safety car", "SAFETY CAR")
 
@@ -281,13 +283,13 @@ class TestStatusChips:
         assert FLAG_STATES["SAFETY CAR"][0] in chip
 
     def test_the_label_is_escaped(self):
-        from ui.theme import status_chip
+        from f1dash.ui.theme import status_chip
 
         assert "<script>" not in status_chip("<script>", "GREEN")
 
     def test_the_track_status_table_names_every_state(self):
-        from ui.layout import TRACK_STATUS
-        from ui.theme import FLAG_STATES
+        from f1dash.ui.layout import TRACK_STATUS
+        from f1dash.ui.theme import FLAG_STATES
 
         for state, label in TRACK_STATUS.values():
             assert state in FLAG_STATES
@@ -298,7 +300,7 @@ class TestSelfContainedTypography:
     """UI-01: the fonts ship with the app and are embedded, never fetched."""
 
     def test_the_committed_fonts_become_font_face_rules(self):
-        from ui.fonts import FONT_DIR, font_face_css
+        from f1dash.ui.fonts import FONT_DIR, font_face_css
 
         css = font_face_css(FONT_DIR)
 
@@ -308,7 +310,7 @@ class TestSelfContainedTypography:
         assert (FONT_DIR / "OFL.txt").is_file(), "the licence travels with the fonts"
 
     def test_missing_fonts_fall_back_to_nothing(self, tmp_path):
-        from ui.fonts import font_face_css
+        from f1dash.ui.fonts import font_face_css
 
         assert font_face_css(tmp_path) == ""
 
@@ -321,7 +323,7 @@ class TestSelfContainedTypography:
         assert config["theme"]["backgroundColor"].lower() == "#0b0c0f"
 
     def test_text_on_team_colours_is_black_or_white_by_contrast(self):
-        from ui.theme import BLACK, WHITE, text_on
+        from f1dash.ui.theme import BLACK, WHITE, text_on
 
         assert text_on("#ffffff") == BLACK
         assert text_on("#3671c6") == WHITE
@@ -332,7 +334,7 @@ class TestReplayScreenSpec:
     """UI-04: the replay screen contract is written down, and the chips match it."""
 
     def test_the_flag_chips_say_the_chip_words(self):
-        from ui.theme import FLAG_STATES
+        from f1dash.ui.theme import FLAG_STATES
 
         labels = {key: label for key, (_, _, label) in FLAG_STATES.items()}
 
@@ -365,9 +367,9 @@ TOWER_CHIPS = {"PIT", "OUT", "FIN", "DNF", "DSQ", "DNS", "KO"}
 
 
 def _fixture_towers():
-    from processing.timing import build_timing_rows
+    from f1dash.processing.timing import build_timing_rows
+    from f1dash.ui.dashboard import header_html, tower_html
     from tests import replay_fixtures as fx
-    from ui.dashboard import header_html, tower_html
 
     for build in (fx.race_session, fx.qualifying_session, fx.practice_session):
         session = build()
@@ -395,21 +397,21 @@ class TestTowerVocabulary:
                 assert text.lower() not in {"nan", "none", "nat", "<na>"}, (name, text)
 
     def test_a_lapped_finish_is_not_a_chip(self):
-        from ui.dashboard import _status_html
+        from f1dash.ui.dashboard import _status_html
 
         assert ">FIN<" in _status_html("+1L")
         assert "+1" not in _status_html("+2 LAPS")
 
     def test_a_car_in_the_pit_has_no_trap_speed(self):
-        from processing.timing import MISSING
-        from ui.dashboard import _speed_text
+        from f1dash.processing.timing import MISSING
+        from f1dash.ui.dashboard import _speed_text
 
         assert _speed_text(0.0, "PIT") == MISSING
         assert _speed_text(None, "") == MISSING
         assert _speed_text(301.4, "") == "301"
 
     def test_live_track_status_chips_use_the_flag_words(self):
-        from ui.layout import TRACK_STATUS
+        from f1dash.ui.layout import TRACK_STATUS
 
         assert {label for _, label in TRACK_STATUS.values()} <= {
             "GREEN",
@@ -420,7 +422,7 @@ class TestTowerVocabulary:
         }
 
     def test_race_control_text_is_escaped_not_markdown(self):
-        from ui.layout import race_control_html
+        from f1dash.ui.layout import race_control_html
 
         markup = race_control_html([{"lap": "L3", "flag": "", "message": "CAR 1 *VER* $5$ <b>"}])
 

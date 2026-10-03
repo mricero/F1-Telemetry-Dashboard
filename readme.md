@@ -209,8 +209,16 @@ git clone https://github.com/mricero/F1-Telemetry-Dashboard.git
 cd F1-Telemetry-Dashboard
 uv venv
 uv pip install -r requirements-dev.lock    # or requirements.lock for the app only
+uv pip install --no-deps -e .              # optional: f1dash, python -m f1dash, scripts/
 streamlit run app.py
 ```
+
+The code is the `f1dash` package in `src/f1dash/` (`app.py` the Streamlit
+script, `cli.py` the `f1dash` command, then `data/`, `processing/`, `ui/`).
+The root `app.py` is a small shim that runs `src/f1dash/app.py`, so
+`streamlit run app.py` needs no install; `pytest.ini` puts `src` on the path
+for the tests. The editable install is what the `f1dash` command and the
+manual scripts in `scripts/` import from (or set `PYTHONPATH=src`).
 
 Activate the virtualenv first (`.venv\Scripts\activate` on Windows,
 `source .venv/bin/activate` elsewhere), or call its interpreter directly
@@ -228,7 +236,7 @@ Tests and checks, the same ones CI runs:
 python -m pytest                       # offline and deterministic
 python -m ruff check .
 python -m black --check .
-python -m mypy --ignore-missing-imports app.py data processing ui
+python -m mypy --ignore-missing-imports src
 F1_NETWORK_TESTS=1 python -m pytest -m network    # optional, reaches the real APIs
 pre-commit install                     # runs ruff, black, mypy and file checks on commit
 ```

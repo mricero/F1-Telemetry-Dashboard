@@ -20,44 +20,44 @@ def _jwt(exp: datetime) -> str:
 
 class TestFreshness:
     def test_a_recent_update_counts_up(self):
-        from ui.layout import freshness_caption
+        from f1dash.ui.layout import freshness_caption
 
         beat = (NOW - timedelta(seconds=3)).isoformat()
         assert freshness_caption(beat, now=NOW) == "Last update 3 s ago"
 
     def test_past_thirty_seconds_it_says_no_update(self):
-        from ui.layout import freshness_caption
+        from f1dash.ui.layout import freshness_caption
 
         beat = (NOW - timedelta(seconds=45)).isoformat()
         assert freshness_caption(beat, now=NOW) == "No update for 45 s"
 
     def test_before_anything_arrived(self):
-        from ui.layout import freshness_caption
+        from f1dash.ui.layout import freshness_caption
 
         assert freshness_caption(None, now=NOW) == "No update received yet"
 
 
 class TestTokenHelper:
     def test_a_past_exp_reads_expired(self):
-        from ui.layout import token_line
+        from f1dash.ui.layout import token_line
 
         line = token_line(_jwt(NOW - timedelta(days=1)), now=NOW)
         assert "expired" in line
 
     def test_a_valid_token_names_its_days(self):
-        from ui.layout import token_line
+        from f1dash.ui.layout import token_line
 
         line = token_line(_jwt(NOW + timedelta(days=3, hours=2)), now=NOW)
         assert line == "Subscription token valid for 3 more day(s)"
 
     def test_no_token_says_what_still_works(self):
-        from ui.layout import token_line
+        from f1dash.ui.layout import token_line
 
         assert token_line(None).startswith("No subscription token")
 
     def test_saving_writes_exactly_one_line_and_keeps_the_rest(self, tmp_path, monkeypatch):
-        from data.live_adapter import TOKEN_ENV_VAR
-        from data.token_store import save_subscription_token
+        from f1dash.data.live_adapter import TOKEN_ENV_VAR
+        from f1dash.data.token_store import save_subscription_token
 
         # setenv first so the undo restores "unset": save_subscription_token
         # writes os.environ, and delenv alone records nothing to undo.
@@ -75,8 +75,8 @@ class TestTokenHelper:
         assert lines == ["LOG_LEVEL=INFO", f"{TOKEN_ENV_VAR}=new-token", "REPLAY_DIR=x"]
 
     def test_a_multi_line_paste_is_refused(self, tmp_path, monkeypatch):
-        from data.live_adapter import TOKEN_ENV_VAR
-        from data.token_store import save_subscription_token
+        from f1dash.data.live_adapter import TOKEN_ENV_VAR
+        from f1dash.data.token_store import save_subscription_token
 
         # setenv first so the undo restores "unset": save_subscription_token
         # writes os.environ, and delenv alone records nothing to undo.
@@ -92,8 +92,8 @@ class TestRecorderErrorIsShown:
         from streamlit.testing.v1 import AppTest
 
         def script():
-            from data.live_adapter import SignalRLiveAdapter
-            from ui.layout import render_feed_status
+            from f1dash.data.live_adapter import SignalRLiveAdapter
+            from f1dash.ui.layout import render_feed_status
 
             adapter = SignalRLiveAdapter()
             adapter.recorder_error = "Recording stopped: OSError: No space left on device"

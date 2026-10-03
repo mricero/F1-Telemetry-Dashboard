@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.timing import gap_trace, line_times
+from f1dash.processing.timing import gap_trace, line_times
 from tests.replay_fixtures import RACE_LAP_ENDS, race_session
 
 

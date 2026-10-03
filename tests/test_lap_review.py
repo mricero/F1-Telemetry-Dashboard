@@ -3,8 +3,8 @@
 import numpy as np
 import pandas as pd
 
-from processing.lap_review import sector_ranking, speed_ranking
-from ui.lap_panels import ranking_table
+from f1dash.processing.lap_review import sector_ranking, speed_ranking
+from f1dash.ui.lap_panels import ranking_table
 
 
 def _laps() -> pd.DataFrame:
@@ -94,8 +94,8 @@ class TestRankingTable:
 
 class TestRankingsInTheApp:
     def test_section_is_listed_and_opens(self):
+        from f1dash.ui.pages import ANALYSIS_SECTIONS
         from tests.test_app_sources import _open, _run_for
-        from ui.pages import ANALYSIS_SECTIONS
 
         assert "Rankings" in ANALYSIS_SECTIONS
         app_test = _open(_run_for("fastf1"), "analysis", analysis_section="Rankings")

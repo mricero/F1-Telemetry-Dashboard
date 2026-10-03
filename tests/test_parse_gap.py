@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from processing.time_utils import parse_gap
+from f1dash.processing.time_utils import parse_gap
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# src layout (REPO-10): the allow-list keys below are relative to PACKAGE.
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"
 PACKAGES = ("data", "processing")
 
 # REPO-05 removed the orphans, so the rule now covers both packages.
@@ -56,16 +58,17 @@ def _sources(include_tests: bool = True) -> str:
 
     This module is always excluded: it names the very functions it checks.
     """
-    folders = [*PACKAGES, "ui", "scripts"]
+    folders = [PACKAGE / name for name in (*PACKAGES, "ui")] + [PROJECT_ROOT / "scripts"]
     if include_tests:
-        folders.append("tests")
+        folders.append(PROJECT_ROOT / "tests")
     parts = []
     for folder in folders:
-        for path in (PROJECT_ROOT / folder).rglob("*.py"):
+        for path in folder.rglob("*.py"):
             if path.resolve() == Path(__file__).resolve():
                 continue
             parts.append(path.read_text(encoding="utf-8"))
-    parts.append((PROJECT_ROOT / "app.py").read_text(encoding="utf-8"))
+    for path in (PACKAGE / "app.py", PACKAGE / "cli.py", PROJECT_ROOT / "app.py"):
+        parts.append(path.read_text(encoding="utf-8"))
     return chr(10).join(parts)
 
 
@@ -74,8 +77,8 @@ class TestNoUnusedPublicFunctions:
         corpus = _sources()
         orphans = []
         for package in PACKAGES:
-            for path in sorted((PROJECT_ROOT / package).rglob("*.py")):
-                relative = path.relative_to(PROJECT_ROOT).as_posix()
+            for path in sorted((PACKAGE / package).rglob("*.py")):
+                relative = path.relative_to(PACKAGE).as_posix()
                 allowed = KEPT_WITHOUT_CALLERS.get(relative, set())
                 for name in _public_functions(path):
                     # One definition plus at least one use.
@@ -97,7 +100,7 @@ class TestNoUnusedPublicFunctions:
     def test_no_demo_main_blocks_in_library_modules(self):
         offenders = []
         for package in PACKAGES:
-            for path in (PROJECT_ROOT / package).rglob("*.py"):
+            for path in (PACKAGE / package).rglob("*.py"):
                 if "__main__" in path.read_text(encoding="utf-8"):
                     offenders.append(str(path.relative_to(PROJECT_ROOT)))
 
@@ -106,8 +109,8 @@ class TestNoUnusedPublicFunctions:
 
 class TestEverySubscribedTopicIsRead:
     def test_no_topic_is_subscribed_that_nothing_reads(self):
-        from data.live_adapter import SignalRLiveAdapter
-        from data.live_state import STATE_TOPICS
+        from f1dash.data.live_adapter import SignalRLiveAdapter
+        from f1dash.data.live_state import STATE_TOPICS
 
         corpus = _sources()
         unread = []
@@ -121,12 +124,12 @@ class TestEverySubscribedTopicIsRead:
         assert not unread, f"subscribed but never read: {unread}"
 
     def test_the_tower_gets_its_tyre_source(self):
-        from data.live_adapter import SignalRLiveAdapter
+        from f1dash.data.live_adapter import SignalRLiveAdapter
 
         assert "TimingAppData" in SignalRLiveAdapter.TELEMETRY_TOPICS
 
     def test_lap_series_is_not_subscribed(self):
-        from data.live_adapter import SignalRLiveAdapter
+        from f1dash.data.live_adapter import SignalRLiveAdapter
 
         # Lap progression comes from TimingData.NumberOfLaps; LapSeries only
         # duplicated it and nothing parsed it.
@@ -137,7 +140,7 @@ class TestUnusedConfiguration:
     """REPO-05: config fields nothing reads are a promise the app does not keep."""
 
     def test_every_config_field_is_read(self):
-        import config as config_module
+        from f1dash import config as config_module
 
         corpus = _sources()
         unread = [
@@ -149,10 +152,25 @@ class TestUnusedConfiguration:
         assert not unread, f"config fields nothing reads: {unread}"
 
     def test_the_app_does_not_patch_sys_path(self):
-        """streamlit run puts the script's directory on sys.path itself."""
+        """The package imports absolutely as ``f1dash`` (REPO-10)."""
+        for path in PACKAGE.rglob("*.py"):
+            assert "sys.path" not in path.read_text(encoding="utf-8"), path
+
+    def test_only_the_checkout_shim_adds_src(self):
+        """The root app.py adds the checkout's own src/ and nothing else, so
+        ``streamlit run app.py`` works without an install."""
         source = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
 
-        assert "sys.path.insert" not in source
+        assert source.count("sys.path.insert") == 1
+        assert 'SRC = Path(__file__).resolve().parent / "src"' in source
+
+    def test_scripts_do_not_patch_sys_path(self):
+        """They import f1dash from an install or PYTHONPATH=src (REPO-10)."""
+        for path in [
+            *(PROJECT_ROOT / "scripts").rglob("*.py"),
+            PROJECT_ROOT / "tests/js/build_payloads.py",
+        ]:
+            assert "sys.path.insert" not in path.read_text(encoding="utf-8"), path
 
 
 class TestTheAllowListStaysHonest:
@@ -160,7 +178,7 @@ class TestTheAllowListStaysHonest:
 
     def test_every_allowed_name_still_exists(self):
         for module, names in KEPT_WITHOUT_CALLERS.items():
-            defined = set(_public_functions(PROJECT_ROOT / module))
+            defined = set(_public_functions(PACKAGE / module))
             stale = names - defined
             assert not stale, f"{module}: allow-listed but gone: {stale}"
 

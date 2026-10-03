@@ -7,8 +7,8 @@ is 4.5:1, not the 3:1 allowed for large text.
 
 import pytest
 
-from ui import theme
-from ui.theme import FLAG_STATES, SURFACE, SURFACE_2, TIME_TEXT_TOKENS, contrast_ratio
+from f1dash.ui import theme
+from f1dash.ui.theme import FLAG_STATES, SURFACE, SURFACE_2, TIME_TEXT_TOKENS, contrast_ratio
 
 FLOOR = 4.5
 

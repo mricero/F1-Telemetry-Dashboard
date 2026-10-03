@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.telemetry_processor import (
+from f1dash.processing.telemetry_processor import (
     TelemetryProcessor,
     max_lap_number,
 )

@@ -37,7 +37,7 @@ class TestReplayPositionSurvivesOtherPages:
 
     @pytest.mark.parametrize("away", ["records", "results", "analysis"])
     def test_the_reported_cursor_comes_back(self, away):
-        from ui.replay_view import SEEK_CURSOR_PREFIX, cursor_key
+        from f1dash.ui.replay_view import SEEK_CURSOR_PREFIX, cursor_key
 
         app_test = _loaded()
         key = _session_key(app_test)
@@ -53,7 +53,7 @@ class TestReplayPositionSurvivesOtherPages:
         assert app_test.session_state[f"{SEEK_CURSOR_PREFIX}:{key}"] == 42.5
 
     def test_the_page_is_tracked_by_main_not_by_each_page(self):
-        from ui.pages import LAST_PAGE_KEY, PREVIOUS_PAGE_KEY
+        from f1dash.ui.pages import LAST_PAGE_KEY, PREVIOUS_PAGE_KEY
 
         app_test = _loaded()
         _open(app_test, "records")
@@ -100,9 +100,9 @@ class TestSettingsPage:
     """UI-22: the caches a user could not clear (toolbarMode hides Streamlit's own)."""
 
     def test_clearing_drops_the_schedules_and_the_loaded_sessions(self, monkeypatch):
-        from data import fastf1_adapter
-        from data.runtime_cache import runtime_cache
-        from ui import layout
+        from f1dash.data import fastf1_adapter
+        from f1dash.data.runtime_cache import runtime_cache
+        from f1dash.ui import layout
 
         cleared = []
         for name in ("_is_race_weekend_cached", "_event_names_cached", "_session_codes_cached"):
@@ -121,14 +121,14 @@ class TestSettingsPage:
         from streamlit.testing.v1 import AppTest
 
         def script():
-            from ui.layout import render_settings
+            from f1dash.ui.layout import render_settings
 
             render_settings()
 
         app_test = AppTest.from_function(script, default_timeout=30)
         app_test.run()
         assert not app_test.exception
-        from config import __version__
+        from f1dash.config import __version__
 
         captions = " ".join(c.value for c in app_test.caption)
         assert f"F1 Replay {__version__}" in captions
@@ -139,14 +139,14 @@ class TestSettingsPage:
         assert "Loaded sessions cleared" in app_test.success[0].value
 
     def test_settings_is_offered_for_every_session(self):
-        from ui.pages import PAGE_SETTINGS, page_specs
+        from f1dash.ui.pages import PAGE_SETTINGS, page_specs
 
         for session in ({"is_live": True}, {"is_live": False}):
             assert PAGE_SETTINGS in [title for _, title, _ in page_specs(session)]
 
     def test_about_names_the_version(self):
-        from config import __version__
-        from ui.layout import menu_items
+        from f1dash.config import __version__
+        from f1dash.ui.layout import menu_items
 
         assert __version__ in menu_items()["About"]
 

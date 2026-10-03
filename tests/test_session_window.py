@@ -9,7 +9,7 @@ selectors, on days with no session at all.
 import pandas as pd
 import pytest
 
-from data.fastf1_adapter import SESSION_DURATIONS, live_session_now
+from f1dash.data.fastf1_adapter import SESSION_DURATIONS, live_session_now
 
 
 def _schedule() -> pd.DataFrame:
@@ -83,30 +83,30 @@ class TestLiveSessionWindow:
 class TestManagerProbe:
     def test_the_manager_reports_the_session_window(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         manager = DataSourceManager()
         manager.fastf1 = type(
             "Stub", (), {"get_schedule": staticmethod(lambda *a, **kw: _schedule())}
         )()
-        monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at("2026-09-06T14:00"))
+        monkeypatch.setattr("f1dash.data.fastf1_adapter._utcnow", lambda: _at("2026-09-06T14:00"))
 
         assert manager.live_session() is not None
         assert manager._is_race_weekend() is True
 
     def test_no_session_means_no_live_banner(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         manager = DataSourceManager()
         manager.fastf1 = type(
             "Stub", (), {"get_schedule": staticmethod(lambda *a, **kw: _schedule())}
         )()
-        monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: _at("2026-09-03T12:00"))
+        monkeypatch.setattr("f1dash.data.fastf1_adapter._utcnow", lambda: _at("2026-09-03T12:00"))
 
         assert manager.live_session() is None
         assert manager._is_race_weekend() is False
@@ -143,8 +143,8 @@ class TestTheCurrentWeekend:
     def manager(self, monkeypatch, tmp_path):
         import fastf1
 
-        from data import fastf1_adapter
-        from data.source_manager import DataSourceManager
+        from f1dash.data import fastf1_adapter
+        from f1dash.data.source_manager import DataSourceManager
 
         monkeypatch.setattr(fastf1, "get_event_schedule", lambda year: _sprint_weekend())
         clock = {"now": _at("2026-10-09T10:00")}
@@ -169,7 +169,7 @@ class TestTheCurrentWeekend:
         assert live is not None and live["session"] == code
 
     def test_on_saturday_the_earlier_sessions_are_selectable(self, manager):
-        from data.fastf1_adapter import session_codes_for_event
+        from f1dash.data.fastf1_adapter import session_codes_for_event
 
         manager, clock = manager
         clock["now"] = _at("2026-10-10T11:00")  # after the Sprint, before Q

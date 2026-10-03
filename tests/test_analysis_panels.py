@@ -28,7 +28,7 @@ def _isolate_streamlit_caches():
 
 class TestRaceTraceFigure:
     def test_one_line_per_driver_in_running_order(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         session = race_session()
         fig = race_trace_figure(session["laps"], COLOURS)
@@ -37,7 +37,7 @@ class TestRaceTraceFigure:
         assert [trace.name for trace in fig.data] == ["B", "C", "A"]
 
     def test_the_leader_is_at_the_top(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         fig = race_trace_figure(race_session()["laps"], COLOURS)
 
@@ -45,14 +45,14 @@ class TestRaceTraceFigure:
         assert fig.layout.yaxis.title.text == "Gap to leader (s)"
 
     def test_the_reference_driver_names_the_axis(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         fig = race_trace_figure(race_session()["laps"], COLOURS, reference="C")
 
         assert fig.layout.yaxis.title.text == "Gap to C (s)"
 
     def test_the_safety_car_lap_is_shaded(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         session = race_session()
         fig = race_trace_figure(session["laps"], COLOURS, track_status=session["track_status"])
@@ -61,7 +61,7 @@ class TestRaceTraceFigure:
         assert [note.text for note in fig.layout.annotations] == ["SC"]
 
     def test_the_second_car_of_a_team_is_dashed(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         fig = race_trace_figure(race_session()["laps"], COLOURS)
         dashes = {trace.name: trace.line.dash for trace in fig.data}
@@ -70,7 +70,7 @@ class TestRaceTraceFigure:
         assert dashes["C"] is None and dashes["A"] == "dash"
 
     def test_hover_shows_signed_gaps(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         fig = race_trace_figure(race_session()["laps"], COLOURS)
         c = next(trace for trace in fig.data if trace.name == "C")
@@ -78,7 +78,7 @@ class TestRaceTraceFigure:
         assert c.customdata[0] == "+2.000"
 
     def test_no_lap_times_no_figure(self):
-        from ui.layout import race_trace_figure
+        from f1dash.ui.layout import race_trace_figure
 
         laps = race_session()["laps"].drop(columns=["Time"])
 
@@ -86,8 +86,8 @@ class TestRaceTraceFigure:
 
 
 def _render_race_trace(session_type):
+    from f1dash.ui.layout import render_race_trace
     from tests.replay_fixtures import qualifying_session, race_session
-    from ui.layout import render_race_trace
 
     session = race_session() if session_type == "R" else qualifying_session()
     render_race_trace(
@@ -104,7 +104,7 @@ class TestRenderRaceTrace:
         assert app_test.selectbox[0].options == ["Leader", "A", "B", "C"]
 
     def test_another_session_says_why_in_one_sentence(self):
-        from ui.layout import NOT_A_RACE
+        from f1dash.ui.layout import NOT_A_RACE
 
         app_test = AppTest.from_function(_render_race_trace, args=("Q",)).run()
 
@@ -121,8 +121,8 @@ class TestRenderRaceTrace:
 
 class TestTyrePace:
     def test_figure_has_one_series_per_compound_named_in_the_legend(self):
-        from processing.pace import stint_pace
-        from ui.layout import tyre_pace_figure
+        from f1dash.processing.pace import stint_pace
+        from f1dash.ui.layout import tyre_pace_figure
 
         session = race_session()
         fig = tyre_pace_figure(stint_pace(session["laps"], session["track_status"]), {})
@@ -132,15 +132,15 @@ class TestTyrePace:
         assert fig.layout.xaxis.title.text == "Tyre age (laps)"
 
     def test_no_clean_laps_no_figure(self):
-        from processing.pace import stint_pace
-        from ui.layout import tyre_pace_figure
+        from f1dash.processing.pace import stint_pace
+        from f1dash.ui.layout import tyre_pace_figure
 
         assert tyre_pace_figure(stint_pace(None), {}) is None
 
     def test_table_shows_signed_loss_per_lap(self):
         import pandas as pd
 
-        from ui.layout import degradation_table
+        from f1dash.ui.layout import degradation_table
 
         table = degradation_table(
             pd.DataFrame({"Compound": ["SOFT"], "Stints": [3], "Laps": [30], "Slope": [0.0834]})
@@ -150,8 +150,8 @@ class TestTyrePace:
 
     def test_render_runs_in_a_script_context(self):
         def render():
+            from f1dash.ui.layout import render_tyre_pace
             from tests.replay_fixtures import race_session
-            from ui.layout import render_tyre_pace
 
             session = race_session()
             render_tyre_pace(session["laps"], session["session_info"], session["track_status"])
@@ -163,7 +163,7 @@ class TestTyrePace:
 
 class TestPitRejoin:
     def test_the_sentence_names_the_cars_either_side(self):
-        from ui.layout import rejoin_sentence
+        from f1dash.ui.layout import rejoin_sentence
 
         result = {
             "position": 4,
@@ -179,7 +179,7 @@ class TestPitRejoin:
         )
 
     def test_the_sentence_has_no_clause_for_a_missing_neighbour(self):
-        from ui.layout import rejoin_sentence
+        from f1dash.ui.layout import rejoin_sentence
 
         result = {"position": 1, "ahead": None, "gap_ahead": None, "behind": "B", "gap_behind": 4.0}
 
@@ -189,8 +189,8 @@ class TestPitRejoin:
 
     def test_a_race_draws_a_prediction_and_says_where_the_loss_comes_from(self):
         def render():
+            from f1dash.ui.layout import render_pit_rejoin
             from tests.replay_fixtures import race_session
-            from ui.layout import render_pit_rejoin
 
             session = race_session()
             render_pit_rejoin(
@@ -205,8 +205,8 @@ class TestPitRejoin:
 
     def test_another_session_says_why(self):
         def render():
+            from f1dash.ui.layout import render_pit_rejoin
             from tests.replay_fixtures import qualifying_session
-            from ui.layout import render_pit_rejoin
 
             session = qualifying_session()
             render_pit_rejoin(session["laps"], session["session_info"], session["track_status"])
@@ -218,7 +218,7 @@ class TestPitRejoin:
 
 
 def test_qualifying_fixture_is_not_a_race():
-    from processing.timing import is_race_session
+    from f1dash.processing.timing import is_race_session
 
     assert not is_race_session(qualifying_session()["session_info"])
 
@@ -228,7 +228,7 @@ NEW_SECTIONS = ["Race trace", "Tyre pace", "Pit rejoin"]
 
 class TestSectionsInTheApp:
     def test_the_new_sections_are_listed(self):
-        from ui.pages import ANALYSIS_SECTIONS
+        from f1dash.ui.pages import ANALYSIS_SECTIONS
 
         assert set(NEW_SECTIONS) <= set(ANALYSIS_SECTIONS)
 

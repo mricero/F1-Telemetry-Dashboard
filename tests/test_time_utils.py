@@ -8,7 +8,7 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from processing.time_utils import seconds_series, to_seconds
+from f1dash.processing.time_utils import seconds_series, to_seconds
 
 
 class TestToSeconds:

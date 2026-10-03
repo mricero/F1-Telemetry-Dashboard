@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from data.live_adapter import SignalRLiveAdapter
-from data.live_recorder import SNAPSHOT_MARKER, LiveRecorder, replay_recording
+from f1dash.data.live_adapter import SignalRLiveAdapter
+from f1dash.data.live_recorder import SNAPSHOT_MARKER, LiveRecorder, replay_recording
 from tests import live_fixtures
 
 TOPICS = ("SessionInfo", "DriverList", "TimingData", "TyreStintSeries")
@@ -139,7 +139,7 @@ class TestControlsAreReachable:
     def test_the_live_page_renders_the_controls(self):
         import inspect
 
-        from ui.pages import live_page
+        from f1dash.ui.pages import live_page
 
         lines = [line.strip() for line in inspect.getsource(live_page).splitlines()]
 
@@ -161,8 +161,8 @@ class TestControlsAreReachable:
         def script():
             import streamlit as st
 
-            from data.live_adapter import SignalRLiveAdapter
-            from ui.layout import render_live_controls
+            from f1dash.data.live_adapter import SignalRLiveAdapter
+            from f1dash.ui.layout import render_live_controls
 
             adapter = SignalRLiveAdapter()
             st.session_state["adapter"] = adapter
@@ -189,18 +189,18 @@ class TestWhoMayControlTheFeed:
     """LIVE-29: the process-level controls are for the machine running the app."""
 
     def test_the_flag_grants_control(self):
-        from ui.layout import live_controls_allowed
+        from f1dash.ui.layout import live_controls_allowed
 
         assert live_controls_allowed({"F1_LIVE_CONTROLS": "1"}, url=None, ip="10.0.0.5")
 
     def test_a_localhost_browser_on_a_loopback_socket_may_control(self):
-        from ui.layout import live_controls_allowed
+        from f1dash.ui.layout import live_controls_allowed
 
         assert live_controls_allowed({}, url="http://localhost:8501/", ip=None)
         assert live_controls_allowed({}, url="http://127.0.0.1:8501/live", ip=None)
 
     def test_remote_viewers_only_read(self):
-        from ui.layout import live_controls_allowed
+        from f1dash.ui.layout import live_controls_allowed
 
         assert not live_controls_allowed({}, url="http://192.168.1.4:8501/", ip=None)
         # A localhost URL through a proxy still arrives from a real address.

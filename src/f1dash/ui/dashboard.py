@@ -1,0 +1,744 @@
+"""Live-timing dashboard assembly (``layout.md`` sections 2-5).
+
+Builds the header bar, the driver leaderboard matrix, the sector top-3
+widgets and the track map panel, then lays them out on the spec's 60/40
+grid. The dense components are hand-written HTML because Streamlit's own
+table widgets cannot express micro-sector strips, tyre badges or team
+accent bars.
+"""
+
+import html
+import re
+from collections.abc import Sequence
+
+import pandas as pd
+import streamlit as st
+
+from f1dash.processing.replay import format_clock, positions_at
+from f1dash.processing.replay_model import TRACK_STATUS_FLAGS, flag_state, race_clock_text
+from f1dash.processing.time_utils import to_seconds
+from f1dash.processing.timing import (
+    MISSING,
+    build_timing_rows,
+    dashboard_frames,
+    format_lap,
+    is_raining,
+    micro_sector_marks,
+    micro_sector_times,
+    sector_bounds_for_driver,
+    sector_leaders,
+    theoretical_best,
+)
+from f1dash.processing.units import (
+    METRIC,
+    Units,
+    speed_from_kmh,
+    speed_label,
+    temp_from_c,
+    temp_label,
+)
+from f1dash.ui.preferences import (
+    favourite_drivers,
+    format_wall_clock,
+    hidden_columns,
+    hidden_panels,
+)
+from f1dash.ui.preferences import units as viewer_units
+from f1dash.ui.theme import (
+    COMPOUND_LETTER,
+    COMPOUND_RING,
+    DASHBOARD_CSS,
+    FLAG_STATES,
+    NEUTRAL_GREY,
+    segment_color,
+    status_chip,
+    team_color,
+    text_on,
+)
+from f1dash.ui.track_map import (
+    build_track_svg,
+    dominance_legend,
+    dominance_segments,
+    reference_driver,
+    svg_image,
+)
+
+# Column headers for the leaderboard matrix (spec section 3).
+TOWER_COLUMNS = [
+    "Pos",
+    "Driver",
+    "Status",
+    "Last lap",
+    "Best lap",
+    "Interval",
+    "Gap",
+    "Sector 1",
+    "Sector 2",
+    "Sector 3",
+    "Tyre history",
+    "Diff",
+    "Speed km/h",
+]
+
+# The layout toggle each column belongs to (FEAT-10); Pos and Driver are
+# always shown. Interval and Gap share one switch, so do the three sectors.
+COLUMN_KEYS = {
+    "Status": "status",
+    "Last lap": "last",
+    "Best lap": "best",
+    "Interval": "gap",
+    "Gap": "gap",
+    "Sector 1": "sectors",
+    "Sector 2": "sectors",
+    "Sector 3": "sectors",
+    "Tyre history": "tyres",
+    "Diff": "diff",
+    "Speed km/h": "speed",
+}
+
+# Columns dropped below 1200 px (guideline 5.5: low-priority columns first).
+COLUMN_CLASSES = {"Tyre history": "col-compact", "Diff": "col-compact", "Speed km/h": "col-compact"}
+
+_CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def _cardinal(degrees) -> str:
+    """Wind bearing in degrees -> compass point."""
+    if degrees is None or pd.isna(degrees):
+        return ""
+    return _CARDINALS[int((float(degrees) % 360) / 45 + 0.5) % 8]
+
+
+# Compass arrow per cardinal point, so wind direction reads at a glance
+# (layout.md section 2 asks for an inline compass arrow).
+_WIND_ARROWS = {"N": "↑", "NE": "↗", "E": "→", "SE": "↘", "S": "↓", "SW": "↙", "W": "←", "NW": "↖"}
+
+
+def _wind_arrow(degrees) -> str:
+    """Arrow glyph for a wind bearing, or empty when unknown."""
+    cardinal = _cardinal(degrees)
+    return _WIND_ARROWS.get(cardinal, "")
+
+
+def _esc(value) -> str:
+    return html.escape("" if value is None else str(value))
+
+
+# FastF1 (and the SignalR WeatherData feed) report WindSpeed in m/s, but the
+# header and the weather panel present km/h, which is what layout.md asks for.
+MS_TO_KMH = 3.6
+
+
+def wind_kmh(wind_speed) -> float | None:
+    """Wind speed in km/h from the feed's m/s, or None when unavailable."""
+    if wind_speed is None or pd.isna(wind_speed):
+        return None
+    return float(wind_speed) * MS_TO_KMH
+
+
+# Track states worth a chip on the map, and the chip's word.
+TRACK_CHIPS = {"SAFETY CAR": "SC", "VSC": "VSC", "RED": "RED"}
+
+
+def _is_snapshot(session_data: dict) -> bool:
+    """Whether this dict is one moment of a replay (REPLAY-03), not a session."""
+    return (session_data.get("session_info") or {}).get("replay_time") is not None
+
+
+def _flag_state(session_data: dict) -> str:
+    """The track's flag condition for the header.
+
+    Race-control messages are scoped: a ``Sector`` yellow or a ``Driver`` blue
+    says nothing about the state of the track, so only ``Track``-scoped
+    messages count - otherwise a finished session reported "YELLOW FLAG"
+    because some sector went yellow once.
+    """
+    if _is_snapshot(session_data):
+        return flag_state(session_data)
+
+    info = session_data.get("session_info") or {}
+    status = info.get("track_status")
+    if isinstance(status, dict):
+        code = str(status.get("status", ""))
+        if code in TRACK_STATUS_FLAGS:
+            return TRACK_STATUS_FLAGS[code]
+
+    if session_data.get("is_live"):
+        # No TrackStatus yet: assume green rather than infer one from history.
+        return "GREEN"
+
+    race_control = session_data.get("race_control")
+    if (
+        race_control is not None
+        and not race_control.empty
+        and {"Flag", "Scope"} <= set(race_control.columns)
+    ):
+        track_wide = race_control[race_control["Scope"].astype(str).str.lower() == "track"]
+        flags = track_wide["Flag"].dropna()
+        for flag in reversed(flags.tolist()):
+            state = str(flag).upper()
+            if state in FLAG_STATES:
+                return state
+    return "FINISHED"
+
+
+CLOCK_PLACEHOLDER = MISSING
+
+
+def _session_clock(session_data: dict) -> str:
+    """What the header's clock slot should read.
+
+    Historical: how long the session ran, from the session time at the last
+    completed lap. Live: the time remaining on the feed's ExtrapolatedClock.
+    It used to show the *weather sampling window*, which is neither.
+    """
+    info = session_data.get("session_info") or {}
+    if session_data.get("is_live"):
+        remaining = info.get("extrapolated_clock")
+        return str(remaining) if remaining else CLOCK_PLACEHOLDER
+
+    laps = session_data.get("laps")
+    if laps is None or laps.empty or "Time" not in laps.columns:
+        return CLOCK_PLACEHOLDER
+    seconds = laps["Time"].map(to_seconds).dropna()
+    if seconds.empty:
+        return CLOCK_PLACEHOLDER
+    return format_clock(float(seconds.max()))
+
+
+def header_html(session_data: dict, units: Units = METRIC, start: str = "") -> str:
+    """Global session + environment bar (spec section 2).
+
+    ``units`` picks km/h or mph for the wind and Celsius or Fahrenheit for the
+    temperatures; ``start`` is the session's start as a time of day with its
+    zone, already formatted for the viewer (UX-12).
+    """
+    info = session_data.get("session_info") or {}
+    weather = session_data.get("weather")
+    latest = (
+        weather.iloc[-1] if weather is not None and not weather.empty else pd.Series(dtype="object")
+    )
+
+    flag = _flag_state(session_data)
+    bg, fg, label = FLAG_STATES.get(flag, FLAG_STATES["FINISHED"])
+    if _is_snapshot(session_data):
+        clock_label, clock_value = race_clock_text(info)
+    elif session_data.get("is_live") and info.get("segment"):
+        # Live qualifying: the running segment and its clock, "Q2 0:07:41"
+        # (LIVE-19).
+        clock_label = f"{info['segment']} remaining"
+        clock_value = str(info.get("segment_remaining") or CLOCK_PLACEHOLDER)
+    else:
+        clock_label = "Remaining" if session_data.get("is_live") else "Duration"
+        clock_value = _session_clock(session_data)
+    lap_now, lap_total = info.get("current_lap"), info.get("total_laps")
+    lap_text = (
+        f'<span class="f1-env-label">Lap</span>'
+        f'<span class="f1-clock f1-num">{lap_now}/{lap_total}</span>'
+        if _is_snapshot(session_data) and lap_now and lap_total
+        else ""
+    )
+
+    event = _esc(info.get("gp") or "Session")
+    country = _esc(info.get("country") or "")
+    year = info.get("year")
+    session_type = _esc(info.get("session_name") or info.get("session_type") or "")
+
+    def reading(label_text: str, value: str, extra: str = "") -> str:
+        return (
+            f'<div class="f1-env-item"><span class="f1-env-label">{label_text}</span>'
+            f'<span class="f1-env-value {extra} f1-num">{value}</span></div>'
+        )
+
+    def number(key: str, unit: str, digits: int = 1, convert=None) -> str:
+        value = latest.get(key)
+        value = pd.to_numeric(value, errors="coerce") if value is not None else None
+        if value is None or pd.isna(value):
+            return MISSING
+        if convert is not None:
+            value = convert(float(value))
+        return f"{float(value):.{digits}f} {unit}"
+
+    def temperature(key: str) -> str:
+        unit = temp_label(units.temp).replace("°", "&deg;")
+        return number(key, unit, convert=lambda value: temp_from_c(value, units.temp))
+
+    rain = latest.get("Rainfall")
+    rain_yes = is_raining(rain)
+    wind_speed = wind_kmh(latest.get("WindSpeed"))
+    direction = latest.get("WindDirection")
+    wind = (
+        f"{_wind_arrow(direction)} {speed_from_kmh(wind_speed, units.speed):.1f} "
+        f"{speed_label(units.speed)} {_cardinal(direction)}".strip()
+        if wind_speed is not None
+        else MISSING
+    )
+
+    # REPLAY-08: without the timing stream (an old replay, or FastF1 could
+    # not provide it) race gaps are measured at the timing lines. Say so.
+    estimated_note = (
+        '<div class="f1-note">Gaps estimated at the timing lines</div>'
+        if _is_snapshot(session_data) and info.get("gaps_estimated")
+        else ""
+    )
+    start_html = (
+        f'<span class="f1-event-start f1-num" title="Session start">Start {_esc(start)}</span>'
+        if start
+        else ""
+    )
+    return f"""
+<div class="f1-header">
+  <div class="f1-event">
+    <span class="f1-event-name">{event}{f" {year}" if year else ""}</span>
+    {f'<span class="f1-event-country">{country}</span>' if country else ""}
+    <span class="f1-event-session">{session_type}</span>
+    {start_html}
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    {lap_text}
+    <span class="f1-env-label">{clock_label}</span>
+    <span class="f1-clock f1-num" title="{clock_label}">{clock_value}</span>
+    <span class="f1-flag" style="background:{bg};color:{fg};">{label}</span>
+  </div>
+  <div class="f1-env">
+    {reading("Wind", wind)}
+    {reading("Track", temperature("TrackTemp"))}
+    {reading("Air", temperature("AirTemp"))}
+    {reading("Humidity", number("Humidity", "%"))}
+    {reading("Pressure", number("Pressure", "mb"))}
+    {reading("Rain", "YES" if rain_yes else "NO", "rain-yes" if rain_yes else "")}
+  </div>
+</div>
+{estimated_note}"""
+
+
+# What each mini-sector colour means, for the cell's tooltip: colour is
+# never the only carrier of the meaning (guideline 5.4).
+SEGMENT_WORDS = {
+    "PURPLE": "session best",
+    "GREEN": "personal best",
+    "YELLOW": "slower than personal best",
+    "NONE": "no time",
+}
+
+
+def _segments_html(states: Sequence[str], sector: int = 1) -> str:
+    cells = "".join(
+        f'<span style="background:{segment_color(state)}" '
+        f'title="Sector {sector} · mini {index} · '
+        f'{SEGMENT_WORDS.get(str(state).upper(), "no time")}"></span>'
+        for index, state in enumerate(states, start=1)
+    )
+    return f'<div class="f1-seg">{cells}</div>'
+
+
+def _tyres_html(history: Sequence[dict]) -> str:
+    if not history:
+        return f'<span class="f1-dim">{MISSING}</span>'
+    badges = []
+    for stint in history[:6]:
+        compound = str(stint.get("compound", "UNKNOWN")).upper()
+        letter = COMPOUND_LETTER.get(compound, "?")
+        ring = COMPOUND_RING.get(compound, NEUTRAL_GREY)
+        # The number is the tyre's *age*, which exceeds the stint length when
+        # the driver started on a scrubbed set.
+        age = stint.get("laps_used", 0)
+        fresh = stint.get("fresh")
+        used_class = " used" if fresh is False else ""
+        condition = {True: "new", False: "used", None: "condition unknown"}[fresh]
+        stint_laps = stint.get("stint_laps")
+        stint_note = f", {stint_laps} this stint" if stint_laps not in (None, age) else ""
+        badges.append(
+            f'<span class="f1-tyre{used_class}" style="border-color:{ring};color:{ring}" '
+            f'title="{_esc(compound)} - {age} laps old ({condition}){stint_note}">'
+            f"{letter}<em>{age}</em></span>"
+        )
+    return f'<div class="f1-tyres">{"".join(badges)}</div>'
+
+
+# The tower's status vocabulary (guideline 5.6): the model's words -> the
+# chip word. On track and a plain classified finish are the normal state and
+# show an empty cell; a lapped finisher is a finish (the laps down belong in
+# the gap column, UI-13). Anything outside the vocabulary shows nothing
+# rather than an unexplained word.
+STATUS_WORDS = {
+    "ON TRACK": "",
+    "CLASSIFIED": "",
+    "": "",
+    "IN PIT": "PIT",
+    "PIT": "PIT",
+    "OUT": "OUT",
+    "FIN": "FIN",
+    "DNF": "DNF",
+    "DSQ": "DSQ",
+    "DNS": "DNS",
+    "KO": "KO",
+}
+
+# Chip word -> CSS modifier.
+STATUS_CSS = {
+    "PIT": "pit",
+    "KO": "ko",
+    "FIN": "track",
+    "DNF": "out",
+    "DSQ": "out",
+    "DNS": "out",
+    "OUT": "out",
+}
+
+_LAPPED_STATUS = re.compile(r"^\+\d+\s*(L|LAP|LAPS)$")
+
+
+def status_word(status) -> str:
+    """The chip word for a model status, or ``""`` for an empty cell."""
+    text = str(status or "").strip().upper()
+    if _LAPPED_STATUS.match(text):
+        return "FIN"
+    return STATUS_WORDS.get(text, "")
+
+
+def _status_html(status: str) -> str:
+    word = status_word(status)
+    if not word:
+        return ""
+    return f'<span class="f1-badge {STATUS_CSS.get(word, "out")}">{_esc(word)}</span>'
+
+
+def _speed_text(speed, word: str, unit: str = "kmh") -> str:
+    """Speed-trap cell: a car in the pit lane has no trap speed, not 0."""
+    if speed is None or pd.isna(speed):
+        return MISSING
+    if word == "PIT" and float(speed) == 0.0:
+        return MISSING
+    return f"{float(speed_from_kmh(float(speed), unit)):.0f}"
+
+
+def tower_html(
+    rows: Sequence[dict],
+    favourites: Sequence[str] = (),
+    hidden: Sequence[str] = (),
+    units: Units = METRIC,
+) -> str:
+    """The driver leaderboard matrix (spec section 3).
+
+    A favourite driver's code is underlined and titled (UX-03): a shape and a
+    word, so the mark does not depend on colour. ``hidden`` names the layout
+    toggles (``COLUMN_KEYS`` values) to leave out (FEAT-10); ``units`` picks
+    km/h or mph for the speed column (UX-12).
+    """
+    favourite = set(favourites or ())
+    if not rows:
+        return '<div class="f1-empty">No timing data for this session.</div>'
+
+    off = set(hidden or ())
+    shown = [c for c in TOWER_COLUMNS if COLUMN_KEYS.get(c) not in off]
+
+    def heading(column: str) -> str:
+        if column == "Speed km/h":
+            return f"Speed {speed_label(units.speed)}"
+        return column
+
+    head = "".join(
+        f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(heading(c))}</th>' for c in shown
+    )
+    body: list[str] = []
+
+    for row in rows:
+        # Only knock-out sessions carry a partition, and it names the segment
+        # ("Eliminated in Q2") rather than an invented top-ten boundary.
+        partition = row.get("partition")
+        if partition:
+            body.append(
+                f'<tr><td colspan="{len(shown)}" class="f1-split">' f"{_esc(partition)}</td></tr>"
+            )
+
+        accent = team_color(row.get("team_name"), row.get("team_colour"))
+        best_class = "f1-time best" if row.get("is_overall_best") else "f1-time"
+        last_class = (
+            "f1-time best"
+            if row.get("last_is_session_best")
+            else "f1-time pb" if row.get("last_is_personal_best") else "f1-time"
+        )
+        status = row.get("status")
+        if row.get("knocked_out") and not status_word(status):
+            status = "KO"
+        speed_text = _speed_text(row.get("speed_kmh"), status_word(status), units.speed)
+        # Diff is measured against the session ideal; the driver's own ideal
+        # lap is the other half of the picture (spec section 3.12).
+        personal_ideal = row.get("personal_ideal")
+        ideal_hint = (
+            f"Personal ideal {format_lap(personal_ideal)}"
+            if personal_ideal is not None
+            else "No personal ideal lap yet"
+        )
+
+        sector_cells = [
+            f'<td><span class="f1-time f1-num">{_esc(s["display"])}</span>'
+            f'{_segments_html(s["segments"], number)}</td>'
+            for number, s in enumerate(row["sectors"], start=1)
+        ]
+
+        is_favourite = row["code"] in favourite
+        row_classes = " ".join(
+            name for name, on in (("ko", row.get("knocked_out")), ("fav", is_favourite)) if on
+        )
+        code_title = ' title="Favourite driver"' if is_favourite else ""
+        cells = {
+            "Pos": f'<td class="f1-pos" style="--team:{accent}">{row["position"]}</td>',
+            "Driver": (
+                f'<td><div class="f1-code"{code_title}>{_esc(row["code"])}</div>'
+                f'<div class="f1-team">{_esc(row.get("team_name"))}</div></td>'
+            ),
+            "Status": f"<td>{_status_html(status or '')}</td>",
+            "Last lap": f'<td><span class="{last_class} f1-num">{_esc(row["last_lap"])}</span></td>',
+            "Best lap": f'<td><span class="{best_class} f1-num">{_esc(row["best_lap"])}</span></td>',
+            "Interval": (
+                f'<td><span class="f1-time f1-num f1-dim">{_esc(row["interval"])}</span></td>'
+            ),
+            "Gap": f'<td><span class="f1-time f1-num f1-dim">{_esc(row["gap"])}</span></td>',
+            "Tyre history": f'<td class="col-compact">{_tyres_html(row["tyre_history"])}</td>',
+            "Diff": (
+                f'<td class="col-compact"><span class="f1-time f1-num f1-dim" '
+                f'title="{_esc(ideal_hint)}">{_esc(row["diff"])}</span></td>'
+            ),
+            "Speed km/h": (
+                f'<td class="col-compact"><span class="f1-time f1-num">{_esc(speed_text)}</span></td>'
+            ),
+        }
+        for number, cell in enumerate(sector_cells, start=1):
+            cells[f"Sector {number}"] = cell
+        body.append(
+            f'<tr class="{row_classes}">' + "".join(cells.get(c, "") for c in shown) + "</tr>"
+        )
+
+    return (
+        '<div style="max-height:640px;overflow:auto;">'
+        f'<table class="f1-tower"><thead><tr>{head}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>'
+    )
+
+
+def sector_cards_html(leaders: Sequence[Sequence[dict]]) -> str:
+    """Sector top-3 widgets (spec section 5)."""
+
+    def pill(entry: dict) -> str:
+        colour = team_color(entry.get("team_name"), entry.get("team_colour"))
+        return (
+            f'<span class="f1-pill" style="background:{colour};color:{text_on(colour)}">'
+            f'{_esc(entry["code"])}</span>'
+        )
+
+    cards = []
+    for index, entries in enumerate(leaders, start=1):
+        if entries:
+            body = "".join(
+                f'<div class="f1-sector-row"><span class="f1-rank">{e["rank"]}</span>'
+                f"{pill(e)}"
+                f'<span class="f1-sector-time f1-num">{_esc(e["time"])}</span></div>'
+                for e in entries
+            )
+        else:
+            body = '<div class="f1-sector-row"><span class="f1-dim">No data</span></div>'
+        cards.append(
+            f'<div class="f1-sector-card"><div class="f1-sector-head">Sector {index}</div>'
+            f"{body}</div>"
+        )
+    return f'<div class="f1-sectors">{"".join(cards)}</div>'
+
+
+def _driver_meta(rows: Sequence[dict]) -> dict[str, dict]:
+    return {
+        r["code"]: {"team_name": r.get("team_name"), "team_colour": r.get("team_colour")}
+        for r in rows
+    }
+
+
+def _last_positions(location: dict[str, pd.DataFrame], rows: Sequence[dict]) -> list[dict]:
+    """Driver nodes for the map - only meaningful while a session is live."""
+    meta = _driver_meta(rows)
+    markers = []
+    for code, frame in (location or {}).items():
+        if frame is None or frame.empty or not {"X", "Y"}.issubset(frame.columns):
+            continue
+        point = frame.dropna(subset=["X", "Y"])
+        if point.empty:
+            continue
+        last = point.iloc[-1]
+        info = meta.get(code, {})
+        markers.append(
+            {
+                "code": code,
+                "x": float(last["X"]),
+                "y": float(last["Y"]),
+                "team_colour": team_color(info.get("team_name"), info.get("team_colour")),
+            }
+        )
+    return markers
+
+
+def _map_name(session_data: dict) -> str:
+    info = session_data.get("session_info") or {}
+    parts = [
+        str(info.get("gp") or "Session"),
+        str(info.get("year") or ""),
+        str(info.get("session_name") or ""),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def info_time(session_data: dict) -> str:
+    """The snapshot's moment as race time, for the map's alternative text."""
+    info = session_data.get("session_info") or {}
+    return format_clock(float(info.get("elapsed") or 0.0))
+
+
+def _replay_markers(session_data: dict, rows: Sequence[dict]) -> list[dict]:
+    """Every car where it was at the snapshot's moment."""
+    meta = _driver_meta(rows)
+    moment = float((session_data.get("session_info") or {}).get("replay_time") or 0.0)
+    markers = positions_at(session_data.get("positions"), moment)
+    for marker in markers:
+        info = meta.get(marker["code"], {})
+        marker["team_colour"] = team_color(info.get("team_name"), info.get("team_colour"))
+    return markers
+
+
+def track_state_marks(session_data: dict) -> tuple[str, str | None]:
+    """The map's SC/VSC/RED chip markup and ribbon tint (REPLAY-07, LIVE-22).
+
+    Only a replay moment or a live session has a "now" to show; the Results
+    page's map is the whole session, so it gets neither.
+    """
+    if not (_is_snapshot(session_data) or session_data.get("is_live")):
+        return "", None
+    state = _flag_state(session_data)
+    if state not in TRACK_CHIPS:
+        return "", None
+    return status_chip(TRACK_CHIPS[state], state), FLAG_STATES[state][0]
+
+
+def map_panel_html(session_data: dict, rows: Sequence[dict]) -> str:
+    """Track map with dominance colouring, corners and a benchmark overlay.
+
+    A replay snapshot draws the outline, corners and every car at that
+    moment instead: the dominance layer comes from fastest laps set later
+    in the session.
+    """
+    telemetry, location = dashboard_frames(session_data)
+    laps = session_data.get("laps")
+    chip, tint = track_state_marks(session_data)
+    if _is_snapshot(session_data):
+        svg = build_track_svg(
+            location,
+            circuit_info=session_data.get("circuit_info"),
+            driver_meta=_driver_meta(rows),
+            markers=_replay_markers(session_data, rows),
+            title=f"{_map_name(session_data)} at {info_time(session_data)}",
+            tint=tint,
+        )
+        if svg is None:
+            return (
+                '<div class="f1-empty">'
+                "No GPS telemetry for this session, so the track map cannot be drawn."
+                "</div>"
+            )
+        label = f"Track map with every car at {info_time(session_data)}"
+        # REPLAY-07: under a safety car, VSC or red flag the map says so.
+        bench = f'<div class="f1-bench">{chip}</div>' if chip else ""
+        return f'<div class="f1-map-wrap">{bench}{svg_image(svg, label)}</div>'
+
+    micro = {}
+    for code, frame in telemetry.items():
+        times = micro_sector_times(
+            frame, sector_bounds=sector_bounds_for_driver(laps, str(code), frame)
+        )
+        if times is not None:
+            micro[code] = times
+    dominance = dominance_segments(micro)
+    meta = _driver_meta(rows)
+
+    # The outline comes from one driver's trace, so the slice boundaries are
+    # that driver's real sectors - keeping the map aligned with the strips.
+    outline_driver = reference_driver(location)
+    segment_distances = (
+        micro_sector_marks(
+            sector_bounds_for_driver(laps, str(outline_driver), telemetry.get(outline_driver))
+        )
+        if outline_driver is not None
+        else None
+    )
+
+    markers = _last_positions(location, rows) if session_data.get("is_live") else []
+    svg = build_track_svg(
+        location,
+        circuit_info=session_data.get("circuit_info"),
+        driver_meta=meta,
+        dominance=dominance,
+        markers=markers,
+        segment_distances=segment_distances,
+        title=f"{_map_name(session_data)}: fastest driver through each mini-sector",
+        tint=tint,
+    )
+    if svg is None:
+        return (
+            '<div class="f1-empty">'
+            "No GPS telemetry for this session, so the track map cannot be drawn."
+            "</div>"
+        )
+
+    best = theoretical_best(rows)
+    fastest = next((row for row in rows if row.get("is_overall_best")), rows[0] if rows else None)
+    leader = fastest["best_lap"] if fastest else MISSING
+    ideal = (
+        f'<div class="f1-bench-label" style="margin-top:4px">'
+        f"Session ideal {format_lap(best)}</div>"
+        if best is not None
+        else ""
+    )
+    # LIVE-22: under SC/VSC/red the live map carries the chip too.
+    chip_line = f'<div style="margin-bottom:4px">{chip}</div>' if chip else ""
+    bench = (
+        f'<div class="f1-bench">{chip_line}<div class="f1-bench-label">Session best</div>'
+        f'<div class="f1-bench-time f1-num">{_esc(leader)}</div>{ideal}</div>'
+    )
+    label = "Track map coloured by the fastest driver through each mini-sector"
+    image = svg_image(svg, label)
+    return f'<div class="f1-map-wrap">{bench}{image}</div>{dominance_legend(dominance, meta)}'
+
+
+def render_dashboard(session_data: dict, favourites: Sequence[str] | None = None) -> None:
+    """Render the full timing dashboard on the spec's 60/40 grid.
+
+    ``favourites`` defaults to the viewer's favourite drivers (UX-03); the
+    columns and panels the viewer hid (FEAT-10) are left out, and the tower
+    takes the full width when both side panels are hidden.
+    """
+    st.html(DASHBOARD_CSS)
+    if favourites is None:
+        favourites = favourite_drivers()
+    columns_off, panels_off = hidden_columns(), hidden_panels()
+
+    rows = build_timing_rows(session_data)
+    chosen = viewer_units()
+    info = session_data.get("session_info") or {}
+    start = format_wall_clock(info.get("date"), info)
+    st.html(f'<div class="f1-dash">{header_html(session_data, chosen, start)}</div>')
+
+    side = [
+        (name, build)
+        for name, build in (
+            ("sectors", lambda: sector_cards_html(sector_leaders(rows))),
+            ("map", lambda: map_panel_html(session_data, rows)),
+        )
+        if name not in panels_off
+    ]
+    tower = f'<div class="f1-dash">{tower_html(rows, favourites, columns_off, chosen)}</div>'
+    if not side:
+        st.html(tower)
+        return
+    left, right = st.columns([6, 4], gap="small")
+    with left:
+        st.html(tower)
+    with right:
+        for _, build in side:
+            st.html(f'<div class="f1-dash">{build()}</div>')

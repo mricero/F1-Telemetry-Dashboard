@@ -8,8 +8,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-import ui.layout as layout
-from ui.layout import styled_figure
+import f1dash.ui.layout as layout
+from f1dash.ui.layout import styled_figure
 
 
 @pytest.fixture

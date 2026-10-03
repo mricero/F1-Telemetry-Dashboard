@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from data.signalr_core import (
+from f1dash.data.signalr_core import (
     AUTH_TOPICS,
     RECORD_SEPARATOR,
     TOKEN_EXPIRED,
@@ -255,7 +255,7 @@ class TestUpgradeRefusals:
         from websockets.exceptions import InvalidStatus
         from websockets.http11 import Response
 
-        from data.signalr_core import refusal_status
+        from f1dash.data.signalr_core import refusal_status
 
         exc = InvalidStatus(Response(403, "Forbidden", Headers()))
         assert refusal_status(exc) == 403
@@ -337,7 +337,7 @@ class TestTokenNeverLogged:
         assert "conn-secret-id" not in caplog.text
 
     def test_the_redacting_filter_masks_what_gets_through(self):
-        from data.signalr_core import _RedactSecrets
+        from f1dash.data.signalr_core import _RedactSecrets
 
         record = logging.LogRecord(
             "websockets",

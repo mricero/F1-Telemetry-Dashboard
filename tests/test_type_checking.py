@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CHECKED = ("app.py", "data", "processing", "ui")
+# The whole package (REPO-10); the root app.py is a three-line shim.
+CHECKED = ("src",)
 
 
 class TestMypy:
@@ -27,7 +28,7 @@ class TestMypy:
     def test_ci_runs_mypy(self):
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
 
-        assert "mypy" in workflow
+        assert "python -m mypy --ignore-missing-imports src" in workflow
 
     def test_implicit_optional_is_rejected(self):
         config = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -38,5 +39,5 @@ class TestMypy:
         config = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         section = config[config.index("[[tool.mypy.overrides]]") :]
 
-        assert 'module = "processing.*"' in section
+        assert 'module = "f1dash.processing.*"' in section
         assert "check_untyped_defs = true" in section

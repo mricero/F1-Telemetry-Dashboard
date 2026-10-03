@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from processing.lap_compare import (
+from f1dash.processing.lap_compare import (
     available_laps,
     corner_markers,
     fastest_lap_number,
@@ -103,7 +103,7 @@ def _comparison_script():
     import numpy as np
     import pandas as pd
 
-    import ui.layout as layout
+    import f1dash.ui.layout as layout
 
     captured = layout.__dict__.setdefault("_captured", [])
     layout._plot = lambda fig, *a, **k: captured.append(fig)
@@ -146,7 +146,7 @@ def _comparison_script():
 
 
 def _run(with_corners: bool, query: dict | None = None):
-    import ui.layout as layout
+    import f1dash.ui.layout as layout
 
     layout.__dict__["_captured"] = []
     layout.__dict__["_with_corners"] = with_corners

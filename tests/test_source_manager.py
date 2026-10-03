@@ -8,13 +8,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.live_adapter import SignalRLiveAdapter
+from f1dash.data.live_adapter import SignalRLiveAdapter
 
 
 @pytest.fixture
 def manager(monkeypatch, tmp_path):
-    monkeypatch.setattr("data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})())
-    from data.source_manager import DataSourceManager
+    monkeypatch.setattr(
+        "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+    )
+    from f1dash.data.source_manager import DataSourceManager
 
     mgr = DataSourceManager()
     mgr.replay_dir = tmp_path  # keep real ./replay_sessions untouched
@@ -140,7 +142,7 @@ class TestGpsDistances:
 
     def test_gps_distance_is_metres_not_decimetres(self):
         """LIVE-03: Position.z X/Y/Z are in 1/10 m, exactly like FastF1's."""
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         # A straight 10 000-unit run along X is 1 000 m of track.
         pos = pd.DataFrame(
@@ -157,8 +159,8 @@ class TestGpsDistances:
 
     def test_live_and_fastf1_gps_distance_agree(self):
         """Both paths read the same feed, so both must use the same scale."""
-        from data.fastf1_adapter import FastF1Adapter
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.fastf1_adapter import FastF1Adapter
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         xy = {"X": np.array([0.0, 300.0, 300.0]), "Y": np.array([0.0, 0.0, 400.0])}
         pos = pd.DataFrame({"timestamp": [f"2026-05-01T12:00:0{i}Z" for i in range(3)], **xy})
@@ -252,7 +254,7 @@ class TestMostRecentCompletedRace:
 
     def test_picks_the_latest_round_not_the_last_row(self, manager, monkeypatch):
         monkeypatch.setattr(
-            "data.fastf1_adapter._utcnow", lambda: pd.Timestamp("2026-09-16", tz="UTC")
+            "f1dash.data.fastf1_adapter._utcnow", lambda: pd.Timestamp("2026-09-16", tz="UTC")
         )
         # Seasons are concatenated newest-first, so the last row is a 2025 race.
         self._stub_schedule(
@@ -279,7 +281,7 @@ class TestMostRecentCompletedRace:
         assert recent == {"year": 2026, "gp": "Monza", "session_type": "R"}
 
     def test_falls_back_to_config_when_the_schedule_is_unavailable(self, manager):
-        from config import config
+        from f1dash.config import config
 
         self._stub_schedule(manager, pd.DataFrame())
 
@@ -328,7 +330,7 @@ class TestDashboardFrameRoundTrip:
         assert isinstance(loaded["dashboard_location"]["HAM"], pd.DataFrame)
 
     def test_older_replays_fall_back_to_the_chart_frames(self, manager):
-        from processing.timing import dashboard_frames
+        from f1dash.processing.timing import dashboard_frames
 
         path = manager.save_replay(_sample_session(), "Bahrain_R")
         loaded = manager._load_replay(path)

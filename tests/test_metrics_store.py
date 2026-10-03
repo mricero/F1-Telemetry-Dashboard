@@ -8,7 +8,7 @@ from datetime import timedelta
 import pandas as pd
 import pytest
 
-from processing.metrics_store import MetricsStore, _to_seconds
+from f1dash.processing.metrics_store import MetricsStore, _to_seconds
 
 
 @pytest.fixture
@@ -160,7 +160,7 @@ class TestMetricsStore:
         """CACHE-05: a store holding ``[]`` used to raise AttributeError at start."""
         path = tmp_path / "metrics_store.json"
         path.write_text("[]", encoding="utf-8")
-        with caplog.at_level(logging.WARNING, logger="processing.metrics_store"):
+        with caplog.at_level(logging.WARNING, logger="f1dash.processing.metrics_store"):
             store = MetricsStore(path=str(path))
         assert store.session_records("anything") == {}
         assert "not a records file" in caplog.text

@@ -19,8 +19,9 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"  # src layout (REPO-10)
 SOURCE_FOLDERS = ("data", "processing", "ui")
-SOURCE_FILES = ("app.py", "config.py", "f1dash_cli.py")
+SOURCE_FILES = ("app.py", "config.py", "cli.py")
 
 
 def _requirements(filename: str = "requirements.txt"):
@@ -59,9 +60,9 @@ def _locked_for_this_python(filename: str = "requirements.lock") -> dict[str, Ve
 
 
 def _imported_top_level_modules() -> set[str]:
-    paths = [PROJECT_ROOT / name for name in SOURCE_FILES if (PROJECT_ROOT / name).is_file()]
+    paths = [PACKAGE / name for name in SOURCE_FILES if (PACKAGE / name).is_file()]
     for folder in SOURCE_FOLDERS:
-        paths.extend((PROJECT_ROOT / folder).rglob("*.py"))
+        paths.extend((PACKAGE / folder).rglob("*.py"))
     imported = set()
     for path in paths:
         text = path.read_text(encoding="utf-8")

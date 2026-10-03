@@ -10,7 +10,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from processing.units import (
+from f1dash.processing.units import (
     METRIC,
     SPEED_CHOICES,
     TEMP_CHOICES,
@@ -167,21 +167,21 @@ class TestTrackOffsetFromFastF1:
         return SimpleNamespace(name="Race", event=event)
 
     def test_the_difference_between_local_and_utc_is_the_offset(self):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         local = pd.Timestamp("2026-09-06 15:00:00+02:00")
 
         assert DataSourceManager._event_gmt_offset(self._session(local)) == "02:00:00"
 
     def test_a_negative_offset(self):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         session = self._session(pd.Timestamp("2026-06-14 14:00:00-04:00"))
 
         assert DataSourceManager._event_gmt_offset(session) == "-04:00:00"
 
     def test_a_schedule_without_local_times_gives_nothing(self):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         assert DataSourceManager._event_gmt_offset(self._session(pd.Timestamp("2026-09-06"))) == ""
         assert DataSourceManager._event_gmt_offset(SimpleNamespace(name="Race")) == ""
@@ -201,7 +201,7 @@ class TestHeaderAndTower:
     )
 
     def _header(self, units=METRIC, start=""):
-        from ui.dashboard import header_html
+        from f1dash.ui.dashboard import header_html
 
         return header_html(
             {"session_info": {"gp": "Test GP"}, "weather": self.WEATHER, "is_live": False},
@@ -226,9 +226,9 @@ class TestHeaderAndTower:
         assert "Start" not in self._header()
 
     def test_the_speed_column_names_its_unit(self):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
+        from f1dash.ui.dashboard import tower_html
         from tests.test_app_sources import session_dict
-        from ui.dashboard import tower_html
 
         rows = build_timing_rows(session_dict("fastf1"))
 
@@ -236,7 +236,7 @@ class TestHeaderAndTower:
         assert "Speed mph" in tower_html(rows, units=Units(speed="mph"))
 
     def test_a_trap_speed_is_converted(self):
-        from ui.dashboard import _speed_text
+        from f1dash.ui.dashboard import _speed_text
 
         assert _speed_text(321.869, "", "kmh") == "322"
         assert _speed_text(321.869, "", "mph") == "200"
@@ -250,7 +250,7 @@ class TestChartsAndRaceControl:
         }
 
     def test_the_speed_axis_says_mph_and_the_values_follow(self):
-        from ui.layout import TELEMETRY_CHANNELS, create_telemetry_chart
+        from f1dash.ui.layout import TELEMETRY_CHANNELS, create_telemetry_chart
 
         figure = create_telemetry_chart(
             self._frames(), TELEMETRY_CHANNELS["Speed"], {"VER": "#ffffff"}, "mph"
@@ -261,7 +261,7 @@ class TestChartsAndRaceControl:
         assert "mph" in figure.data[0].hovertemplate
 
     def test_the_default_is_untouched(self):
-        from ui.layout import TELEMETRY_CHANNELS, create_telemetry_chart
+        from f1dash.ui.layout import TELEMETRY_CHANNELS, create_telemetry_chart
 
         metric = create_telemetry_chart(
             self._frames(), TELEMETRY_CHANNELS["Speed"], {"VER": "#ffffff"}
@@ -271,7 +271,7 @@ class TestChartsAndRaceControl:
         assert list(metric.data[0].y) == pytest.approx([160.9344] * 3)
 
     def test_race_control_lines_carry_the_time_of_day(self):
-        from ui.layout import race_control_html, race_control_lines
+        from f1dash.ui.layout import race_control_html, race_control_lines
 
         frame = pd.DataFrame(
             {
@@ -288,7 +288,7 @@ class TestChartsAndRaceControl:
         assert "14:00:05" in markup and "f1-rc-timed" in markup
 
     def test_without_a_clock_the_panel_is_as_before(self):
-        from ui.layout import race_control_html
+        from f1dash.ui.layout import race_control_html
 
         markup = race_control_html([{"lap": "L3", "flag": "", "message": "x"}])
 

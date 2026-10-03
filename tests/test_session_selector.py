@@ -49,8 +49,8 @@ class _StubManager:
 def _selector_script():
     import streamlit as st
 
+    from f1dash.ui.layout import render_session_selector
     from tests.test_session_selector import _StubManager
-    from ui.layout import render_session_selector
 
     st.session_state["returned"] = render_session_selector(_StubManager())
 
@@ -171,8 +171,8 @@ class _SprintManager(_StubManager):
 def _sprint_script():
     import streamlit as st
 
+    from f1dash.ui.layout import render_session_selector
     from tests.test_session_selector import _SprintManager
-    from ui.layout import render_session_selector
 
     st.session_state["returned"] = render_session_selector(_SprintManager())
 
@@ -213,8 +213,8 @@ class TestARunningSessionIsOfferedNotForced:
         def script():
             import streamlit as st
 
+            from f1dash.ui.layout import render_session_selector
             from tests.test_session_selector import _StubManager
-            from ui.layout import render_session_selector
 
             st.session_state["returned"] = render_session_selector(_StubManager(race_weekend=True))
 
@@ -261,8 +261,8 @@ class CountingManager(_StubManager):
 
 
 def _counting_app_script():
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
     from tests.test_session_selector import CountingManager
 
     app.DataSourceManager = CountingManager
@@ -358,12 +358,12 @@ class TestSidebarOnPhones:
     """UI-19: the sidebar opens expanded only while the picker is all there is."""
 
     def test_nothing_selected_and_no_link_expands_it(self):
-        from ui.layout import sidebar_state
+        from f1dash.ui.layout import sidebar_state
 
         assert sidebar_state(None, {}) == "expanded"
 
     def test_a_shared_link_or_a_selection_lets_the_browser_decide(self):
-        from ui.layout import sidebar_state
+        from f1dash.ui.layout import sidebar_state
 
         assert sidebar_state(None, {"year": "2023", "gp": "Bahrain Grand Prix"}) == "auto"
         assert sidebar_state({"source": "fastf1"}, {}) == "auto"

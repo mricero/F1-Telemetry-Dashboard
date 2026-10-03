@@ -4,7 +4,7 @@ and the 2026 telemetry channels (FEAT-12)."""
 import pandas as pd
 import plotly.graph_objects as go
 
-from processing.track_periods import lap_spans, lap_states, neutral_periods
+from f1dash.processing.track_periods import lap_spans, lap_states, neutral_periods
 
 
 def _status(*rows):
@@ -54,7 +54,7 @@ class TestLapStates:
 
 class TestShading:
     def test_neutral_laps_are_shaded_with_their_word(self):
-        from ui.layout import shade_neutral_laps
+        from f1dash.ui.layout import shade_neutral_laps
 
         fig = go.Figure()
         spans = shade_neutral_laps(fig, _laps(), _status((0, "1"), (200, "6"), (300, "1")))
@@ -73,7 +73,7 @@ class TestRaceControlFilter:
     )
 
     def test_categories_and_search_combine(self):
-        from ui.layout import filter_race_control
+        from f1dash.ui.layout import filter_race_control
 
         assert len(filter_race_control(self.FRAME, ["Flag", "Other"], "deleted")) == 1
         assert len(filter_race_control(self.FRAME, None, "")) == 3
@@ -82,7 +82,7 @@ class TestRaceControlFilter:
 
 class TestTelemetryChannels:
     def test_2026_has_no_drs_channel(self):
-        from ui.layout import telemetry_channels
+        from f1dash.ui.layout import telemetry_channels
 
         assert "DRS" not in telemetry_channels(2026)
         assert "DRS" in telemetry_channels(2025)

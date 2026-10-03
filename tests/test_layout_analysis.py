@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.live_adapter import LiveDataProcessor
-from ui.layout import (
+from f1dash.data.live_adapter import LiveDataProcessor
+from f1dash.ui.layout import (
     COMPOUND_COLORS,
     _elapsed_minutes,
     _speed_on_grid,

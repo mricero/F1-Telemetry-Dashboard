@@ -7,7 +7,7 @@ poll could skip or duplicate records.
 
 import threading
 
-from data.live_adapter import SignalRLiveAdapter
+from f1dash.data.live_adapter import SignalRLiveAdapter
 
 
 class TestConcurrentBufferAccess:

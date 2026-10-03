@@ -6,7 +6,7 @@ import re
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from processing.view_params import (
+from f1dash.processing.view_params import (
     PANEL_CHOICES,
     TOWER_COLUMN_CHOICES,
     format_tokens,
@@ -45,7 +45,7 @@ class TestTokens:
 
 class TestTowerHtml:
     def _rows(self):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
         from tests.test_app_sources import session_dict
 
         return build_timing_rows(session_dict("fastf1"))
@@ -54,12 +54,12 @@ class TestTowerHtml:
         return re.findall(r"<th[^>]*>([^<]+)</th>", markup)
 
     def test_by_default_every_column_is_drawn(self):
-        from ui.dashboard import TOWER_COLUMNS, tower_html
+        from f1dash.ui.dashboard import TOWER_COLUMNS, tower_html
 
         assert self._headers(tower_html(self._rows())) == TOWER_COLUMNS
 
     def test_a_hidden_column_is_left_out_of_the_header_and_every_row(self):
-        from ui.dashboard import TOWER_COLUMNS, tower_html
+        from f1dash.ui.dashboard import TOWER_COLUMNS, tower_html
 
         rows = self._rows()
         full = tower_html(rows)
@@ -73,7 +73,7 @@ class TestTowerHtml:
         assert full.count("<td") - markup.count("<td") == len(rows) * 4
 
     def test_gap_and_interval_share_one_switch(self):
-        from ui.dashboard import tower_html
+        from f1dash.ui.dashboard import tower_html
 
         headers = self._headers(tower_html(self._rows(), hidden=["gap"]))
 
@@ -125,8 +125,8 @@ class TestPreferencesInTheLink:
 
 
 def _dashboard_script():
+    from f1dash.ui.dashboard import render_dashboard
     from tests.test_app_sources import session_dict
-    from ui.dashboard import render_dashboard
 
     render_dashboard(session_dict("fastf1"))
 

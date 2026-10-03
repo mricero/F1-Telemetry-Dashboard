@@ -117,13 +117,13 @@ class TestFavourites:
 
 class TestTowerMarksFavourites:
     def _rows(self):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
         from tests.test_app_sources import session_dict
 
         return build_timing_rows(session_dict("fastf1"))
 
     def test_a_favourite_row_is_marked_with_a_shape_and_a_word(self):
-        from ui.dashboard import tower_html
+        from f1dash.ui.dashboard import tower_html
 
         markup = tower_html(self._rows(), favourites=["HAM"])
 
@@ -131,6 +131,6 @@ class TestTowerMarksFavourites:
         assert 'title="Favourite driver">HAM<' in markup
 
     def test_no_favourites_no_marks(self):
-        from ui.dashboard import tower_html
+        from f1dash.ui.dashboard import tower_html
 
         assert "fav" not in tower_html(self._rows())

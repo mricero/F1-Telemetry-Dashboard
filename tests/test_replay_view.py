@@ -13,15 +13,15 @@ import re
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from processing.replay import ReplayClock
-from tests import replay_fixtures as fx
-from ui.replay_view import (
+from f1dash.processing.replay import ReplayClock
+from f1dash.ui.replay_view import (
     SPEED_OPTIONS,
     advance,
     next_lap_moment,
     previous_lap_moment,
     session_key,
 )
+from tests import replay_fixtures as fx
 
 os.environ.setdefault("F1_METRICS_STORE", ":memory:")
 
@@ -57,8 +57,8 @@ def _button(app: AppTest, label: str):
 
 
 def _replay_script():
+    from f1dash.ui.replay_view import render_session_replay
     from tests import replay_fixtures
-    from ui.replay_view import render_session_replay
 
     render_session_replay(replay_fixtures.race_session())
 
@@ -198,7 +198,7 @@ class TestHelpers:
 class TestWithoutLaps:
     def test_it_explains_itself_rather_than_failing(self):
         def script():
-            from ui.replay_view import render_session_replay
+            from f1dash.ui.replay_view import render_session_replay
 
             render_session_replay({"positions": None, "laps": None, "drivers": None})
 
@@ -243,8 +243,8 @@ class RaceManager:
 
 
 def _race_app_script():
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
     from tests.test_replay_view import RaceManager
 
     app.DataSourceManager = RaceManager
@@ -272,7 +272,7 @@ class TestTheReplayIsTheMainView:
         assert "0:00:00" in _header(race_app)
 
     def test_final_result_opens_the_results_view(self, race_app):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         _button(race_app, "Final result").click().run()
 
@@ -343,7 +343,7 @@ def _schema_six_session() -> dict:
     positions - loaded through the same defaults the replay loader applies."""
     import pandas as pd
 
-    from data.source_manager import DataSourceManager
+    from f1dash.data.source_manager import DataSourceManager
 
     session = fx.race_session(with_stream=False)
     for key in ("timing_stream", "track_status", "positions"):
@@ -356,8 +356,8 @@ def _schema_six_session() -> dict:
 
 
 def _schema_six_script():
+    from f1dash.ui.replay_view import render_session_replay
     from tests.test_replay_view import _schema_six_session
-    from ui.replay_view import render_session_replay
 
     render_session_replay(_schema_six_session(), "replay:old")
 
@@ -419,7 +419,7 @@ class TestAnalysisFollowsTheReplay:
         def script():
             import streamlit as st
 
-            from ui.pages import replay_moment
+            from f1dash.ui.pages import replay_moment
 
             session_key = "fastf1:2026:Test Grand Prix:R"
             from tests import replay_fixtures
@@ -481,8 +481,8 @@ class TestAFocusChangeDoesNotResendThePayload:
         def script():
             import streamlit as st
 
+            from f1dash.ui.replay_view import render_session_replay, sync_seek_cursor
             from tests import replay_fixtures
-            from ui.replay_view import render_session_replay, sync_seek_cursor
 
             key = "fastf1:2026:Test Grand Prix:R"
             st.session_state[f"replay_focus:{key}"] = "A"

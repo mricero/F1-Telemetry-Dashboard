@@ -12,9 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import f1dash_cli
+from f1dash import cli as f1dash_cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"  # src layout (REPO-10)
 
 
 @pytest.fixture
@@ -47,11 +48,16 @@ class TestRun:
         assert f1dash_cli.main(["--port", "8599"]) == 0
 
         ((argv, kwargs),) = streamlit_calls
-        assert argv[:2] == ["run", str(PROJECT_ROOT / "app.py")]
+        assert argv[:2] == ["run", str(PACKAGE / "app.py")]
         for flag in _expected_theme_flags():
             assert flag in argv
         assert argv[-2:] == ["--server.port", "8599"]
         assert kwargs["prog_name"] == "streamlit"
+
+    def test_a_checkout_reads_the_root_streamlit_config(self):
+        """No bundled copy in src/ (only the wheel has one), so the checkout's
+        own .streamlit/config.toml is the one passed on."""
+        assert f1dash_cli.STREAMLIT_CONFIG == PROJECT_ROOT / ".streamlit" / "config.toml"
 
     def test_usage_statistics_stay_off_when_installed(self, streamlit_calls):
         f1dash_cli.main(["--port", "8599"])
@@ -88,7 +94,7 @@ class TestRun:
 
 class TestVersion:
     def test_version_prints_the_package_version(self, capsys):
-        from config import __version__
+        from f1dash.config import __version__
 
         with pytest.raises(SystemExit) as exit_info:
             f1dash_cli.main(["--version"])
@@ -99,7 +105,7 @@ class TestVersion:
 
 class TestPaths:
     def test_paths_prints_the_four_locations(self, monkeypatch, capsys, tmp_path):
-        import config
+        from f1dash import config
 
         for attribute in ("fastf1_cache_dir", "replay_dir", "metrics_store_path", "env_path"):
             monkeypatch.setattr(config.config, attribute, str(tmp_path / attribute))
@@ -128,7 +134,7 @@ class TestUpdate:
         return run
 
     def test_a_git_install_reinstalls_the_latest_tag(self, monkeypatch):
-        from data import update_check
+        from f1dash.data import update_check
 
         monkeypatch.setattr(update_check, "installed_from_registry", lambda: False)
         monkeypatch.setattr(update_check, "latest_release_tag", lambda: "v0.10.0")
@@ -148,7 +154,7 @@ class TestUpdate:
         ]
 
     def test_a_registry_install_upgrades(self, monkeypatch):
-        from data import update_check
+        from f1dash.data import update_check
 
         monkeypatch.setattr(update_check, "installed_from_registry", lambda: True)
         calls = []
@@ -158,7 +164,7 @@ class TestUpdate:
         assert calls == [["uv", "tool", "upgrade", "f1dash"]]
 
     def test_without_a_release_it_installs_main(self, monkeypatch):
-        from data import update_check
+        from f1dash.data import update_check
 
         monkeypatch.setattr(update_check, "installed_from_registry", lambda: False)
         monkeypatch.setattr(update_check, "latest_release_tag", lambda: None)
@@ -192,9 +198,15 @@ def _get(url: str) -> int:
 def test_f1dash_serves_the_app_from_a_temp_directory(tmp_path):
     """DIST-02 acceptance: ``f1dash --no-browser --port 8599`` answers 200 on /."""
     port = 8599
-    env = {**os.environ, "F1_UPDATE_CHECK": "0"}
+    # python -m f1dash from the checkout's src/, without an install (REPO-10).
+    pythonpath = [str(PROJECT_ROOT / "src"), os.environ.get("PYTHONPATH", "")]
+    env = {
+        **os.environ,
+        "F1_UPDATE_CHECK": "0",
+        "PYTHONPATH": os.pathsep.join(filter(None, pythonpath)),
+    }
     process = subprocess.Popen(
-        [sys.executable, str(PROJECT_ROOT / "f1dash_cli.py"), "--no-browser", "--port", str(port)],
+        [sys.executable, "-m", "f1dash", "--no-browser", "--port", str(port)],
         cwd=tmp_path,
         env=env,
         stdout=subprocess.DEVNULL,

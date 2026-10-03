@@ -8,8 +8,8 @@ from streamlit.testing.v1 import AppTest
 
 
 def _init_script():
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
 
     app.init_browser_session()
     runtime_cache.set("session|primed", {"marker": "first viewer"})
@@ -18,8 +18,8 @@ def _init_script():
 def _second_viewer_script():
     import streamlit as st
 
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
 
     app.init_browser_session()
     st.session_state["survived"] = runtime_cache.get("session|primed")

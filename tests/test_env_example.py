@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_FILES = ("app.py", "config.py", "f1dash_cli.py")
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"  # src layout (REPO-10)
+SOURCE_FILES = ("app.py", "config.py", "cli.py")
 SOURCE_FOLDERS = ("data", "processing", "ui")
 # Set and read by app.py itself to stop a relaunch loop; not configuration.
 INTERNAL = {"F1_DASHBOARD_RELAUNCHED"}
@@ -22,9 +23,9 @@ CONSTANT = re.compile(
 
 
 def _sources() -> list[Path]:
-    paths = [PROJECT_ROOT / name for name in SOURCE_FILES if (PROJECT_ROOT / name).is_file()]
+    paths = [PACKAGE / name for name in SOURCE_FILES if (PACKAGE / name).is_file()]
     for folder in SOURCE_FOLDERS:
-        paths.extend(sorted((PROJECT_ROOT / folder).rglob("*.py")))
+        paths.extend(sorted((PACKAGE / folder).rglob("*.py")))
     return paths
 
 
@@ -69,7 +70,7 @@ def test_every_variable_the_code_reads_is_documented():
 
 def test_path_overrides_are_documented():
     """config reads these through PATH_OVERRIDES, which the scan cannot see."""
-    import config
+    from f1dash import config
 
     assert set(config.PATH_OVERRIDES.values()) <= _documented()
 

@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 import pandas as pd
 import pytest
 
-from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
-from data.signalr_core import (
+from f1dash.data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
+from f1dash.data.signalr_core import (
     CONNECTION_URL,
     HANDSHAKE,
     RECORD_SEPARATOR,
@@ -30,7 +30,7 @@ from data.signalr_core import (
     token_expiry,
     token_from_env_value,
 )
-from data.source_manager import DataSourceManager, extrapolated_remaining
+from f1dash.data.source_manager import DataSourceManager, extrapolated_remaining
 from tests import live_fixtures
 
 RS = RECORD_SEPARATOR
@@ -432,7 +432,7 @@ class TestEndToEnd:
             client._stream_once()
 
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
         manager = DataSourceManager(live_adapter=adapter)
         return adapter, manager.poll_live_data()
@@ -524,6 +524,6 @@ class TestAdapterLifecycle:
             }
         )
 
-        from data.live_state import as_list
+        from f1dash.data.live_state import as_list
 
         assert len(as_list(adapter.state.get("RaceControlMessages")["Messages"])) == 2

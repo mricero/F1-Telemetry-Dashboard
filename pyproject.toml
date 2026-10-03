@@ -37,31 +37,24 @@ Homepage = "https://github.com/mricero/F1-Telemetry-Dashboard"
 Changelog = "https://github.com/mricero/F1-Telemetry-Dashboard/blob/main/CHANGELOG.md"
 
 [project.scripts]
-f1dash = "f1dash_cli:main"
+f1dash = "f1dash.cli:main"
 
 [tool.hatch.build.targets.wheel]
-# Flat layout for now (REPO-10 moves it under src/f1dash/). The player's
-# js/css/html, the fonts and .streamlit/config.toml are data files the app
-# finds next to app.py, so the wheel keeps the checkout's relative layout.
-only-include = [
-    "app.py",
-    "config.py",
-    "f1dash_cli.py",
-    "data",
-    "processing",
-    "ui",
-    ".streamlit/config.toml",
-]
+# src layout (REPO-10): the wheel holds the one f1dash package. The player's
+# js/css/html and the fonts are package data found next to their modules.
+packages = ["src/f1dash"]
 exclude = ["__pycache__", "*.pyc"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Streamlit reads .streamlit/config.toml from the working directory, so the
+# checkout keeps it at the root; the wheel carries a copy inside the package,
+# where f1dash.cli finds it and passes it to `streamlit run` as flags.
+".streamlit/config.toml" = "f1dash/.streamlit/config.toml"
 
 [tool.hatch.build.targets.sdist]
 only-include = [
+    "src/f1dash",
     "app.py",
-    "config.py",
-    "f1dash_cli.py",
-    "data",
-    "processing",
-    "ui",
     ".streamlit/config.toml",
     "pyproject.toml",
     "readme.md",
@@ -135,7 +128,7 @@ ignore_missing_imports = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-# processing/ is pure transforms over DataFrames: no Streamlit, no network,
+# f1dash.processing is pure transforms over DataFrames: no Streamlit, no network,
 # so it is the package that can carry stricter checking first.
-module = "processing.*"
+module = "f1dash.processing.*"
 check_untyped_defs = true

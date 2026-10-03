@@ -21,10 +21,6 @@ import shutil
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 # Keys a loaded replay carries that describe the load, not the session; the
 # loader sets them again on every load.
 RUNTIME_KEYS = ("source", "is_live", "live_client")
@@ -42,7 +38,7 @@ def replay_name(path: Path) -> str:
 def convert(path: Path, replay_dir: Path | None = None, manager=None) -> Path:
     """Load the trusted pickle at ``path`` and save it as a Parquet replay."""
     if manager is None:
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         manager = DataSourceManager(replay_dir=str(replay_dir) if replay_dir else None)
     data = manager._load_legacy_pickle(path, allow_pickle=True)
