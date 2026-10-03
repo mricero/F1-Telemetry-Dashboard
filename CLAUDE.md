@@ -7,12 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The virtualenv is not activated automatically — call its interpreter directly. `python`
 below means that interpreter: `.venv/Scripts/python` on Windows, `.venv/bin/python` on
 macOS/Linux (or plain `python` inside an activated venv). The commands are POSIX shell; Git
-Bash runs them on Windows. Set it up with `uv venv` + `uv pip install -r requirements-dev.lock`.
+Bash runs them on Windows. Set it up with `uv venv` + `uv pip install -r requirements-dev.lock`,
+then `uv pip install --no-deps -e .` for the `f1dash` command and the scripts (the app and the
+tests run without it: the root `app.py` shim and `pytest.ini`'s `pythonpath = src` find the code).
 
 ```bash
 # Run the app (see "Bare mode is the hazard" below)
 python -m streamlit run app.py
-python f1dash_cli.py --no-browser      # the installed `f1dash` entry point, from a checkout
+python -m f1dash --no-browser          # the installed `f1dash` entry point (needs -e . or PYTHONPATH=src)
 
 # Tests (offline, deterministic). pytest.ini already passes -q; a second -q hides the summary.
 python -m pytest
@@ -27,7 +29,7 @@ F1_NETWORK_TESTS=1 python -m pytest -m network         # PowerShell: $env:F1_NET
 # Windows 3.11/3.14)
 python -m ruff check .
 python -m black --check .
-python -m mypy --ignore-missing-imports app.py data processing ui
+python -m mypy --ignore-missing-imports src
 
 # Live SignalR end-to-end check (only meaningful during a race weekend)
 python scripts/live_smoke.py 30
@@ -99,8 +101,14 @@ means producing this dict — not touching the UI.
 
 ### Layering (keep these boundaries)
 
+The code is the `f1dash` package under `src/f1dash/` (REPO-10); the paths below are relative to
+it and imports are absolute (`from f1dash.data.… import …`). The root `app.py` is only a shim
+that runs `src/f1dash/app.py`, so `streamlit run app.py` keeps reading the root
+`.streamlit/config.toml`; the wheel carries a copy at `f1dash/.streamlit/config.toml`.
+
+
 - `app.py` — orchestration only: selection → load → process → record. No chart code.
-  `f1dash_cli.py` is the installed `f1dash` command (`paths`, `update`, `--port`); it starts
+  `cli.py` is the installed `f1dash` command (`paths`, `update`, `--port`); it starts
   `app.py` through `streamlit run`.
 - `ui/` — **all** rendering, no data fetching. `ui/layout.py` is the single canonical module
   for the sidebar picker, charts, the live view and the Settings page; earlier
@@ -233,7 +241,8 @@ the values are in place when they read them. `DataSourceManager` takes `cache_di
 `replay_dir` defaulting to `config.fastf1_cache_dir` / `config.replay_dir`
 (`FASTF1_CACHE_DIR`, `REPLAY_DIR`).
 
-Where files live depends on how the code runs: a git checkout (a `.git` next to `app.py`)
+Where files live depends on how the code runs: a git checkout (a `.git` in the folder
+that holds `src/f1dash/`, `config.PROJECT_ROOT`)
 keeps `ff1_cache/`, `replay_sessions/`, `metrics_store.sqlite` and `.env` in the project
 folder; an installed copy (`uv tool install`) uses the `platformdirs` user directories.
 `FASTF1_CACHE_DIR`, `REPLAY_DIR` and `F1_METRICS_STORE` override either; `f1dash paths` and
