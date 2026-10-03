@@ -786,7 +786,7 @@ Carried UI items (text as in revision 3; statuses checked against the code on 20
 - [x] **UX-03** · P2 · S — **Driver selection and favourites.** Status: valid; every chart plots every driver. Fix: a global driver multiselect (default top 5) with favourites in `st.query_params`; highlight favourites in the tower. — done
 - [ ] **UX-04** · P2 · M — **Head-to-head is speed-only and fastest-lap-only.** Status: valid (`ui/layout.py:861-948`). Fix: stacked Speed/Throttle/Brake/Gear/Δt sharing x; corner markers from `circuit_info.corners`; lap pickers per driver; keep the "approximate" caption.
 - [ ] **UX-06** · P2 · S — **Race-control panel usability.** Status: valid. The key is still `"rc_categories"` (`ui/layout.py:836`), there is no search, and SC/VSC/red shading exists only on the player timeline. Fix: a per-session key, a search box, and SC/VSC/red shading on the lap-time and position charts.
-- [ ] **UX-12** · P3 · S — **Units, time zones, preferences.** Status: valid. km/h and °C are hard-coded; `gmt_offset` is stored (`source_manager.py:774`) but never read. Fix: km/h ↔ mph, °C ↔ °F, and local vs track time on the Settings page (UI-22) and in URL params.
+- [x] **UX-12** · P3 · S — **Units, time zones, preferences.** Status: valid. km/h and °C are hard-coded; `gmt_offset` is stored (`source_manager.py:774`) but never read. Fix: km/h ↔ mph, °C ↔ °F, and local vs track time on the Settings page (UI-22) and in URL params. — done
 
 ### 3.6 Tests and CI
 

@@ -36,6 +36,7 @@ from ui.preferences import (
     render_driver_picker,
     render_favourites_picker,
     render_layout_pickers,
+    render_units_pickers,
 )
 from ui.replay_view import (
     FOCUS_PREFIX,
@@ -263,7 +264,11 @@ def analysis_page() -> None:
     elif section == "Weather":
         render_weather(session_data.get("weather"), uirevision=revision)
     elif section == "Race control":
-        render_race_control(session_data.get("race_control"), key=f"rc:{context['session_key']}")
+        render_race_control(
+            session_data.get("race_control"),
+            key=f"rc:{context['session_key']}",
+            info=session_data.get("session_info"),
+        )
     elif section == "Team radio":
         render_team_radio(session_data)
 
@@ -336,6 +341,8 @@ def settings_page() -> None:
     st.subheader("Preferences")
     render_favourites_picker(classification_order(session_data, context.get("laps")))
     render_layout_pickers()
+    st.subheader("Units")
+    render_units_pickers()
     render_settings()
 
 

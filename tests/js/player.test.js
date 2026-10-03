@@ -436,3 +436,46 @@ describe("layout chosen by the viewer (FEAT-10)", () => {
     assert.deepEqual(hiddenCells(player).map((cell) => cell.textContent), ["S1", "S2", "S3"]);
   });
 });
+
+describe("units and the session start (UX-12)", () => {
+  const weather = (player) => player.root.querySelector(".rp-weather").textContent;
+  const withWeather = (payload) => ({
+    ...payload,
+    weather: [[0, 20, 30, 50, false, 36, 90]],
+  });
+
+  test("the default weather reads in Celsius and km/h", async () => {
+    const player = await open(withWeather(race));
+
+    assert.match(weather(player), /AIR 20\u00b0 {2}TRACK 30\u00b0/);
+    assert.match(weather(player), /WIND 36 km\/h E/);
+  });
+
+  test("Fahrenheit and mph convert the weather line", async () => {
+    const player = await open(withWeather(race), { units: { speed: "mph", temp: "f" } });
+
+    assert.match(weather(player), /AIR 68\u00b0F {2}TRACK 86\u00b0F/);
+    assert.match(weather(player), /WIND 22 mph E/);
+  });
+
+  test("a new unit applies on the next update", async () => {
+    const player = await open(withWeather(race));
+
+    await player.rerun({ units: { speed: "mph", temp: "f" } });
+    await seek(player, race.clock.lights_out + 1);
+
+    assert.match(weather(player), /AIR 68\u00b0F/);
+  });
+
+  test("the session start is shown in the header when Python sends it", async () => {
+    const player = await open(race, { start: "15:00:00 UTC+2" });
+
+    assert.equal(player.root.querySelector(".rp-start").textContent, "Start 15:00:00 UTC+2");
+  });
+
+  test("without a start the header has none", async () => {
+    const player = await open(race);
+
+    assert.equal(player.root.querySelector(".rp-start"), null);
+  });
+});

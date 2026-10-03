@@ -23,6 +23,7 @@ const HEADING = 18;
 const DASH = String.fromCharCode(0x2013);
 const DOT = String.fromCharCode(0xb7);
 const DEGREE = String.fromCharCode(0xb0);
+const KMH_PER_MPH = 1.609344;
 const STATUS_CHIPS = { "IN PIT": "PIT", OUT: "OUT", FIN: "FIN", KO: "KO" };
 const SHADED = { "SAFETY CAR": true, VSC: true, RED: true };
 const MAP_CHIPS = { "SAFETY CAR": "SC", VSC: "VSC", RED: "RED" };
@@ -254,6 +255,7 @@ class Player {
     this.speed = 1;
     this.focus = data.focus || null;
     this.layout = data.layout || {};
+    this.units = data.units || {};
     this.follow = false;
     this.labels = false;
     this.mode = "gap";
@@ -396,6 +398,7 @@ class Player {
       el("span", "rp-event", `${this.data.session.event}${year}`),
       el("span", "rp-session", this.data.session.name),
     );
+    if (this.data.start) header.append(el("span", "rp-start", `Start ${this.data.start}`));
     this.lapNode = el("span", "rp-lap");
     this.clockLabel = el("span", "rp-label");
     this.clockNode = el("span", "rp-clock");
@@ -984,12 +987,15 @@ class Player {
     }
     const [, air, track, , rain, wind, direction] = this.data.weather[reading];
     const parts = [];
-    if (air !== null) parts.push(`AIR ${Math.round(air)}${DEGREE}`);
-    if (track !== null) parts.push(`TRACK ${Math.round(track)}${DEGREE}`);
+    const fahrenheit = this.units.temp === "f";
+    const degrees = (c) => (fahrenheit ? `${Math.round((c * 9) / 5 + 32)}${DEGREE}F` : `${Math.round(c)}${DEGREE}`);
+    if (air !== null) parts.push(`AIR ${degrees(air)}`);
+    if (track !== null) parts.push(`TRACK ${degrees(track)}`);
     parts.push(rain ? "WET" : "DRY");
     if (wind !== null) {
       const bearing = direction === null ? "" : ` ${CARDINALS[Math.round((direction % 360) / 45) % 8]}`;
-      parts.push(`WIND ${Math.round(wind)} km/h${bearing}`);
+      const speed = this.units.speed === "mph" ? `${Math.round(wind / KMH_PER_MPH)} mph` : `${Math.round(wind)} km/h`;
+      parts.push(`WIND ${speed}${bearing}`);
     }
     setText(this.weatherNode, parts.join("  "));
   }
@@ -1389,6 +1395,7 @@ class Player {
 
   update(data, setStateValue) {
     this.setStateValue = setStateValue;
+    this.units = data.units || {};
     const layout = data.layout || {};
     if (JSON.stringify(layout) !== JSON.stringify(this.layout)) {
       this.layout = layout;

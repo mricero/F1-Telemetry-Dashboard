@@ -96,6 +96,8 @@ def render_replay_player(
     on_analyse_change=None,
     focus: str | None = None,
     layout: dict | None = None,
+    units: dict | None = None,
+    start: str = "",
 ):
     """Mount the player.
 
@@ -110,6 +112,8 @@ def render_replay_player(
 
     ``layout`` is the viewer's choice of hidden tower columns and panels
     (FEAT-10); it changes only when they edit it on the Settings page.
+    ``units`` (``speed``, ``temp``) and ``start`` (the session's start as a
+    time of day with its zone) are the viewer's unit choices (UX-12).
     """
     data = {
         **payload,
@@ -117,6 +121,8 @@ def render_replay_player(
         "seek": seek,
         "focus": focus,
         "layout": layout or {"hide_cols": [], "hide_panels": []},
+        "units": units or {"speed": "kmh", "temp": "c"},
+        "start": start,
     }
     return _player()(
         key=key,

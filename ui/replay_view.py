@@ -30,7 +30,13 @@ from processing.timing import build_timing_rows, sector_leaders
 from processing.view_params import CURSOR_PARAM, format_cursor, parse_cursor
 from ui.components.replay_player import player_style, render_replay_player
 from ui.dashboard import render_dashboard, sector_cards_html
-from ui.preferences import hidden_panels, layout_for_player, mirror_param
+from ui.preferences import (
+    format_wall_clock,
+    hidden_panels,
+    layout_for_player,
+    mirror_param,
+    units,
+)
 from ui.theme import DASHBOARD_CSS
 
 # How much session time one second of playback covers, per speed setting.
@@ -423,6 +429,10 @@ def _browser_view(session_data, key, series, found, clock, on_final) -> None:
         on_focus_change=lambda: _focus_from_player(key),
         on_analyse_change=lambda: _analyse_from_player(key),
         layout=layout_for_player(),
+        units=units().as_dict(),
+        start=format_wall_clock(
+            (session_data.get("session_info") or {}).get("date"), session_data.get("session_info")
+        ),
     )
 
     moment = st.session_state[cursor_key(key)]

@@ -29,7 +29,21 @@ from processing.timing import (
     sector_leaders,
     theoretical_best,
 )
-from ui.preferences import favourite_drivers, hidden_columns, hidden_panels
+from processing.units import (
+    METRIC,
+    Units,
+    speed_from_kmh,
+    speed_label,
+    temp_from_c,
+    temp_label,
+)
+from ui.preferences import (
+    favourite_drivers,
+    format_wall_clock,
+    hidden_columns,
+    hidden_panels,
+)
+from ui.preferences import units as viewer_units
 from ui.theme import (
     COMPOUND_LETTER,
     COMPOUND_RING,
@@ -192,8 +206,13 @@ def _session_clock(session_data: dict) -> str:
     return format_clock(float(seconds.max()))
 
 
-def header_html(session_data: dict) -> str:
-    """Global session + environment bar (spec section 2)."""
+def header_html(session_data: dict, units: Units = METRIC, start: str = "") -> str:
+    """Global session + environment bar (spec section 2).
+
+    ``units`` picks km/h or mph for the wind and Celsius or Fahrenheit for the
+    temperatures; ``start`` is the session's start as a time of day with its
+    zone, already formatted for the viewer (UX-12).
+    """
     info = session_data.get("session_info") or {}
     weather = session_data.get("weather")
     latest = (
@@ -231,19 +250,26 @@ def header_html(session_data: dict) -> str:
             f'<span class="f1-env-value {extra} f1-num">{value}</span></div>'
         )
 
-    def number(key: str, unit: str, digits: int = 1) -> str:
+    def number(key: str, unit: str, digits: int = 1, convert=None) -> str:
         value = latest.get(key)
         value = pd.to_numeric(value, errors="coerce") if value is not None else None
         if value is None or pd.isna(value):
             return MISSING
+        if convert is not None:
+            value = convert(float(value))
         return f"{float(value):.{digits}f} {unit}"
+
+    def temperature(key: str) -> str:
+        unit = temp_label(units.temp).replace("°", "&deg;")
+        return number(key, unit, convert=lambda value: temp_from_c(value, units.temp))
 
     rain = latest.get("Rainfall")
     rain_yes = is_raining(rain)
     wind_speed = wind_kmh(latest.get("WindSpeed"))
     direction = latest.get("WindDirection")
     wind = (
-        f"{_wind_arrow(direction)} {wind_speed:.1f} km/h {_cardinal(direction)}".strip()
+        f"{_wind_arrow(direction)} {speed_from_kmh(wind_speed, units.speed):.1f} "
+        f"{speed_label(units.speed)} {_cardinal(direction)}".strip()
         if wind_speed is not None
         else MISSING
     )
@@ -255,12 +281,18 @@ def header_html(session_data: dict) -> str:
         if _is_snapshot(session_data) and info.get("gaps_estimated")
         else ""
     )
+    start_html = (
+        f'<span class="f1-event-start f1-num" title="Session start">Start {_esc(start)}</span>'
+        if start
+        else ""
+    )
     return f"""
 <div class="f1-header">
   <div class="f1-event">
     <span class="f1-event-name">{event}{f" {year}" if year else ""}</span>
     {f'<span class="f1-event-country">{country}</span>' if country else ""}
     <span class="f1-event-session">{session_type}</span>
+    {start_html}
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
     {lap_text}
@@ -270,8 +302,8 @@ def header_html(session_data: dict) -> str:
   </div>
   <div class="f1-env">
     {reading("Wind", wind)}
-    {reading("Track", number("TrackTemp", "&deg;C"))}
-    {reading("Air", number("AirTemp", "&deg;C"))}
+    {reading("Track", temperature("TrackTemp"))}
+    {reading("Air", temperature("AirTemp"))}
     {reading("Humidity", number("Humidity", "%"))}
     {reading("Pressure", number("Pressure", "mb"))}
     {reading("Rain", "YES" if rain_yes else "NO", "rain-yes" if rain_yes else "")}
@@ -372,23 +404,27 @@ def _status_html(status: str) -> str:
     return f'<span class="f1-badge {STATUS_CSS.get(word, "out")}">{_esc(word)}</span>'
 
 
-def _speed_text(speed, word: str) -> str:
+def _speed_text(speed, word: str, unit: str = "kmh") -> str:
     """Speed-trap cell: a car in the pit lane has no trap speed, not 0."""
     if speed is None or pd.isna(speed):
         return MISSING
     if word == "PIT" and float(speed) == 0.0:
         return MISSING
-    return f"{float(speed):.0f}"
+    return f"{float(speed_from_kmh(float(speed), unit)):.0f}"
 
 
 def tower_html(
-    rows: Sequence[dict], favourites: Sequence[str] = (), hidden: Sequence[str] = ()
+    rows: Sequence[dict],
+    favourites: Sequence[str] = (),
+    hidden: Sequence[str] = (),
+    units: Units = METRIC,
 ) -> str:
     """The driver leaderboard matrix (spec section 3).
 
     A favourite driver's code is underlined and titled (UX-03): a shape and a
     word, so the mark does not depend on colour. ``hidden`` names the layout
-    toggles (``COLUMN_KEYS`` values) to leave out (FEAT-10).
+    toggles (``COLUMN_KEYS`` values) to leave out (FEAT-10); ``units`` picks
+    km/h or mph for the speed column (UX-12).
     """
     favourite = set(favourites or ())
     if not rows:
@@ -396,7 +432,15 @@ def tower_html(
 
     off = set(hidden or ())
     shown = [c for c in TOWER_COLUMNS if COLUMN_KEYS.get(c) not in off]
-    head = "".join(f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(c)}</th>' for c in shown)
+
+    def heading(column: str) -> str:
+        if column == "Speed km/h":
+            return f"Speed {speed_label(units.speed)}"
+        return column
+
+    head = "".join(
+        f'<th class="{COLUMN_CLASSES.get(c, "")}">{_esc(heading(c))}</th>' for c in shown
+    )
     body: list[str] = []
 
     for row in rows:
@@ -418,7 +462,7 @@ def tower_html(
         status = row.get("status")
         if row.get("knocked_out") and not status_word(status):
             status = "KO"
-        speed_text = _speed_text(row.get("speed_kmh"), status_word(status))
+        speed_text = _speed_text(row.get("speed_kmh"), status_word(status), units.speed)
         # Diff is measured against the session ideal; the driver's own ideal
         # lap is the other half of the picture (spec section 3.12).
         personal_ideal = row.get("personal_ideal")
@@ -675,7 +719,10 @@ def render_dashboard(session_data: dict, favourites: Sequence[str] | None = None
     columns_off, panels_off = hidden_columns(), hidden_panels()
 
     rows = build_timing_rows(session_data)
-    st.html(f'<div class="f1-dash">{header_html(session_data)}</div>')
+    chosen = viewer_units()
+    info = session_data.get("session_info") or {}
+    start = format_wall_clock(info.get("date"), info)
+    st.html(f'<div class="f1-dash">{header_html(session_data, chosen, start)}</div>')
 
     side = [
         (name, build)
@@ -685,7 +732,7 @@ def render_dashboard(session_data: dict, favourites: Sequence[str] | None = None
         )
         if name not in panels_off
     ]
-    tower = f'<div class="f1-dash">{tower_html(rows, favourites, columns_off)}</div>'
+    tower = f'<div class="f1-dash">{tower_html(rows, favourites, columns_off, chosen)}</div>'
     if not side:
         st.html(tower)
         return

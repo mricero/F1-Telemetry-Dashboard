@@ -15,6 +15,22 @@ import pandas as pd
 import streamlit as st
 
 from processing.driver_selection import default_drivers, format_codes, parse_codes
+from processing.units import (
+    METRIC,
+    SPEED_CHOICES,
+    SPEED_PARAM,
+    TEMP_CHOICES,
+    TEMP_PARAM,
+    TIME_CHOICES,
+    TIME_PARAM,
+    Units,
+    local_offset_seconds,
+    non_default_params,
+    parse_choice,
+    parse_gmt_offset,
+    utc_moment,
+    wall_clock,
+)
 from processing.view_params import (
     HIDE_COLUMNS_PARAM,
     HIDE_PANELS_PARAM,
@@ -221,6 +237,76 @@ def layout_for_player() -> dict:
     return {"hide_cols": hidden_columns(), "hide_panels": hidden_panels()}
 
 
+# ------------------------------------------------------------------ units
+
+UNITS_KEY = "viewer_units"
+UNIT_WIDGETS = {"speed": "units_speed", "temp": "units_temp", "time": "units_time"}
+
+
+def units() -> Units:
+    """The viewer's units (UX-12), seeded once from ``speed=``, ``temp=`` and ``tz=``.
+
+    A value the link names that is not a known unit is ignored.
+    """
+    if UNITS_KEY not in st.session_state:
+        st.session_state[UNITS_KEY] = Units(
+            speed=parse_choice(_url_value(SPEED_PARAM), SPEED_CHOICES, METRIC.speed),
+            temp=parse_choice(_url_value(TEMP_PARAM), TEMP_CHOICES, METRIC.temp),
+            time=parse_choice(_url_value(TIME_PARAM), TIME_CHOICES, METRIC.time),
+        )
+    return st.session_state[UNITS_KEY]
+
+
+def render_units_pickers() -> None:
+    """The Settings choices: speed, temperature and time-of-day zone."""
+    current = units()
+
+    def _changed() -> None:
+        chosen = {
+            field: st.session_state.get(widget) or getattr(METRIC, field)
+            for field, widget in UNIT_WIDGETS.items()
+        }
+        st.session_state[UNITS_KEY] = Units(**chosen)
+
+    specs: list[tuple[str, str, tuple[tuple[str, str], ...]]] = [
+        ("speed", "Speed", SPEED_CHOICES),
+        ("temp", "Temperature", TEMP_CHOICES),
+        ("time", "Times of day", TIME_CHOICES),
+    ]
+    for column, (field, label, choices) in zip(st.columns(3), specs, strict=True):
+        with column:
+            names: list[str] = [name for name, _ in choices]
+            labels: dict[str, str] = dict(choices)
+            st.radio(
+                label,
+                names,
+                index=names.index(getattr(current, field)),
+                format_func=labels.__getitem__,
+                key=UNIT_WIDGETS[field],
+                on_change=_changed,
+            )
+    st.caption(
+        "Track time is the circuit's own clock; local time is your browser's. "
+        "Replays saved before this setting existed carry no track offset and show UTC."
+    )
+    sync_preference_params()
+
+
+def viewer_local_offset(moment=None) -> int | None:
+    """The viewer's UTC offset in seconds (their browser's zone), None if unknown."""
+    name = st.context.timezone
+    return local_offset_seconds(name, utc_moment(moment) if moment is not None else None)
+
+
+def format_wall_clock(value, info: dict | None) -> str:
+    """``15:04:05`` plus the zone, in the viewer's time setting; "" for no time."""
+    chosen = units()
+    track = parse_gmt_offset((info or {}).get("gmt_offset"))
+    local = viewer_local_offset(value) if chosen.time == "local" else None
+    shown = wall_clock(value, chosen, track, local)
+    return "" if shown is None else f"{shown[0]} {shown[1]}"
+
+
 def preference_params() -> dict[str, str]:
     """The viewer-wide preferences as URL parameters (empty when default)."""
     params: dict[str, str] = {}
@@ -234,6 +320,7 @@ def preference_params() -> dict[str, str]:
         text = format_tokens(hidden)
         if text:
             params[name] = text
+    params.update(non_default_params(units()))
     return params
 
 
@@ -244,5 +331,12 @@ def sync_preference_params() -> None:
     preferences back, so a copied link always carries them.
     """
     params = preference_params()
-    for name in (FAVOURITES_PARAM, HIDE_COLUMNS_PARAM, HIDE_PANELS_PARAM):
+    for name in (
+        FAVOURITES_PARAM,
+        HIDE_COLUMNS_PARAM,
+        HIDE_PANELS_PARAM,
+        SPEED_PARAM,
+        TEMP_PARAM,
+        TIME_PARAM,
+    ):
         mirror_param(name, params.get(name))

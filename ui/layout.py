@@ -33,9 +33,10 @@ from processing.timing import (
     is_raining,
 )
 from processing.track_periods import lap_spans, lap_states
+from processing.units import speed_from_kmh, speed_label, temp_from_c, temp_label
 from ui.dashboard import render_dashboard, wind_kmh
 from ui.fonts import font_face_css
-from ui.preferences import sync_preference_params
+from ui.preferences import format_wall_clock, sync_preference_params, units
 from ui.status import DataStatus, show
 from ui.theme import (
     ACCENT,
@@ -584,15 +585,24 @@ def telemetry_channels(year=None) -> dict:
 
 
 def create_telemetry_chart(
-    telemetry_data: dict[str, pd.DataFrame], config: dict, color_map: dict[str, str]
+    telemetry_data: dict[str, pd.DataFrame],
+    config: dict,
+    color_map: dict[str, str],
+    speed_unit: str = "kmh",
 ) -> go.Figure | None:
     """Create a multi-driver telemetry line chart.
+
+    ``speed_unit`` (``kmh`` or ``mph``) converts the Speed channel for display
+    (UX-12); the data itself stays in km/h.
 
     WebGL traces (``Scattergl``) on the 5 m grid: twenty drivers over a full
     session were tens of thousands of SVG path points per channel (UX-02).
     """
     col = config["col"]
     unit = config["unit"]
+    convert_speed = col == "Speed" and speed_unit != "kmh"
+    if convert_speed:
+        unit = speed_label(speed_unit)
 
     fig = go.Figure()
     has_data = False
@@ -604,16 +614,18 @@ def create_telemetry_chart(
         has_data = True
         color = color_map.get(driver, NEUTRAL_GREY)
         frame = decimate_by_distance(df)
+        values = speed_from_kmh(frame[col], speed_unit) if convert_speed else frame[col]
         suffix = f" {unit}" if unit else ""
+        y_format = ":.1f" if convert_speed else ""
         line = dict(color=color, shape="hv") if col == "Gear" else dict(color=color, width=2)
         fig.add_trace(
             go.Scattergl(
                 x=frame["Distance"],
-                y=frame[col],
+                y=values,
                 mode="lines",
                 name=driver,
                 line=line,
-                hovertemplate=f"{driver}: %{{y}}{suffix}<br>%{{x:.0f}} m<extra></extra>",
+                hovertemplate=f"{driver}: %{{y{y_format}}}{suffix}<br>%{{x:.0f}} m<extra></extra>",
             )
         )
 
@@ -656,7 +668,7 @@ def render_telemetry_charts(
     tabs = st.tabs(list(channels))
     for tab, cfg in zip(tabs, channels.values(), strict=True):
         with tab:
-            fig = create_telemetry_chart(telemetry_data, cfg, color_map)
+            fig = create_telemetry_chart(telemetry_data, cfg, color_map, units().speed)
             if fig:
                 _plot(fig, width="stretch", uirevision=uirevision)
             else:
@@ -1223,6 +1235,12 @@ def render_position_changes(
     _plot(fig, width="stretch", uirevision=uirevision)
 
 
+def _wind_speed(wind_ms, unit: str):
+    """Wind from the feed's m/s in km/h or mph; None when unavailable."""
+    kmh = wind_kmh(wind_ms)
+    return None if kmh is None else speed_from_kmh(kmh, unit)
+
+
 def render_weather(
     weather_df: pd.DataFrame, status: DataStatus | None = None, uirevision: str | None = None
 ):
@@ -1233,12 +1251,19 @@ def render_weather(
 
     latest = weather_df.iloc[-1]
     cols = st.columns(5)
-    # Wind arrives in m/s and is shown in km/h, matching the dashboard header.
+    chosen = units()
+    degrees = temp_label(chosen.temp)
+    # Wind arrives in m/s and is shown in km/h (or mph), matching the header.
     readings = [
-        ("Air", "AirTemp", "°C", None),
-        ("Track", "TrackTemp", "°C", None),
+        ("Air", "AirTemp", degrees, lambda v: temp_from_c(v, chosen.temp)),
+        ("Track", "TrackTemp", degrees, lambda v: temp_from_c(v, chosen.temp)),
         ("Humidity", "Humidity", "%", None),
-        ("Wind", "WindSpeed", "km/h", wind_kmh),
+        (
+            "Wind",
+            "WindSpeed",
+            speed_label(chosen.speed),
+            lambda v: _wind_speed(v, chosen.speed),
+        ),
         ("Pressure", "Pressure", "mbar", None),
     ]
     for col, (label, key, unit, convert) in zip(cols, readings, strict=False):
@@ -1254,14 +1279,14 @@ def render_weather(
     x = _elapsed_minutes(weather_df)
     fig = go.Figure()
     for key, label, color in (
-        ("TrackTemp", "Track temp (°C)", CHART_WARM),
-        ("AirTemp", "Air temp (°C)", CHART_COOL),
+        ("TrackTemp", f"Track temp ({degrees})", CHART_WARM),
+        ("AirTemp", f"Air temp ({degrees})", CHART_COOL),
     ):
         if key in weather_df.columns:
             fig.add_trace(
                 go.Scatter(
                     x=x,
-                    y=weather_df[key],
+                    y=temp_from_c(pd.to_numeric(weather_df[key], errors="coerce"), chosen.temp),
                     mode="lines",
                     name=label,
                     line=dict(color=color, width=2),
@@ -1281,7 +1306,7 @@ def render_weather(
 
     fig.update_layout(
         xaxis_title="Session time (min)",
-        yaxis=dict(title="Temperature (°C)"),
+        yaxis=dict(title=f"Temperature ({degrees})"),
         yaxis2=dict(title="Humidity (%)", overlaying="y", side="right", showgrid=False),
         hovermode="x unified",
         height=340,
@@ -1303,8 +1328,11 @@ def _elapsed_minutes(df: pd.DataFrame) -> pd.Series:
     return pd.Series(range(len(df)), index=df.index, dtype="float64")
 
 
-def race_control_lines(df: pd.DataFrame) -> list[dict]:
+def race_control_lines(df: pd.DataFrame, clock=None) -> list[dict]:
     """Race-control rows as plain values for the panel, newest first.
+
+    ``clock`` turns a row's wall-clock ``Time`` into the text shown (a time of
+    day with its zone, UX-12); without it, or without a time, ``time`` is "".
 
     The message stays text: it is escaped when drawn, so ``*`` or ``$...$`` in
     a steward's message are never read as Markdown or maths (UI-13).
@@ -1316,6 +1344,7 @@ def race_control_lines(df: pd.DataFrame) -> list[dict]:
         message = row.get("Message")
         lines.append(
             {
+                "time": clock(row.get("Time")) if clock is not None else "",
                 "lap": f"L{int(lap)}" if pd.notna(lap) else MISSING,
                 "flag": flag if flag and flag not in ("NONE", "NAN", "<NA>") else "",
                 "message": "" if message is None or pd.isna(message) else str(message),
@@ -1326,14 +1355,20 @@ def race_control_lines(df: pd.DataFrame) -> list[dict]:
 
 def race_control_html(lines: list[dict]) -> str:
     """The race-control list as escaped HTML (no Markdown interpretation)."""
+    timed = any(line.get("time") for line in lines)
     rows = "".join(
         '<div class="f1-rc-row">'
-        f'<span class="f1-rc-lap f1-num">{html.escape(line["lap"])}</span>'
+        + (
+            f'<span class="f1-rc-time f1-num">{html.escape(line.get("time") or MISSING)}</span>'
+            if timed
+            else ""
+        )
+        + f'<span class="f1-rc-lap f1-num">{html.escape(line["lap"])}</span>'
         f'<span class="f1-rc-flag">{html.escape(line["flag"])}</span>'
         f'<span class="f1-rc-msg">{html.escape(line["message"])}</span></div>'
         for line in lines
     )
-    return f'<div class="f1-rc">{rows}</div>'
+    return f'<div class="f1-rc{" f1-rc-timed" if timed else ""}">{rows}</div>'
 
 
 def filter_race_control(df: pd.DataFrame, categories=None, search: str = "") -> pd.DataFrame:
@@ -1351,6 +1386,7 @@ def render_race_control(
     limit: int = 60,
     status: DataStatus | None = None,
     key: str = "rc",
+    info: dict | None = None,
 ):
     """Race control feed: flags, safety cars, investigations, penalties.
 
@@ -1378,7 +1414,7 @@ def render_race_control(
         st.info("No messages match that filter")
         return
 
-    lines = race_control_lines(df)[:limit]
+    lines = race_control_lines(df, lambda stamp: format_wall_clock(stamp, info))[:limit]
     st.html(race_control_html(lines))
     if len(df) > limit:
         st.caption(f"Showing the {limit} most recent of {len(df)} messages.")
