@@ -12,8 +12,8 @@ import fastf1.core
 import numpy as np
 import pandas as pd
 
-from processing.replay import build_position_timeline
-from processing.time_utils import parse_gap, seconds_series, to_seconds
+from f1dash.processing.replay import build_position_timeline
+from f1dash.processing.time_utils import parse_gap, seconds_series, to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,7 @@ class FastF1Adapter:
 
     def __init__(self, cache_dir: str | None = None):
         if cache_dir is None:
-            from config import config
+            from f1dash.config import config
 
             cache_dir = config.fastf1_cache_dir
         self.cache_dir = Path(cache_dir)

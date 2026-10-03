@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 import requests
 
-from data.jolpica_adapter import JolpicaAdapter
+from f1dash.data.jolpica_adapter import JolpicaAdapter
 
 
 class FakeResponse:
@@ -27,7 +27,7 @@ def _schedule_payload(races):
 @pytest.fixture
 def adapter(monkeypatch):
     # The throttle really sleeps (4 requests a second); tests need not wait.
-    monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("f1dash.data.jolpica_adapter.time.sleep", lambda seconds: None)
     a = JolpicaAdapter()
     calls = []
 
@@ -69,7 +69,7 @@ class TestCaching:
         gc.collect()
         # If lru_cache were used on methods, instances would be retained in
         # cache_info globals; with _instance_memo there is nothing global.
-        from data.jolpica_adapter import _instance_memo
+        from f1dash.data.jolpica_adapter import _instance_memo
 
         assert callable(_instance_memo)
 
@@ -240,9 +240,9 @@ class TestRateLimiting:
 
     def test_burst_is_throttled_to_four_per_second(self, adapter, monkeypatch):
         sleeps = []
-        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr("f1dash.data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
         clock = {"t": 0.0}
-        monkeypatch.setattr("data.jolpica_adapter.time.monotonic", lambda: clock["t"])
+        monkeypatch.setattr("f1dash.data.jolpica_adapter.time.monotonic", lambda: clock["t"])
         server = _PagingServer(600, _seasons_page)
         monkeypatch.setattr(adapter.session, "get", server)
 
@@ -254,7 +254,7 @@ class TestRateLimiting:
 
     def test_429_is_retried_after_the_advertised_delay(self, adapter, monkeypatch):
         sleeps = []
-        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr("f1dash.data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
         attempts = {"n": 0}
 
         def rate_limited(url, params=None, timeout=None):
@@ -279,7 +279,7 @@ class TestRateLimiting:
 
     def test_429_without_retry_after_backs_off(self, adapter, monkeypatch):
         sleeps = []
-        monkeypatch.setattr("data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr("f1dash.data.jolpica_adapter.time.sleep", lambda s: sleeps.append(s))
 
         def always_limited(url, params=None, timeout=None):
             response = FakeResponse({}, status_error=requests.exceptions.HTTPError("429"))
@@ -314,7 +314,7 @@ class TestMemoAndRetryAfter:
 
     def test_a_long_retry_after_fails_fast(self, adapter, monkeypatch):
         slept = []
-        monkeypatch.setattr("data.jolpica_adapter.time.sleep", slept.append)
+        monkeypatch.setattr("f1dash.data.jolpica_adapter.time.sleep", slept.append)
 
         def limited(url, params=None, timeout=None):
             response = FakeResponse({}, status_error=requests.exceptions.HTTPError("429"))
@@ -340,8 +340,8 @@ class TestFastF1CacheOncePerProcess:
     def test_two_managers_enable_the_cache_once(self, tmp_path, monkeypatch):
         import fastf1
 
-        from data import fastf1_adapter
-        from data.source_manager import DataSourceManager
+        from f1dash.data import fastf1_adapter
+        from f1dash.data.source_manager import DataSourceManager
 
         calls = []
         monkeypatch.setattr(fastf1.Cache, "enable_cache", lambda path, *a, **kw: calls.append(path))

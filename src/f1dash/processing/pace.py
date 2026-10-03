@@ -9,8 +9,8 @@ age is the tyre and not the lightening car.
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import seconds_series
-from processing.track_periods import lap_states
+from f1dash.processing.time_utils import seconds_series
+from f1dash.processing.track_periods import lap_states
 
 # A race car sheds roughly 1.6 kg of fuel a lap and every kilogram costs about
 # 0.03 s a lap, so each lap run is worth about 0.05 s. A single round figure

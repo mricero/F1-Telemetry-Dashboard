@@ -29,9 +29,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from processing.replay import ReplayClock, format_clock, replay_clock
-from processing.time_utils import is_leader_cell, seconds_series, to_seconds
-from processing.timing import (
+from f1dash.processing.replay import ReplayClock, format_clock, replay_clock
+from f1dash.processing.time_utils import is_leader_cell, seconds_series, to_seconds
+from f1dash.processing.timing import (
     LEADER,
     MISSING,
     format_lap_gap,

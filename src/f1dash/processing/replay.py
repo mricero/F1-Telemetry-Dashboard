@@ -19,8 +19,8 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import seconds_series
-from processing.timing import is_race_session
+from f1dash.processing.time_utils import seconds_series
+from f1dash.processing.timing import is_race_session
 
 # Position data arrives at roughly 4 Hz. Half-second steps track the cars
 # closely while keeping a two-hour race to a few thousand frames per driver.

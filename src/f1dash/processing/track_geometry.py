@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from processing.timing import segment_boundaries
+from f1dash.processing.timing import segment_boundaries
 
 # Viewport the map is drawn into; the track is scaled to fit with padding.
 VIEW_W = 1000

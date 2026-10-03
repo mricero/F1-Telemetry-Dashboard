@@ -13,16 +13,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.replay_model import session_clock, snapshot_at, tower_series
-from processing.replay_payload import (
+from f1dash.processing.replay_model import session_clock, snapshot_at, tower_series
+from f1dash.processing.replay_payload import (
     POSITION_ABSENT,
     build_replay_payload,
     decode_lap_fractions,
     decode_positions,
     tower_at,
 )
-from processing.timing import build_timing_rows
-from processing.track_geometry import track_geometry
+from f1dash.processing.timing import build_timing_rows
+from f1dash.processing.track_geometry import track_geometry
 from tests import replay_fixtures as fx
 
 REQUIRED = {
@@ -245,7 +245,7 @@ class TestTheComponentFiles:
     """Guideline 5.12 runs over the component too; these pin its contract."""
 
     def test_the_tokens_are_defined_once_in_root(self):
-        from ui.components.replay_player import component_source
+        from f1dash.ui.components.replay_player import component_source
 
         css = component_source()["css"]
         blocks = re.findall(r":root[^{]*\{([^}]*)\}", css)
@@ -256,7 +256,7 @@ class TestTheComponentFiles:
         assert "--accent:" in blocks[0]
 
     def test_the_three_breakpoints_exist(self):
-        from ui.components.replay_player import component_source
+        from f1dash.ui.components.replay_player import component_source
 
         css = component_source()["css"]
 
@@ -266,7 +266,7 @@ class TestTheComponentFiles:
 
     def test_the_player_never_builds_markup_from_strings(self):
         """Feed strings must not reach innerHTML unescaped."""
-        from ui.components.replay_player import component_source
+        from f1dash.ui.components.replay_player import component_source
 
         assert "innerHTML" not in component_source()["js"]
 
@@ -291,7 +291,7 @@ class TestTrackState:
         assert state_at(fx.SC_END + 1) == "GREEN"
 
     def test_the_player_tints_the_track_and_names_the_state(self):
-        from ui.components.replay_player import component_source
+        from f1dash.ui.components.replay_player import component_source
 
         js = component_source()["js"]
 
@@ -300,8 +300,8 @@ class TestTrackState:
         )
 
     def test_the_server_map_shows_the_chip(self, race):
-        from processing.replay_model import snapshot_at
-        from ui.dashboard import map_panel_html
+        from f1dash.processing.replay_model import snapshot_at
+        from f1dash.ui.dashboard import map_panel_html
 
         snapshot = snapshot_at(race, fx.SC_START + 5)
         markup = map_panel_html(snapshot, build_timing_rows(snapshot))
@@ -322,7 +322,7 @@ class TestFocusedDriverCard:
 
     def test_the_interval_trend_is_sampled_every_five_seconds(self, built, race):
         payload, series = built
-        from processing.replay_payload import decode_trend
+        from f1dash.processing.replay_payload import decode_trend
 
         trend = payload["trend"]
         values = decode_trend(trend)["C"]  # packed since REPLAY-29
@@ -335,7 +335,7 @@ class TestFocusedDriverCard:
         )
 
     def test_the_card_is_in_the_player(self):
-        from ui.components.replay_player import component_source
+        from f1dash.ui.components.replay_player import component_source
 
         js = component_source()["js"]
 
@@ -348,7 +348,7 @@ def test_analyse_this_lap_opens_the_lap_chart():
     def script():
         import streamlit as st
 
-        from ui.replay_view import _analyse_from_player, wants_analysis
+        from f1dash.ui.replay_view import _analyse_from_player, wants_analysis
 
         st.session_state["replay_player:k"] = {"cursor": 1.0, "focus": "A", "analyse": 3}
         _analyse_from_player("k")
@@ -368,7 +368,7 @@ class TestCompactEncoding:
     after quantisation, and the JavaScript decoder reads the same bytes."""
 
     def test_positions_round_trip_through_the_packing(self):
-        from processing.replay_payload import _pack_positions
+        from f1dash.processing.replay_payload import _pack_positions
 
         rng = np.random.default_rng(7)
         frames, drivers = 500, 4
@@ -418,9 +418,9 @@ class TestCompactEncoding:
         assert len(json.dumps(payload["trend"])) < 20_000
 
     def test_the_trend_marks_a_missing_interval(self):
-        from processing.replay import ReplayClock
-        from processing.replay_model import _series
-        from processing.replay_payload import _interval_trend, decode_trend
+        from f1dash.processing.replay import ReplayClock
+        from f1dash.processing.replay_model import _series
+        from f1dash.processing.replay_payload import _interval_trend, decode_trend
 
         class Series:
             drivers = ["A", "B"]  # noqa: RUF012
@@ -442,7 +442,7 @@ class TestTheLeaderIsNotClose:
     """REPLAY-21: the leader's "LAP n" interval cell is not a 0.000 s gap."""
 
     def test_the_leader_is_never_close_and_has_no_trend_value(self, race, built):
-        from processing.replay_payload import decode_trend
+        from f1dash.processing.replay_payload import decode_trend
 
         payload, series = built
         trend = decode_trend(payload["trend"])

@@ -3,8 +3,8 @@
 import numpy as np
 import pandas as pd
 
-from processing.deleted_laps import deleted_laps, track_limit_counts
-from ui.lap_panels import deleted_table
+from f1dash.processing.deleted_laps import deleted_laps, track_limit_counts
+from f1dash.ui.lap_panels import deleted_table
 
 
 def _laps() -> pd.DataFrame:
@@ -103,8 +103,8 @@ class TestDeletedTable:
 
 class TestDeletedLapsInTheApp:
     def test_section_opens(self):
+        from f1dash.ui.pages import ANALYSIS_SECTIONS
         from tests.test_app_sources import _open, _run_for
-        from ui.pages import ANALYSIS_SECTIONS
 
         assert "Deleted laps" in ANALYSIS_SECTIONS
         app_test = _open(_run_for("fastf1"), "analysis", analysis_section="Deleted laps")

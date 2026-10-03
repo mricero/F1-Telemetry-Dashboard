@@ -1,6 +1,6 @@
 """Tests for the ephemeral RuntimeCache."""
 
-from data.runtime_cache import RuntimeCache
+from f1dash.data.runtime_cache import RuntimeCache
 
 
 class TestRuntimeCache:
@@ -88,7 +88,7 @@ class TestMemoryBudget:
     def test_session_dict_size_counts_frames_deeply(self):
         import pandas as pd
 
-        from data.runtime_cache import estimate_bytes
+        from f1dash.data.runtime_cache import estimate_bytes
 
         small = estimate_bytes({"laps": pd.DataFrame({"a": [1, 2, 3]})})
         large = estimate_bytes({"laps": self._frame(8)})

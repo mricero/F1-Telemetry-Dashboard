@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ui.dashboard import header_html, sector_cards_html, tower_html
-from ui.theme import team_color
-from ui.track_map import (
+from f1dash.ui.dashboard import header_html, sector_cards_html, tower_html
+from f1dash.ui.theme import team_color
+from f1dash.ui.track_map import (
     DOMINANCE_SEGMENTS,
     VIEW_H,
     VIEW_W,
@@ -276,14 +276,14 @@ class TestWindUnits:
     """DASH-07: FastF1 reports WindSpeed in m/s; the header labels it km/h."""
 
     def test_ms_to_kmh_conversion(self):
-        from ui.dashboard import wind_kmh
+        from f1dash.ui.dashboard import wind_kmh
 
         assert wind_kmh(0.0) == pytest.approx(0.0)
         assert wind_kmh(1.0) == pytest.approx(3.6)
         assert wind_kmh(6.0) == pytest.approx(21.6)
 
     def test_missing_wind_speed_is_none(self):
-        from ui.dashboard import wind_kmh
+        from f1dash.ui.dashboard import wind_kmh
 
         assert wind_kmh(None) is None
         assert wind_kmh(float("nan")) is None
@@ -308,7 +308,7 @@ class TestColourSanitising:
 
     @staticmethod
     def _safe_hex():
-        from ui.theme import safe_hex
+        from f1dash.ui.theme import safe_hex
 
         return safe_hex
 
@@ -497,7 +497,7 @@ class TestOutlineDecimation:
         assert len(svg.encode("utf-8")) < 150 * 1024
 
     def test_outline_is_decimated_to_the_cap(self):
-        from ui.track_map import MAX_OUTLINE_POINTS
+        from f1dash.ui.track_map import MAX_OUTLINE_POINTS
 
         svg = build_track_svg({"VER": self._long_trace()})
         outline = re.search(r'<path d="([^"]+)" fill="none" stroke="#07080a"', svg).group(1)
@@ -542,7 +542,7 @@ class TestMapFollowsRealSectors:
         )
 
     def test_uneven_sectors_move_the_slice_boundaries(self):
-        from processing.timing import micro_sector_marks
+        from f1dash.processing.timing import micro_sector_marks
 
         location = {"VER": self._straight_lap()}
         meta = {"VER": {"team_name": "Red Bull", "team_colour": "#3671c6"}}
@@ -591,7 +591,7 @@ class TestHeaderFlagState:
         )
 
     def _flag(self, **session) -> str:
-        from ui.dashboard import _flag_state
+        from f1dash.ui.dashboard import _flag_state
 
         return _flag_state({"session_info": {}, "is_live": False, **session})
 
@@ -650,7 +650,7 @@ class TestHeaderClock:
         )
 
     def _clock(self, **session) -> str:
-        from ui.dashboard import _session_clock
+        from f1dash.ui.dashboard import _session_clock
 
         return _session_clock({"session_info": {}, "is_live": False, **session})
 
@@ -785,7 +785,7 @@ class TestResultsPolish:
         assert "<title>Bahrain Grand Prix 2023 Race</title>" in svg
 
     def test_the_tower_header_and_first_two_columns_are_sticky(self):
-        from ui.theme import DASHBOARD_CSS
+        from f1dash.ui.theme import DASHBOARD_CSS
 
         assert "position: sticky; top: 0" in DASHBOARD_CSS
         assert ".f1-tower td:nth-child(1)" in DASHBOARD_CSS
@@ -793,7 +793,7 @@ class TestResultsPolish:
         assert ".f1-tower .col-compact { display: none; }" in DASHBOARD_CSS
 
     def test_mini_sector_cells_say_what_their_colour_means(self):
-        from ui.dashboard import _segments_html
+        from f1dash.ui.dashboard import _segments_html
 
         markup = _segments_html(["PURPLE", "GREEN"], sector=2)
 
@@ -801,7 +801,7 @@ class TestResultsPolish:
         assert "personal best" in markup
 
     def test_an_on_track_car_has_an_empty_status_cell(self):
-        from ui.dashboard import _status_html
+        from f1dash.ui.dashboard import _status_html
 
         assert _status_html("ON TRACK") == ""
         assert "PIT" in _status_html("IN PIT")
@@ -811,7 +811,7 @@ class TestSectorCardsOnPhones:
     """UI-20: the three sector cards wrap instead of clipping sector 3."""
 
     def test_the_grid_wraps_below_three_card_widths(self):
-        from ui.theme import DASHBOARD_CSS
+        from f1dash.ui.theme import DASHBOARD_CSS
 
         assert "repeat(auto-fit, minmax(150px, 1fr))" in DASHBOARD_CSS
         assert "repeat(3, 1fr)" not in DASHBOARD_CSS

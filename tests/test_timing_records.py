@@ -10,8 +10,8 @@ from datetime import timedelta
 import pandas as pd
 import pytest
 
-from processing.replay_model import snapshot_at, tower_series
-from processing.timing import (
+from f1dash.processing.replay_model import snapshot_at, tower_series
+from f1dash.processing.timing import (
     _flag_is_set,
     _laps_completed,
     _valid_laps,

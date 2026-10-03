@@ -13,9 +13,9 @@ default, stands in.
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import seconds_series
-from processing.timing import gap_trace
-from processing.track_periods import lap_states
+from f1dash.processing.time_utils import seconds_series
+from f1dash.processing.timing import gap_trace
+from f1dash.processing.track_periods import lap_states
 
 DEFAULT_PIT_LOSS = 21.0
 

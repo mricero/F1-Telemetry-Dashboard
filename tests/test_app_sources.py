@@ -171,8 +171,8 @@ class StubManager:
 
 def _app_script():
     """Run the real app with the data manager stubbed out."""
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
     from tests.test_app_sources import StubManager
 
     app.DataSourceManager = StubManager
@@ -267,15 +267,15 @@ class TestPages:
     """UI-03: a page per job instead of one long scroll."""
 
     def test_the_page_names_follow_the_guideline(self):
+        from f1dash.ui.pages import page_specs
         from tests.replay_fixtures import race_session
-        from ui.pages import page_specs
 
         titles = [title for _, title, _ in page_specs(race_session())]
 
         assert titles == ["Replay", "Results", "Analysis", "Records", "Settings"]
 
     def test_a_live_session_opens_on_the_live_page(self):
-        from ui.pages import page_specs
+        from f1dash.ui.pages import page_specs
 
         titles = [title for _, title, _ in page_specs({"is_live": True})]
 
@@ -313,7 +313,7 @@ def _scoped_manager_class():
     Only the schedule lookup and the race-weekend probe are stubbed (they hit
     the network); replay saving and loading run for real.
     """
-    from data.source_manager import DataSourceManager
+    from f1dash.data.source_manager import DataSourceManager
 
     class ScopedManager(DataSourceManager):
         def __init__(self, *args, **kwargs):
@@ -332,8 +332,8 @@ def _real_replay_script():
     This is the path HIST-01 broke: the selector offers bare filenames and the
     loader has to resolve them itself.
     """
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
     from tests.test_app_sources import _scoped_manager_class
 
     app.DataSourceManager = _scoped_manager_class()
@@ -381,8 +381,8 @@ class ProgressManager(StubManager):
 
 
 def _progress_script():
-    import app
-    from data.runtime_cache import runtime_cache
+    from f1dash import app
+    from f1dash.data.runtime_cache import runtime_cache
     from tests.test_app_sources import ProgressManager
 
     app.DataSourceManager = ProgressManager
@@ -410,8 +410,8 @@ class TestLoadingAndEmptyStates:
 
     def test_a_panel_says_why_it_is_empty(self):
         def script():
-            from ui.layout import render_weather
-            from ui.status import DataStatus
+            from f1dash.ui.layout import render_weather
+            from f1dash.ui.status import DataStatus
 
             render_weather(
                 None, DataStatus.unavailable("FastF1 has no weather data for this session")
@@ -425,7 +425,7 @@ class TestLoadingAndEmptyStates:
         ]
 
     def test_the_default_wording_is_literal(self):
-        from ui.status import DataStatus
+        from f1dash.ui.status import DataStatus
 
         assert DataStatus.empty("weather data").message == "No weather data for this session."
         assert DataStatus.auth_required("Car positions").message == (

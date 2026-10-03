@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from processing.driver_selection import (
+from f1dash.processing.driver_selection import (
     classification_order,
     default_drivers,
     format_codes,

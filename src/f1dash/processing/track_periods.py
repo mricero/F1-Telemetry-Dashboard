@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from processing.time_utils import seconds_series
+from f1dash.processing.time_utils import seconds_series
 
 # Status code -> the state a chart shades. "7" (VSC ending) is still a VSC.
 NEUTRAL_CODES = {"4": "SC", "5": "RED", "6": "VSC", "7": "VSC"}

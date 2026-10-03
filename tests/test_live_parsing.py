@@ -7,7 +7,7 @@ import zlib
 import pandas as pd
 import pytest
 
-from data.live_adapter import (
+from f1dash.data.live_adapter import (
     LiveDataProcessor,
     decode_topic_payload,
     decode_zipped,
@@ -128,7 +128,7 @@ class TestParsersLiveF1Shapes:
         assert not df.empty and df["Y"].iloc[0] == -200
 
     def test_brake_scaling_via_normalize_units(self):
-        from processing.telemetry_processor import TelemetryProcessor
+        from f1dash.processing.telemetry_processor import TelemetryProcessor
 
         df = LiveDataProcessor.parse_car_data(
             [
@@ -152,9 +152,9 @@ class TestPollPipeline:
     def manager(self, monkeypatch, tmp_path):
         # Avoid touching the real cache dir / network on init
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         return DataSourceManager()
 
@@ -230,7 +230,7 @@ class TestPollPipeline:
         assert snap["session_info"]["gp"] == "Italian Grand Prix"
 
     def test_poll_laps_feed_metrics_store(self, manager):
-        from processing.metrics_store import MetricsStore
+        from f1dash.processing.metrics_store import MetricsStore
 
         self._prime_buffers(manager.live)
         snap = manager.poll_live_data()
@@ -279,9 +279,9 @@ class TestSessionInfoParsing:
     @pytest.fixture
     def manager(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         return DataSourceManager()
 

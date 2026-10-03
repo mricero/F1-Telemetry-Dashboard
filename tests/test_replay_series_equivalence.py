@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import processing.replay_model as model
-from processing.replay_model import (
+import f1dash.processing.replay_model as model
+from f1dash.processing.replay_model import (
     LEADER,
     MISSING,
     POSITION_SETTLE_SECONDS,

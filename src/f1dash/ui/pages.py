@@ -9,11 +9,11 @@ before navigation, and each page reads it from ``st.session_state``.
 
 import streamlit as st
 
-from data.runtime_cache import runtime_cache
-from processing.driver_selection import classification_order
-from ui.dashboard import render_dashboard
-from ui.lap_panels import render_deleted_laps, render_rankings
-from ui.layout import (
+from f1dash.data.runtime_cache import runtime_cache
+from f1dash.processing.driver_selection import classification_order
+from f1dash.ui.dashboard import render_dashboard
+from f1dash.ui.lap_panels import render_deleted_laps, render_rankings
+from f1dash.ui.layout import (
     render_delay_input,
     render_driver_comparison,
     render_feed_status,
@@ -32,14 +32,14 @@ from ui.layout import (
     render_tyre_pace,
     render_weather,
 )
-from ui.preferences import (
+from f1dash.ui.preferences import (
     only_drivers,
     render_driver_picker,
     render_favourites_picker,
     render_layout_pickers,
     render_units_pickers,
 )
-from ui.replay_view import (
+from f1dash.ui.replay_view import (
     FOCUS_PREFIX,
     cursor_key,
     render_session_replay,
@@ -47,7 +47,7 @@ from ui.replay_view import (
     sync_seek_cursor,
     wants_analysis,
 )
-from ui.standings import render_standings
+from f1dash.ui.standings import render_standings
 
 # What app.main() stores for the pages to draw from.
 CONTEXT_KEY = "page_context"

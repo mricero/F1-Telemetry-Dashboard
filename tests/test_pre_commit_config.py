@@ -65,7 +65,7 @@ class TestPreCommitConfig:
 
         assert mypy["language"] == "system"
         assert mypy["pass_filenames"] is False
-        assert mypy["entry"] == "python -m mypy --ignore-missing-imports app.py data processing ui"
+        assert mypy["entry"] == "python -m mypy --ignore-missing-imports src"
 
     @pytest.mark.parametrize(
         ("repo_url", "package"),

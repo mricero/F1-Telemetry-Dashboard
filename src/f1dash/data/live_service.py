@@ -18,7 +18,7 @@ have a Streamlit runtime.
 import contextlib
 import threading
 
-from data.live_adapter import SignalRLiveAdapter
+from f1dash.data.live_adapter import SignalRLiveAdapter
 
 _lock = threading.Lock()
 _adapter: SignalRLiveAdapter | None = None

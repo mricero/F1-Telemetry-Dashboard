@@ -43,9 +43,9 @@ import numpy as np
 import pandas as pd
 
 # Position.z shares FastF1's 1/10 m position units - one definition, both paths.
-from data.fastf1_adapter import POSITION_UNITS_PER_METRE
-from data.live_state import STATE_TOPICS, LiveState, as_list
-from data.signalr_core import (
+from f1dash.data.fastf1_adapter import POSITION_UNITS_PER_METRE
+from f1dash.data.live_state import STATE_TOPICS, LiveState, as_list
+from f1dash.data.signalr_core import (
     AUTH_TOPICS,
     STATUS_TEXT,
     FeedStatus,
@@ -56,7 +56,7 @@ from data.signalr_core import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
-    from data.live_recorder import LiveRecorder
+    from f1dash.data.live_recorder import LiveRecorder
 
 
 def decode_zipped(text: str) -> Any:
@@ -440,7 +440,7 @@ class SignalRLiveAdapter:
         gp = _safe_name(meeting.get("Name") or "live")
         session = _safe_name(info.get("Name") or info.get("Type") or "session")
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        from config import config
+        from f1dash.config import config
 
         directory = Path(config.replay_dir) / f"raw_{gp}_{session}_{stamp}"
         try:
@@ -542,7 +542,7 @@ class SignalRLiveAdapter:
 
     def start_recording(self, directory) -> "LiveRecorder":
         """Record every message from here on, for later replay."""
-        from data.live_recorder import LiveRecorder
+        from f1dash.data.live_recorder import LiveRecorder
 
         self.stop_recording()
         recorder = LiveRecorder(directory)
@@ -910,8 +910,8 @@ class LiveDataProcessor:
         ordered by their best in the running segment and knocked-out cars sit
         under "Eliminated in Q1/Q2" headings, as on the replay (LIVE-19).
         """
-        from processing.time_utils import parse_gap, to_seconds
-        from processing.timing import LEADER, MISSING, format_delta, format_lap_gap
+        from f1dash.processing.time_utils import parse_gap, to_seconds
+        from f1dash.processing.timing import LEADER, MISSING, format_delta, format_lap_gap
 
         def cell(raw: Any, is_first: bool) -> tuple[str, float | None, int]:
             seconds, laps_down = parse_gap(raw)
@@ -1009,8 +1009,8 @@ class LiveDataProcessor:
         reached. The shapes follow f1-dash and the 2023 archive; confirm them
         on a live SQ/Q recording (LIVE-18).
         """
-        from processing.time_utils import to_seconds
-        from processing.timing import LEADER, MISSING, format_delta
+        from f1dash.processing.time_utils import to_seconds
+        from f1dash.processing.timing import LEADER, MISSING, format_delta
 
         by_code = {row["Driver"]: row for row in rows}
         segment_times: dict[str, list[float | None]] = {}

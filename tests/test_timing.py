@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.timing import (
+from f1dash.processing.timing import (
     MISSING,
     SECTORS,
     SEGMENTS_PER_SECTOR,
@@ -497,14 +497,14 @@ class TestSegmentBoundaries:
     """DASH-04: slices are equal in distance, not in point count."""
 
     def test_uniform_sampling_splits_evenly(self):
-        from processing.timing import segment_boundaries
+        from f1dash.processing.timing import segment_boundaries
 
         distance = np.linspace(0.0, 100.0, 101)
 
         assert segment_boundaries(distance, 4).tolist() == [0, 25, 50, 75, 100]
 
     def test_dense_sampling_does_not_skew_the_split(self):
-        from processing.timing import segment_boundaries
+        from f1dash.processing.timing import segment_boundaries
 
         # 90 samples in the first 10 % of the lap, 10 over the remaining 90 %.
         distance = np.concatenate([np.linspace(0.0, 100.0, 90), np.linspace(100.0, 1000.0, 10)])
@@ -517,7 +517,7 @@ class TestSegmentBoundaries:
         assert bounds[-1] == len(distance) - 1
 
     def test_boundaries_are_monotonic_and_sized(self):
-        from processing.timing import segment_boundaries
+        from f1dash.processing.timing import segment_boundaries
 
         bounds = segment_boundaries(np.linspace(0.0, 5000.0, 512), 15)
 
@@ -525,7 +525,7 @@ class TestSegmentBoundaries:
         assert bounds.tolist() == sorted(bounds.tolist())
 
     def test_degenerate_distance_returns_evenly_spaced_indices(self):
-        from processing.timing import segment_boundaries
+        from f1dash.processing.timing import segment_boundaries
 
         bounds = segment_boundaries(np.zeros(20), 4)
 
@@ -548,7 +548,7 @@ class TestDashboardFrames:
         return {"VER": trace}
 
     def test_falls_back_to_the_chart_frames(self):
-        from processing.timing import dashboard_frames
+        from f1dash.processing.timing import dashboard_frames
 
         session = {"telemetry": self._frames(5000), "location": {"VER": pd.DataFrame()}}
 
@@ -558,7 +558,7 @@ class TestDashboardFrames:
         assert location is session["location"]
 
     def test_prefers_the_dedicated_fastest_lap_frames(self):
-        from processing.timing import dashboard_frames
+        from f1dash.processing.timing import dashboard_frames
 
         session = {
             "telemetry": self._frames(300_000),  # full-session distances
@@ -684,7 +684,7 @@ class TestOfficialSegmentColours:
     """DASH-03: purple = session best, green = personal best, yellow = slower."""
 
     def test_personal_best_is_green_and_session_best_purple(self):
-        from processing.timing import segment_states
+        from f1dash.processing.timing import segment_states
 
         # A's best first slice (1.1) is slower than B's (1.0); in the second
         # slice A holds the session best (1.15) on a lap that is not shown.
@@ -700,14 +700,14 @@ class TestOfficialSegmentColours:
         assert states["B"] == ["PURPLE", "GREEN"]
 
     def test_slower_than_personal_best_is_yellow(self):
-        from processing.timing import segment_states
+        from f1dash.processing.timing import segment_states
 
         states = segment_states({"A": [np.array([1.5]), np.array([1.0])]})
 
         assert states["A"] == ["YELLOW"]
 
     def test_a_driver_can_hold_the_session_best_on_a_slower_lap(self):
-        from processing.timing import segment_states
+        from f1dash.processing.timing import segment_states
 
         # A's displayed lap is not their best here, so no purple for A.
         states = segment_states({"A": [np.array([1.4]), np.array([0.9])], "B": [np.array([1.0])]})
@@ -716,7 +716,7 @@ class TestOfficialSegmentColours:
         assert states["B"] == ["GREEN"]  # B's own best, but 0.9 is the session best
 
     def test_unusable_values_are_neutral(self):
-        from processing.timing import segment_states
+        from f1dash.processing.timing import segment_states
 
         states = segment_states({"A": [np.array([np.nan, 1.0])], "B": [np.array([1.0, 1.0])]})
 
@@ -737,14 +737,14 @@ class TestRealSectorBoundaries:
         )
 
     def test_equal_sectors_split_the_lap_in_thirds(self):
-        from processing.timing import sector_boundary_distances
+        from f1dash.processing.timing import sector_boundary_distances
 
         bounds = sector_boundary_distances(self._constant_speed_lap(), [30.0, 30.0, 30.0])
 
         assert bounds == pytest.approx([0.0, 1000.0, 2000.0, 3000.0], abs=10.0)
 
     def test_uneven_sectors_do_not_land_on_thirds(self):
-        from processing.timing import sector_boundary_distances
+        from f1dash.processing.timing import sector_boundary_distances
 
         # 20 s / 40 s / 30 s at constant speed -> 2/9 and 2/3 of the lap.
         bounds = sector_boundary_distances(self._constant_speed_lap(), [20.0, 40.0, 30.0])
@@ -752,14 +752,14 @@ class TestRealSectorBoundaries:
         assert bounds == pytest.approx([0.0, 666.7, 2000.0, 3000.0], abs=10.0)
 
     def test_missing_sector_times_fall_back_to_thirds(self):
-        from processing.timing import sector_boundary_distances
+        from f1dash.processing.timing import sector_boundary_distances
 
         bounds = sector_boundary_distances(self._constant_speed_lap(), [30.0, None, 30.0])
 
         assert bounds == pytest.approx([0.0, 1000.0, 2000.0, 3000.0], abs=10.0)
 
     def test_micro_sectors_follow_the_real_sector_split(self):
-        from processing.timing import micro_sector_times
+        from f1dash.processing.timing import micro_sector_times
 
         lap = self._constant_speed_lap()
         times = micro_sector_times(lap, sector_bounds=[0.0, 600.0, 2400.0, 3000.0])
@@ -772,7 +772,7 @@ class TestRealSectorBoundaries:
         )
 
     def test_without_bounds_the_lap_is_split_evenly(self):
-        from processing.timing import micro_sector_times
+        from f1dash.processing.timing import micro_sector_times
 
         times = micro_sector_times(self._constant_speed_lap())
 
@@ -803,7 +803,7 @@ class TestSectorStripsCoverTheirSector:
         }
 
     def test_short_first_sector_gets_a_short_strip(self):
-        from processing.timing import sector_bounds_for_driver
+        from f1dash.processing.timing import sector_bounds_for_driver
 
         session = self._session([18.0, 54.0, 18.0])
         bounds = sector_bounds_for_driver(session["laps"], "VER", session["telemetry"]["VER"])

@@ -27,8 +27,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from processing.time_utils import to_seconds
-from processing.timing import _valid_laps
+from f1dash.processing.time_utils import to_seconds
+from f1dash.processing.timing import _valid_laps
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class MetricsStore:
 
     def __init__(self, path: str | Path | None = None):
         if path is None:
-            from config import resolve_paths
+            from f1dash.config import resolve_paths
 
             path = resolve_paths()["metrics_store_path"]
         self.path = str(path)

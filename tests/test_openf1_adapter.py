@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 import requests
 
-from data import openf1_adapter as of1
+from f1dash.data import openf1_adapter as of1
 
 SESSIONS = [
     {

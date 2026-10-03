@@ -13,8 +13,8 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from data.live_adapter import TOKEN_ENV_VAR
-from data.signalr_core import token_expiry, token_from_env_value
+from f1dash.data.live_adapter import TOKEN_ENV_VAR
+from f1dash.data.signalr_core import token_expiry, token_from_env_value
 
 _LINE = re.compile(rf"^\s*(?:export\s+)?{TOKEN_ENV_VAR}\s*=")
 

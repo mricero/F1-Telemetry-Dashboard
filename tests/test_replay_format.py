@@ -16,8 +16,10 @@ import pytest
 
 @pytest.fixture
 def manager(monkeypatch, tmp_path):
-    monkeypatch.setattr("data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})())
-    from data.source_manager import DataSourceManager
+    monkeypatch.setattr(
+        "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+    )
+    from f1dash.data.source_manager import DataSourceManager
 
     return DataSourceManager(replay_dir=str(tmp_path))
 
@@ -76,7 +78,7 @@ class TestRoundTrip:
         import json
         from pathlib import Path
 
-        from config import __version__
+        from f1dash.config import __version__
 
         meta = json.loads(
             (Path(manager.save_replay(_session(), "Monza_R")) / "meta.json").read_text()
@@ -384,8 +386,8 @@ class TestCircuitInfoRoundTrip:
         assert loaded["session_info"]["date"] == pd.Timestamp("2026-06-07 13:00:00")
 
     def test_the_replay_payload_builds_with_corner_labels(self, manager):
-        from processing.replay_model import session_clock, tower_series
-        from processing.replay_payload import build_replay_payload
+        from f1dash.processing.replay_model import session_clock, tower_series
+        from f1dash.processing.replay_payload import build_replay_payload
 
         loaded = manager.get_session_data(
             source="replay", replay_file=manager.save_replay(self._race(), "Test_R")
@@ -404,8 +406,8 @@ class TestCircuitInfoRoundTrip:
     def test_a_schema_7_replay_with_string_corners_opens(self, manager):
         from pathlib import Path
 
-        from processing.replay_model import session_clock, tower_series
-        from processing.replay_payload import build_replay_payload
+        from f1dash.processing.replay_model import session_clock, tower_series
+        from f1dash.processing.replay_payload import build_replay_payload
 
         session = self._race()
         session["circuit_info"] = {"rotation": 92.0}

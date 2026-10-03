@@ -1,4 +1,4 @@
-// Mounts ui/components/replay_player into jsdom the way Streamlit's
+// Mounts src/f1dash/ui/components/replay_player into jsdom the way Streamlit's
 // components v2 does: the component's HTML and CSS inside an open shadow
 // root (isolate_styles=True), then the default export called with
 // { name, key, data, parentElement, setStateValue, setTriggerValue } -
@@ -18,7 +18,7 @@ import { JSDOM } from "jsdom";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
-const COMPONENT = path.join(ROOT, "ui", "components", "replay_player");
+const COMPONENT = path.join(ROOT, "src", "f1dash", "ui", "components", "replay_player");
 
 let fixtureDir = process.env.PLAYER_FIXTURE_DIR;
 
@@ -39,6 +39,11 @@ function fixtures() {
     execFileSync(python(), [path.join(HERE, "build_payloads.py"), fixtureDir], {
       cwd: ROOT,
       stdio: "inherit",
+      // f1dash imports from the checkout's src/ without an install (REPO-10).
+      env: {
+        ...process.env,
+        PYTHONPATH: [path.join(ROOT, "src"), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      },
     });
   }
   return fixtureDir;

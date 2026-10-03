@@ -87,7 +87,7 @@ def replay_recording(directory: str | Path, adapter=None):
     final line - the process died mid-write - is skipped rather than aborting
     the replay.
     """
-    from data.live_adapter import SignalRLiveAdapter
+    from f1dash.data.live_adapter import SignalRLiveAdapter
 
     path = Path(directory)
     if not path.is_dir():

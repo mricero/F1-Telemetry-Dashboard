@@ -24,7 +24,7 @@ pytestmark = [
 
 class TestJolpicaLive:
     def test_schedule_2024(self):
-        from data.jolpica_adapter import JolpicaAdapter
+        from f1dash.data.jolpica_adapter import JolpicaAdapter
 
         schedule = JolpicaAdapter().get_schedule(2024)
         assert not schedule.empty
@@ -33,14 +33,14 @@ class TestJolpicaLive:
 
 class TestFastF1Roundtrip:
     def test_available_sessions_2023(self):
-        from data.fastf1_adapter import FastF1Adapter
+        from f1dash.data.fastf1_adapter import FastF1Adapter
 
         meetings = FastF1Adapter().get_available_sessions(2023)
         assert not meetings.empty
         assert "Bahrain Grand Prix" in set(meetings["EventName"])
 
     def test_load_cached_race_and_telemetry(self):
-        from data.fastf1_adapter import FastF1Adapter
+        from f1dash.data.fastf1_adapter import FastF1Adapter
 
         adapter = FastF1Adapter()
         session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
@@ -57,7 +57,7 @@ class TestFastF1Roundtrip:
         it fails. Only mocks that were not shaped like real FastF1 objects
         ever let this pass.
         """
-        from data.fastf1_adapter import FastF1Adapter
+        from f1dash.data.fastf1_adapter import FastF1Adapter
 
         adapter = FastF1Adapter()
         session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
@@ -70,7 +70,7 @@ class TestFastF1Roundtrip:
 
     def test_fastest_lap_scope_is_lap_relative(self):
         """Default scope must not hand the browser a whole race of points."""
-        from data.fastf1_adapter import SCOPE_SESSION, FastF1Adapter
+        from f1dash.data.fastf1_adapter import SCOPE_SESSION, FastF1Adapter
 
         adapter = FastF1Adapter()
         session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
@@ -83,7 +83,7 @@ class TestFastF1Roundtrip:
         assert whole["Distance"].max() > one_lap["Distance"].max() * 5
 
     def test_laps_carry_derived_pit_out_flag(self):
-        from data.fastf1_adapter import FastF1Adapter
+        from f1dash.data.fastf1_adapter import FastF1Adapter
 
         adapter = FastF1Adapter()
         session = adapter.load_session(2023, "Bahrain Grand Prix", "R")
@@ -109,7 +109,9 @@ class TestAppSmoke:
         # Keep the developer's real records file out of the test.
         monkeypatch.setenv("F1_METRICS_STORE", str(tmp_path / "metrics.json"))
 
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=600)
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "src" / "f1dash" / "app.py"), default_timeout=600
+        )
         app.query_params["year"] = "2023"
         app.query_params["gp"] = "Bahrain Grand Prix"
         app.query_params["session"] = "R"
@@ -169,7 +171,7 @@ class TestDashboardOnRealSession:
 
     @staticmethod
     def _session():
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         return DataSourceManager().get_session_data(
             source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="Q"
@@ -183,7 +185,7 @@ class TestDashboardOnRealSession:
         Bahrain, HUL P10). Races are ordered by finishing position instead -
         see ``TestRaceClassificationOnRealSession``.
         """
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         session = self._session()
         rows = build_timing_rows(session)
@@ -195,7 +197,7 @@ class TestDashboardOnRealSession:
         # Drivers who actually set a Q3 lap are in ascending Q3 order; one who
         # reached Q3 without setting a time keeps a (possibly faster) Q2 lap
         # and still classifies behind them.
-        from processing.time_utils import to_seconds
+        from f1dash.processing.time_utils import to_seconds
 
         q3 = session["results"].set_index("Abbreviation")["Q3"]
         set_a_q3_lap = [
@@ -213,7 +215,7 @@ class TestDashboardOnRealSession:
 
     def test_qualifying_partitions_follow_the_segments(self):
         """DASH-02: 20 cars in 2023 -> 10 / 5 / 5, with named headings."""
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         rows = build_timing_rows(self._session())
         segments = [r["segment"] for r in rows]
@@ -229,9 +231,9 @@ class TestDashboardOnRealSession:
     def test_track_map_svg_is_wellformed_with_corners(self):
         import xml.etree.ElementTree as ET
 
-        from processing.timing import build_timing_rows
-        from ui.dashboard import map_panel_html
-        from ui.track_map import build_track_svg
+        from f1dash.processing.timing import build_timing_rows
+        from f1dash.ui.dashboard import map_panel_html
+        from f1dash.ui.track_map import build_track_svg
 
         session = self._session()
         rows = build_timing_rows(session)
@@ -251,7 +253,7 @@ class TestDashboardOnRealSession:
         assert "f1-map-wrap" in panel and "Session best" in panel
 
     def test_micro_sectors_cover_every_driver_with_telemetry(self):
-        from processing.timing import TOTAL_SEGMENTS, build_timing_rows
+        from f1dash.processing.timing import TOTAL_SEGMENTS, build_timing_rows
 
         session = self._session()
         rows = build_timing_rows(session)
@@ -269,22 +271,22 @@ class TestRaceClassificationOnRealSession:
 
     @staticmethod
     def _race():
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         return DataSourceManager().get_session_data(
             source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="R"
         )
 
     def test_podium_matches_the_official_result(self):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         rows = build_timing_rows(self._race())
 
         assert [r["code"] for r in rows[:3]] == ["VER", "PER", "ALO"]
 
     def test_gaps_match_the_official_times(self):
-        from processing.time_utils import to_seconds
-        from processing.timing import build_timing_rows
+        from f1dash.processing.time_utils import to_seconds
+        from f1dash.processing.timing import build_timing_rows
 
         session = self._race()
         rows = build_timing_rows(session)
@@ -296,7 +298,7 @@ class TestRaceClassificationOnRealSession:
             assert abs(float(row["gap"].lstrip("+")) - official) < 0.1
 
     def test_the_fastest_lap_setter_is_not_necessarily_first(self):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         rows = build_timing_rows(self._race())
         fastest = min(
@@ -319,7 +321,7 @@ class TestScopeIndependenceOfTheDashboard:
 
     @staticmethod
     def _race(scope: str):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         return DataSourceManager().get_session_data(
             source="fastf1",
@@ -330,8 +332,8 @@ class TestScopeIndependenceOfTheDashboard:
         )
 
     def test_same_dominance_and_micro_sectors_in_both_scopes(self):
-        from processing.timing import build_timing_rows, dashboard_frames, micro_sector_times
-        from ui.track_map import dominance_segments
+        from f1dash.processing.timing import build_timing_rows, dashboard_frames, micro_sector_times
+        from f1dash.ui.track_map import dominance_segments
 
         def fingerprint(session):
             telemetry, _ = dashboard_frames(session)
@@ -346,8 +348,8 @@ class TestScopeIndependenceOfTheDashboard:
         assert fingerprint(self._race("fastest")) == fingerprint(self._race("session"))
 
     def test_full_session_scope_still_yields_a_small_svg(self):
-        from processing.timing import build_timing_rows
-        from ui.dashboard import map_panel_html
+        from f1dash.processing.timing import build_timing_rows
+        from f1dash.ui.dashboard import map_panel_html
 
         session = self._race("session")
         markup = map_panel_html(session, build_timing_rows(session))
@@ -359,8 +361,8 @@ class TestStatusBadgesOnRealSession:
     """DASH-10: DNFs must not be presented as classified finishes."""
 
     def test_retirements_are_badged_on_the_2023_bahrain_race(self):
-        from data.source_manager import DataSourceManager
-        from processing.timing import build_timing_rows
+        from f1dash.data.source_manager import DataSourceManager
+        from f1dash.processing.timing import build_timing_rows
 
         session = DataSourceManager().get_session_data(
             source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="R"
@@ -379,7 +381,7 @@ class TestReplayTimelineOnRealSession:
 
     @staticmethod
     def _race():
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         return DataSourceManager().get_session_data(
             source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type="R"
@@ -393,7 +395,7 @@ class TestReplayTimelineOnRealSession:
         assert positions["Driver"].nunique() >= 15
 
     def test_it_spans_the_whole_race(self):
-        from processing.replay import timeline_bounds
+        from f1dash.processing.replay import timeline_bounds
 
         start, end = timeline_bounds(self._race()["positions"])
 
@@ -401,7 +403,7 @@ class TestReplayTimelineOnRealSession:
         assert (end - start) > 3600
 
     def test_the_grid_moves_between_moments(self):
-        from processing.replay import positions_at, timeline_bounds
+        from f1dash.processing.replay import positions_at, timeline_bounds
 
         positions = self._race()["positions"]
         # FastF1's SessionTime counts from the start of the recording, not
@@ -423,7 +425,7 @@ _SESSIONS: dict = {}
 def _bahrain(session_type: str) -> dict:
     """2023 Bahrain, loaded once per test run (FastF1 caches it on disk)."""
     if session_type not in _SESSIONS:
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         _SESSIONS[session_type] = DataSourceManager().get_session_data(
             source="fastf1", year=2023, gp="Bahrain Grand Prix", session_type=session_type
@@ -457,8 +459,8 @@ class TestReplayModelOnARealRace:
     """REPLAY-03 acceptance 9: the model agrees with FastF1's own lap data."""
 
     def test_the_tower_after_lap_ten(self):
-        from processing.replay_model import snapshot_at, tower_series
-        from processing.timing import build_timing_rows
+        from f1dash.processing.replay_model import snapshot_at, tower_series
+        from f1dash.processing.timing import build_timing_rows
 
         race = _bahrain("R")
         laps = race["laps"]
@@ -478,7 +480,7 @@ class TestReplayModelOnARealRace:
 
 class TestOpenF1Live:
     def test_team_radio_2023_italian_grand_prix(self):
-        from data.openf1_adapter import get_team_radio
+        from f1dash.data.openf1_adapter import get_team_radio
 
         radio = get_team_radio(2023, "Race", pd.Timestamp("2023-09-03 13:00"), "Italy")
         assert not radio.empty

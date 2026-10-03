@@ -13,7 +13,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _isolated_live_service():
-    from data.live_service import reset_live_service
+    from f1dash.data.live_service import reset_live_service
 
     reset_live_service()
     yield
@@ -30,7 +30,7 @@ def _isolated_user_files(tmp_path_factory, monkeypatch):
     """
     import os
 
-    import config
+    from f1dash import config
 
     root = tmp_path_factory.mktemp("user-files")
     paths = {

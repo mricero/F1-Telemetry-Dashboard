@@ -6,9 +6,11 @@ the adapters.
 
 Where files live (DIST-03, CACHE-04):
 
-* **A git checkout** (a ``.git`` next to ``app.py``) keeps the repo-local
-  paths development has always used: ``ff1_cache/``, ``replay_sessions/``,
-  ``metrics_store.sqlite`` and ``.env`` in the project folder.
+* **A git checkout** (this package sits in ``<root>/src/f1dash/`` and
+  ``<root>`` holds a ``.git``) keeps the repo-local paths development has
+  always used: ``ff1_cache/``, ``replay_sessions/``, ``metrics_store.sqlite``
+  and ``.env`` in the project folder, ``<root>``. An editable install
+  (``uv pip install -e .``) runs from ``src/`` too, so it counts as one.
 * **An installed copy** (``uv tool install``, a wheel) has no project folder
   worth writing into - it would be the tool's site-packages or wherever the
   user typed ``f1dash`` - so it uses the per-user directories from
@@ -29,7 +31,12 @@ from pathlib import Path
 import platformdirs
 
 APP_NAME = "f1dash"
-PROJECT_ROOT = Path(__file__).resolve().parent
+PACKAGE_DIR = Path(__file__).resolve().parent
+# The project folder of a checkout is two levels up (``<root>/src/f1dash``,
+# REPO-10). An installed copy sits in site-packages, whose grandparent means
+# nothing, so there the package folder itself is the root - and it has no
+# ``.git``, which is what makes it an install.
+PROJECT_ROOT = PACKAGE_DIR.parents[1] if PACKAGE_DIR.parent.name == "src" else PACKAGE_DIR
 UNKNOWN_VERSION = "0+unknown"
 
 

@@ -8,8 +8,8 @@ sector best - the same rule the tower and the records follow.
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import seconds_series
-from processing.timing import SECTORS, _valid_laps
+from f1dash.processing.time_utils import seconds_series
+from f1dash.processing.timing import SECTORS, _valid_laps
 
 # FastF1 lap column -> the label the panel shows. Order is the panel order.
 SPEED_TRAPS: tuple[tuple[str, str], ...] = (

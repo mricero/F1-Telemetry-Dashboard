@@ -4,7 +4,7 @@ from typing import ClassVar
 
 import pandas as pd
 
-from processing.pit_loss import (
+from f1dash.processing.pit_loss import (
     DEFAULT_PIT_LOSS,
     pit_loss_for,
     pit_stop_durations,

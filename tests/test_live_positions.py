@@ -8,7 +8,7 @@ distance jump by a circuit's width every time a car was in the pits.
 import numpy as np
 import pandas as pd
 
-from data.live_adapter import LiveDataProcessor
+from f1dash.data.live_adapter import LiveDataProcessor
 from tests import live_fixtures
 
 
@@ -69,7 +69,7 @@ class TestOnTrackFiltering:
         assert distance[-1] == 200.0
 
     def test_the_recorded_garage_samples_are_filtered_out(self):
-        from data.live_adapter import decode_topic_payload
+        from f1dash.data.live_adapter import decode_topic_payload
 
         records = []
         for timestamp, payload in live_fixtures.messages("Position.z"):

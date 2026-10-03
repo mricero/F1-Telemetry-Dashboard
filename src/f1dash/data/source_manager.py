@@ -13,20 +13,20 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from config import __version__, config
-from data.fastf1_adapter import (
+from f1dash.config import __version__, config
+from f1dash.data.fastf1_adapter import (
     SCOPE_FASTEST,
     FastF1Adapter,
     latest_completed_event,
     live_session_now,
 )
-from data.jolpica_adapter import JolpicaAdapter
-from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
-from data.live_service import get_live_adapter
-from data.live_state import as_list
-from processing.replay import ReplayClock, replay_clock
-from processing.time_utils import to_seconds
-from processing.timing import is_race_session
+from f1dash.data.jolpica_adapter import JolpicaAdapter
+from f1dash.data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
+from f1dash.data.live_service import get_live_adapter
+from f1dash.data.live_state import as_list
+from f1dash.processing.replay import ReplayClock, replay_clock
+from f1dash.processing.time_utils import to_seconds
+from f1dash.processing.timing import is_race_session
 
 logger = logging.getLogger(__name__)
 

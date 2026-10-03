@@ -14,10 +14,10 @@ from collections.abc import Sequence
 import pandas as pd
 import streamlit as st
 
-from processing.replay import format_clock, positions_at
-from processing.replay_model import TRACK_STATUS_FLAGS, flag_state, race_clock_text
-from processing.time_utils import to_seconds
-from processing.timing import (
+from f1dash.processing.replay import format_clock, positions_at
+from f1dash.processing.replay_model import TRACK_STATUS_FLAGS, flag_state, race_clock_text
+from f1dash.processing.time_utils import to_seconds
+from f1dash.processing.timing import (
     MISSING,
     build_timing_rows,
     dashboard_frames,
@@ -29,7 +29,7 @@ from processing.timing import (
     sector_leaders,
     theoretical_best,
 )
-from processing.units import (
+from f1dash.processing.units import (
     METRIC,
     Units,
     speed_from_kmh,
@@ -37,14 +37,14 @@ from processing.units import (
     temp_from_c,
     temp_label,
 )
-from ui.preferences import (
+from f1dash.ui.preferences import (
     favourite_drivers,
     format_wall_clock,
     hidden_columns,
     hidden_panels,
 )
-from ui.preferences import units as viewer_units
-from ui.theme import (
+from f1dash.ui.preferences import units as viewer_units
+from f1dash.ui.theme import (
     COMPOUND_LETTER,
     COMPOUND_RING,
     DASHBOARD_CSS,
@@ -55,7 +55,7 @@ from ui.theme import (
     team_color,
     text_on,
 )
-from ui.track_map import (
+from f1dash.ui.track_map import (
     build_track_svg,
     dominance_legend,
     dominance_segments,

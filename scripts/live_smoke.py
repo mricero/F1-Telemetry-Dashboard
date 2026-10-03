@@ -7,6 +7,9 @@ fastest way to check connectivity, the token and parsing before a session:
 
     .venv/Scripts/python scripts/live_smoke.py [seconds] [--record DIR]
 
+``f1dash`` must be importable: install the checkout once with
+``uv pip install -e .`` (REPO-10).
+
 Between sessions the hub still answers: the subscription snapshot holds the
 last session's final state, then only pings arrive (state WAITING). During a
 session the state turns LIVE and TimingData, TrackStatus, WeatherData ...
@@ -15,16 +18,12 @@ Position.z.
 """
 
 import argparse
-import sys
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from config import config  # noqa: F401  (loads .env: F1TV_SUBSCRIPTION_TOKEN)
-from data.live_adapter import SignalRLiveAdapter, subscription_token
-from data.signalr_core import token_expiry
+from f1dash.config import config  # noqa: F401  (loads .env: F1TV_SUBSCRIPTION_TOKEN)
+from f1dash.data.live_adapter import SignalRLiveAdapter, subscription_token
+from f1dash.data.signalr_core import token_expiry
 
 
 def main(duration: int = 30, record: str | None = None) -> int:
@@ -82,7 +81,7 @@ def main(duration: int = 30, record: str | None = None) -> int:
         print(adapter.recorder_error)
 
     print("\n--- what the dashboard would show ---")
-    from data.source_manager import DataSourceManager
+    from f1dash.data.source_manager import DataSourceManager
 
     manager = DataSourceManager(live_adapter=adapter)
     snapshot = manager.poll_live_data()

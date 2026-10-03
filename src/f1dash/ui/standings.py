@@ -12,15 +12,15 @@ script on every interaction); the maths is in ``processing.standings``.
 import pandas as pd
 import streamlit as st
 
-from data.jolpica_adapter import JolpicaAdapter
-from processing.standings import (
+from f1dash.data.jolpica_adapter import JolpicaAdapter
+from f1dash.processing.standings import (
     parse_constructor_standings,
     parse_driver_standings,
     project_standings,
     round_for_event,
 )
-from processing.timing import is_race_session
-from ui.status import DataStatus, show
+from f1dash.processing.timing import is_race_session
+from f1dash.ui.status import DataStatus, show
 
 STANDINGS_TTL_SECONDS = 1800
 SPRINT_NAMES = {"s", "sprint"}

@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from processing.standings import (
+from f1dash.processing.standings import (
     parse_constructor_standings,
     parse_driver_standings,
     points_for,
@@ -11,7 +11,7 @@ from processing.standings import (
     round_for_event,
     unplaced_drivers,
 )
-from ui.standings import live_order
+from f1dash.ui.standings import live_order
 
 
 def _driver(position, code, given, family, team_id, team, points, wins=0):

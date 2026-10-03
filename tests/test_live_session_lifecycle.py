@@ -14,9 +14,9 @@ from typing import ClassVar
 import pandas as pd
 import pytest
 
-from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
-from data.live_recorder import replay_recording
-from data.source_manager import DataSourceManager
+from f1dash.data.live_adapter import LiveDataProcessor, SignalRLiveAdapter
+from f1dash.data.live_recorder import replay_recording
+from f1dash.data.source_manager import DataSourceManager
 from tests import live_fixtures
 
 QUALI = {
@@ -44,7 +44,9 @@ DRIVERS = {
 
 @pytest.fixture
 def manager(monkeypatch):
-    monkeypatch.setattr("data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+    monkeypatch.setattr(
+        "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+    )
 
     def build(adapter=None):
         return DataSourceManager(live_adapter=adapter or SignalRLiveAdapter())
@@ -240,7 +242,7 @@ class TestAutoRecording:
             self.alive = False
 
     def test_two_sessions_give_two_directories(self, tmp_path, monkeypatch):
-        from config import config
+        from f1dash.config import config
 
         monkeypatch.setattr(config, "replay_dir", str(tmp_path))
         monkeypatch.delenv("F1_LIVE_AUTORECORD", raising=False)
@@ -260,7 +262,7 @@ class TestAutoRecording:
         assert any("_Race_" in name for name in folders)
 
     def test_with_the_flag_off_nothing_is_written(self, tmp_path, monkeypatch):
-        from config import config
+        from f1dash.config import config
 
         monkeypatch.setattr(config, "replay_dir", str(tmp_path))
         monkeypatch.setenv("F1_LIVE_AUTORECORD", "0")
@@ -271,7 +273,7 @@ class TestAutoRecording:
         assert list(tmp_path.iterdir()) == []
 
     def test_a_fixture_replay_records_nothing(self, tmp_path, monkeypatch):
-        from config import config
+        from f1dash.config import config
 
         monkeypatch.setattr(config, "replay_dir", str(tmp_path))
         adapter = SignalRLiveAdapter()  # never started: replaying, not live
@@ -487,7 +489,7 @@ class TestLiveScreen:
     (LIVE-34) and the track-state chip on the map (LIVE-22)."""
 
     def test_the_header_shows_the_running_segment_and_its_clock(self, manager):
-        from ui.dashboard import header_html
+        from f1dash.ui.dashboard import header_html
 
         adapter = SignalRLiveAdapter()
         adapter.seed_state(
@@ -508,7 +510,7 @@ class TestLiveScreen:
         assert "0:07:41" in header
 
     def test_a_dry_live_session_shows_no_rain(self, manager):
-        from ui.dashboard import header_html
+        from f1dash.ui.dashboard import header_html
 
         adapter = SignalRLiveAdapter()
         adapter.seed_state({"SessionInfo": RACE, "DriverList": DRIVERS})
@@ -520,8 +522,8 @@ class TestLiveScreen:
         assert ">NO<" in header
 
     def test_a_safety_car_tints_the_live_map_and_shows_the_chip(self, manager):
-        from ui.dashboard import track_state_marks
-        from ui.theme import FLAG_STATES
+        from f1dash.ui.dashboard import track_state_marks
+        from f1dash.ui.theme import FLAG_STATES
 
         adapter = SignalRLiveAdapter()
         adapter.seed_state(

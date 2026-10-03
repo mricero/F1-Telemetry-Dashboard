@@ -14,8 +14,8 @@ on track during lap 5. B takes the flag at 1450; the result is B, C, A.
 import numpy as np
 import pandas as pd
 
-from processing.replay import build_position_timeline, replay_clock
-from processing.time_utils import parse_gap
+from f1dash.processing.replay import build_position_timeline, replay_clock
+from f1dash.processing.time_utils import parse_gap
 
 LIGHTS_OUT = 1000.0
 RACE_END_BY = {"A": 1400.0, "B": 1450.0, "C": 1470.0}  # last position sample

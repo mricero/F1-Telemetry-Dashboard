@@ -2,12 +2,15 @@
 
 Thin orchestration layer: session selection, data loading (with the
 two-tier cache), processing and record keeping. All rendering lives in
-:mod:`ui.layout`.
+:mod:`f1dash.ui.layout`.
 
-Either entry point works::
+This file is the Streamlit script (REPO-10). The ``f1dash`` command runs it
+with ``streamlit run``; a checkout's root ``app.py`` is a shim that executes
+it, so every entry point works::
 
-    streamlit run app.py     # the normal way
-    python app.py            # re-enters through Streamlit automatically
+    f1dash                          # installed, or python -m f1dash
+    streamlit run app.py            # from a checkout (the root shim)
+    python app.py                   # re-enters through Streamlit automatically
 """
 
 import logging
@@ -24,7 +27,7 @@ _RELAUNCH_FLAG = "F1_DASHBOARD_RELAUNCHED"
 _BARE_MODE_HELP = """\
 Could not start the Streamlit runtime. Run the dashboard directly with:
 
-    streamlit run app.py
+    f1dash        (or, from a checkout: streamlit run app.py)
 
 The plain interpreter leaves Streamlit in "bare mode", where widgets return
 defaults, session state is unavailable and st.stop() does nothing - which
@@ -62,7 +65,7 @@ if __name__ == "__main__" and not streamlit_runtime_exists():
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from config import config  # noqa: E402  (loads .env before adapters read it)
+from f1dash.config import config  # noqa: E402  (loads .env before adapters read it)
 
 # The adapters degrade to empty frames when an upstream call fails and say so
 # through logging; without this their warnings would never be emitted (REPO-11).
@@ -70,15 +73,15 @@ logging.basicConfig(
     level=getattr(logging, str(config.log_level).upper(), logging.WARNING),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-from data.fastf1_adapter import FastF1Adapter  # noqa: E402
-from data.runtime_cache import runtime_cache  # noqa: E402
-from data.source_manager import DataSourceManager  # noqa: E402
-from processing.metrics_store import MetricsStore  # noqa: E402
-from processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
-from ui.layout import render_header, render_session_selector, selection_label  # noqa: E402
-from ui.pages import CONTEXT_KEY, enter_page, pages_for  # noqa: E402
-from ui.replay_view import SECTOR_MEMO_PREFIX, session_key  # noqa: E402
-from ui.theme import NEUTRAL_GREY  # noqa: E402
+from f1dash.data.fastf1_adapter import FastF1Adapter  # noqa: E402
+from f1dash.data.runtime_cache import runtime_cache  # noqa: E402
+from f1dash.data.source_manager import DataSourceManager  # noqa: E402
+from f1dash.processing.metrics_store import MetricsStore  # noqa: E402
+from f1dash.processing.telemetry_processor import TelemetryProcessor, max_lap_number  # noqa: E402
+from f1dash.ui.layout import render_header, render_session_selector, selection_label  # noqa: E402
+from f1dash.ui.pages import CONTEXT_KEY, enter_page, pages_for  # noqa: E402
+from f1dash.ui.replay_view import SECTOR_MEMO_PREFIX, session_key  # noqa: E402
+from f1dash.ui.theme import NEUTRAL_GREY  # noqa: E402
 
 
 def load_session_data(data_manager, selection: dict) -> dict:

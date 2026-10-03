@@ -11,11 +11,11 @@ see exactly what the Replay page shows (IMPROVEMENTS.md REPLAY-05).
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
+# f1dash comes from an install of this checkout (uv pip install -e .) or
+# PYTHONPATH=src (REPO-10); the script no longer patches sys.path.
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 SHIM = """
 <script type="module">
@@ -44,12 +44,22 @@ window.replayReady = true;
 """
 
 
+def _replay_fixtures():
+    """tests/replay_fixtures.py by its path: ``tests`` is not on sys.path here."""
+    import importlib.util
+
+    path = ROOT / "tests" / "replay_fixtures.py"
+    spec = importlib.util.spec_from_file_location("replay_fixtures", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _session(args):
     if args.fixture:
-        from tests.replay_fixtures import race_session
-
-        return race_session(), "fixture:race"
-    from data.source_manager import DataSourceManager
+        return _replay_fixtures().race_session(), "fixture:race"
+    from f1dash.data.source_manager import DataSourceManager
 
     session = DataSourceManager().get_session_data(
         source="fastf1", year=args.year, gp=args.gp, session_type=args.session
@@ -59,11 +69,11 @@ def _session(args):
 
 def build_page(session: dict, key: str) -> str:
     """The preview page for one session."""
-    from processing.replay_model import session_clock, tower_series
-    from processing.replay_payload import build_replay_payload
-    from ui.components.replay_player import component_source, player_style
-    from ui.fonts import font_face_css
-    from ui.theme import BG
+    from f1dash.processing.replay_model import session_clock, tower_series
+    from f1dash.processing.replay_payload import build_replay_payload
+    from f1dash.ui.components.replay_player import component_source, player_style
+    from f1dash.ui.fonts import font_face_css
+    from f1dash.ui.theme import BG
 
     series = tower_series(session)
     payload = build_replay_payload(session, series, session_clock(session), key)

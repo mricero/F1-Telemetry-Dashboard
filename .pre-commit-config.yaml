@@ -24,7 +24,7 @@ repos:
       # saw. This runs the CI command with the project's own interpreter.
       - id: mypy
         name: mypy
-        entry: python -m mypy --ignore-missing-imports app.py data processing ui
+        entry: python -m mypy --ignore-missing-imports src
         language: system
         types: [python]
         pass_filenames: false

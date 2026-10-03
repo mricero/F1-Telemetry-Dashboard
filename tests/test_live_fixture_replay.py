@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.live_adapter import LiveDataProcessor, SignalRLiveAdapter, decode_topic_payload
+from f1dash.data.live_adapter import LiveDataProcessor, SignalRLiveAdapter, decode_topic_payload
 from tests import live_fixtures
 
 
@@ -50,7 +50,7 @@ class TestRealSessionInfoShape:
         assert payload["Name"] == "Race"  # the *session* name
 
     def test_the_parser_reads_the_grand_prix(self, adapter_with_session_info):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         info = DataSourceManager._session_info_from_feed(adapter_with_session_info)
 
@@ -171,7 +171,7 @@ class TestRealTyreStintShape:
         assert any("TotalLaps" in fields for fields in partial)
 
     def test_the_state_layer_keeps_them(self):
-        from data.live_state import LiveState
+        from f1dash.data.live_state import LiveState
 
         state = LiveState()
         for _, payload in live_fixtures.messages("TyreStintSeries"):
@@ -189,9 +189,9 @@ class TestEndToEndReplay:
     @staticmethod
     def _primed_manager(monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         manager = DataSourceManager()
         for topic in ("SessionInfo", "DriverList", "TimingData", "TyreStintSeries"):

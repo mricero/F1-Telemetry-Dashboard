@@ -14,8 +14,8 @@ import re
 import pandas as pd
 import streamlit as st
 
-from processing.driver_selection import default_drivers, format_codes, parse_codes
-from processing.units import (
+from f1dash.processing.driver_selection import default_drivers, format_codes, parse_codes
+from f1dash.processing.units import (
     METRIC,
     SPEED_CHOICES,
     SPEED_PARAM,
@@ -31,7 +31,7 @@ from processing.units import (
     utc_moment,
     wall_clock,
 )
-from processing.view_params import (
+from f1dash.processing.view_params import (
     HIDE_COLUMNS_PARAM,
     HIDE_PANELS_PARAM,
     PANEL_CHOICES,

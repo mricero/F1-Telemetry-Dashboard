@@ -21,8 +21,10 @@ def _script():
 
 @pytest.fixture
 def manager(monkeypatch, tmp_path):
-    monkeypatch.setattr("data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})())
-    from data.source_manager import DataSourceManager
+    monkeypatch.setattr(
+        "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+    )
+    from f1dash.data.source_manager import DataSourceManager
 
     return DataSourceManager(replay_dir=str(tmp_path / "replays"))
 

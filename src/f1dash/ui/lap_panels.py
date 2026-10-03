@@ -7,10 +7,10 @@ numbers come from :mod:`processing.lap_review` and :mod:`processing.deleted_laps
 import pandas as pd
 import streamlit as st
 
-from processing.deleted_laps import deleted_laps, track_limit_counts
-from processing.lap_review import SPEED_TRAPS, sector_ranking, speed_ranking
-from processing.replay import format_clock
-from processing.timing import MISSING, SECTORS, format_lap
+from f1dash.processing.deleted_laps import deleted_laps, track_limit_counts
+from f1dash.processing.lap_review import SPEED_TRAPS, sector_ranking, speed_ranking
+from f1dash.processing.replay import format_clock
+from f1dash.processing.timing import MISSING, SECTORS, format_lap
 
 RANKING_LIMIT = 10
 

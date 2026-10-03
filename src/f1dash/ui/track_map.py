@@ -15,8 +15,8 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from processing.timing import segment_boundaries
-from processing.track_geometry import (  # noqa: F401 - re-exported for callers and tests
+from f1dash.processing.timing import segment_boundaries
+from f1dash.processing.track_geometry import (  # noqa: F401 - re-exported for callers and tests
     MAX_OUTLINE_POINTS,
     VIEW_H,
     VIEW_W,
@@ -25,7 +25,7 @@ from processing.track_geometry import (  # noqa: F401 - re-exported for callers 
     rotate_points,
     track_geometry,
 )
-from ui.theme import BG, EDGE, SURFACE_2, TEXT, TEXT_DIM, WHITE, safe_hex, team_color
+from f1dash.ui.theme import BG, EDGE, SURFACE_2, TEXT, TEXT_DIM, WHITE, safe_hex, team_color
 
 # Mini-sectors used for the dominance layer. 3 sectors x 5 segments matches
 # the leaderboard's micro-sector strips so the two views agree.

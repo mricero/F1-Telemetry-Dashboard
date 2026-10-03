@@ -18,13 +18,13 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from config import config
-from data.fastf1_adapter import session_codes_for_event
-from data.live_adapter import TOKEN_ENV_VAR, subscription_token
-from data.openf1_adapter import FIRST_YEAR as OPENF1_FIRST_YEAR
-from data.openf1_adapter import get_team_radio
-from processing.lap_compare import SCOPE_SESSION as COMPARE_SESSION_SCOPE
-from processing.lap_compare import (
+from f1dash.config import config
+from f1dash.data.fastf1_adapter import session_codes_for_event
+from f1dash.data.live_adapter import TOKEN_ENV_VAR, subscription_token
+from f1dash.data.openf1_adapter import FIRST_YEAR as OPENF1_FIRST_YEAR
+from f1dash.data.openf1_adapter import get_team_radio
+from f1dash.processing.lap_compare import SCOPE_SESSION as COMPARE_SESSION_SCOPE
+from f1dash.processing.lap_compare import (
     available_laps,
     corner_markers,
     fastest_lap_number,
@@ -32,9 +32,9 @@ from processing.lap_compare import (
     lap_times,
     shared_grid,
 )
-from processing.telemetry_processor import TelemetryProcessor, max_lap_number
-from processing.time_utils import seconds_series
-from processing.timing import (
+from f1dash.processing.telemetry_processor import TelemetryProcessor, max_lap_number
+from f1dash.processing.time_utils import seconds_series
+from f1dash.processing.timing import (
     MISSING,
     format_delta,
     format_lap,
@@ -42,14 +42,14 @@ from processing.timing import (
     is_race_session,
     is_raining,
 )
-from processing.track_periods import lap_spans, lap_states
-from processing.units import speed_from_kmh, speed_label, temp_from_c, temp_label
-from ui.dashboard import render_dashboard, wind_kmh
-from ui.fonts import font_face_css
-from ui.preferences import format_wall_clock, sync_preference_params, units
-from ui.standings import render_standings
-from ui.status import DataStatus, show
-from ui.theme import (
+from f1dash.processing.track_periods import lap_spans, lap_states
+from f1dash.processing.units import speed_from_kmh, speed_label, temp_from_c, temp_label
+from f1dash.ui.dashboard import render_dashboard, wind_kmh
+from f1dash.ui.fonts import font_face_css
+from f1dash.ui.preferences import format_wall_clock, sync_preference_params, units
+from f1dash.ui.standings import render_standings
+from f1dash.ui.status import DataStatus, show
+from f1dash.ui.theme import (
     ACCENT,
     APP_CSS,
     CHART_COOL,
@@ -183,7 +183,7 @@ RECENT_LIMIT = 5
 def app_version() -> str:
     """The app version (REPO-23), or ``unknown`` on a config without one."""
     try:
-        from config import __version__
+        from f1dash.config import __version__
     except ImportError:
         return "unknown"
     return str(__version__)
@@ -202,7 +202,7 @@ def menu_items() -> dict:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _update_notice_cached(version: str) -> str | None:
-    from data.update_check import update_notice
+    from f1dash.data.update_check import update_notice
 
     return update_notice(version)
 
@@ -241,8 +241,8 @@ def clear_cached_schedules() -> None:
 
 def clear_loaded_sessions() -> None:
     """Drop the sessions held in memory: the runtime cache and FastF1's."""
-    from data.fastf1_adapter import clear_session_cache
-    from data.runtime_cache import runtime_cache
+    from f1dash.data.fastf1_adapter import clear_session_cache
+    from f1dash.data.runtime_cache import runtime_cache
 
     runtime_cache.clear()
     clear_session_cache()
@@ -924,7 +924,7 @@ def freshness_caption(last_heartbeat, now: datetime | None = None) -> str:
 
 def token_line(token: str | None, now: datetime | None = None) -> str:
     """One sentence on the subscription token: absent, valid, expired."""
-    from data.token_store import token_status
+    from f1dash.data.token_store import token_status
 
     if not token:
         return "No subscription token: timing, tyres, race control and weather only"
@@ -1168,7 +1168,7 @@ def render_token_helper(now: datetime | None = None) -> None:
     back. No automated login: ``fastf1``'s helper starts a blocking local
     auth server, which has no place inside the app.
     """
-    from data.token_store import save_subscription_token
+    from f1dash.data.token_store import save_subscription_token
 
     with st.expander("Subscription token", expanded=False):
         st.caption(token_line(subscription_token(), now=now))
@@ -1896,7 +1896,7 @@ def render_tyre_pace(
     uirevision: str | None = None,
 ) -> None:
     """Tyre degradation: clean laps against tyre age per compound (FEAT-03)."""
-    from processing.pace import compound_degradation, stint_pace
+    from f1dash.processing.pace import compound_degradation, stint_pace
 
     # Qualifying and practice fuel loads differ run to run, so only races are corrected.
     race = is_race_session(session_info)
@@ -1944,7 +1944,7 @@ def render_pit_rejoin(
     key: str = "pit_rejoin",
 ) -> None:
     """Pit rejoin predictor: current gap plus the circuit's pit loss (FEAT-02)."""
-    from processing.pit_loss import pit_loss_for, rejoin_after_lap
+    from f1dash.processing.pit_loss import pit_loss_for, rejoin_after_lap
 
     if not is_race_session(session_info):
         st.info(

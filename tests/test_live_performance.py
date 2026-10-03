@@ -10,8 +10,8 @@ import time
 
 import pytest
 
-from data.live_adapter import SignalRLiveAdapter
-from data.source_manager import DataSourceManager
+from f1dash.data.live_adapter import SignalRLiveAdapter
+from f1dash.data.source_manager import DataSourceManager
 
 DRIVERS = [str(number) for number in range(1, 23)]
 SNAPSHOT_BUDGET_SECONDS = 0.15
@@ -81,7 +81,9 @@ def _prime(adapter: SignalRLiveAdapter, samples: int = 2400, laps: int = 60) -> 
 
 @pytest.fixture
 def primed_manager(monkeypatch):
-    monkeypatch.setattr("data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+    monkeypatch.setattr(
+        "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+    )
     adapter = SignalRLiveAdapter(buffer_limit=20000)
     _prime(adapter)
     return DataSourceManager(live_adapter=adapter)

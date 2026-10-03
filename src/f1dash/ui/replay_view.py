@@ -16,8 +16,8 @@ import os
 
 import streamlit as st
 
-from processing.replay import ReplayClock, format_clock
-from processing.replay_model import (
+from f1dash.processing.replay import ReplayClock, format_clock
+from f1dash.processing.replay_model import (
     TowerSeries,
     events,
     lap_table,
@@ -25,19 +25,19 @@ from processing.replay_model import (
     snapshot_at,
     tower_series,
 )
-from processing.replay_payload import build_replay_payload
-from processing.timing import build_timing_rows, sector_leaders
-from processing.view_params import CURSOR_PARAM, format_cursor, parse_cursor
-from ui.components.replay_player import player_style, render_replay_player
-from ui.dashboard import render_dashboard, sector_cards_html
-from ui.preferences import (
+from f1dash.processing.replay_payload import build_replay_payload
+from f1dash.processing.timing import build_timing_rows, sector_leaders
+from f1dash.processing.view_params import CURSOR_PARAM, format_cursor, parse_cursor
+from f1dash.ui.components.replay_player import player_style, render_replay_player
+from f1dash.ui.dashboard import render_dashboard, sector_cards_html
+from f1dash.ui.preferences import (
     format_wall_clock,
     hidden_panels,
     layout_for_player,
     mirror_param,
     units,
 )
-from ui.theme import DASHBOARD_CSS
+from f1dash.ui.theme import DASHBOARD_CSS
 
 # How much session time one second of playback covers, per speed setting.
 SPEED_OPTIONS = {"1x": 1.0, "5x": 5.0, "20x": 20.0, "60x": 60.0}

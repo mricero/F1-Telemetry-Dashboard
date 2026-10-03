@@ -48,7 +48,7 @@
 python -m pytest -q
 python -m ruff check .
 python -m black --check .
-python -m mypy --ignore-missing-imports app.py data processing ui
+python -m mypy --ignore-missing-imports src
 # optional, needs internet
 F1_NETWORK_TESTS=1 python -m pytest -m network -q
 # only meaningful while a session is on air (see §1)
@@ -298,7 +298,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Otherwise close the item as "keep".
   - Acceptance: either `python run.py` serves the app with the player working and the hack deleted, or the item is closed with the reason in `tasks.md`.
 
-- [ ] **REPO-10** · P3 · M — **Packaging and layout** (carried)
+- [x] **REPO-10** · P3 · M — **Packaging and layout** (carried) — done
   - Status: partly done. `app.py` no longer patches `sys.path`, but `scripts/live_smoke.py:22` and `scripts/preview_replay_player.py:18` still do. There is no `src/` layout. REPO-23 adds `[project]`.
   - Fix: `src/f1dash/{data,processing,ui}`, entry point `f1dash = "f1dash.cli:main"` (wraps `streamlit run`). Last in the order: it touches every import.
 

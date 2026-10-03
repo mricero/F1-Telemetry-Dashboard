@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from processing.time_utils import seconds_series, to_seconds
+from f1dash.processing.time_utils import seconds_series, to_seconds
 
 # Missing values in the tower read as an en dash (UI guideline 5.7).
 MISSING = "\u2013"

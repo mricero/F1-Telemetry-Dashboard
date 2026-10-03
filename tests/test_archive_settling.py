@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from fastf1.exceptions import DataNotLoadedError
 
-from data.fastf1_adapter import FastF1Adapter, SessionNotArchivedError
+from f1dash.data.fastf1_adapter import FastF1Adapter, SessionNotArchivedError
 
 
 class _Unloaded:
@@ -54,19 +54,19 @@ class TestRuntimeCaching:
         }
 
     def test_a_recent_session_is_not_cached(self, monkeypatch):
-        import app
+        from f1dash import app
 
         monkeypatch.setattr(FastF1Adapter, "ended_recently", staticmethod(lambda d, n: True))
         assert not app.should_runtime_cache(self._session())
 
     def test_a_settled_session_is_cached(self, monkeypatch):
-        import app
+        from f1dash import app
 
         monkeypatch.setattr(FastF1Adapter, "ended_recently", staticmethod(lambda d, n: False))
         assert app.should_runtime_cache(self._session())
 
     def test_live_and_replays(self):
-        import app
+        from f1dash import app
 
         assert not app.should_runtime_cache(self._session(source="live", is_live=True))
         assert app.should_runtime_cache(self._session(source="replay"))

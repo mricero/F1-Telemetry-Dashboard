@@ -10,7 +10,7 @@ fields went stale.
 import pandas as pd
 import pytest
 
-from data.live_state import LiveState, as_list, deep_merge
+from f1dash.data.live_state import LiveState, as_list, deep_merge
 from tests import live_fixtures
 
 
@@ -167,7 +167,7 @@ class TestStateDerivedFrames:
     """State -> the unified dict's tables."""
 
     def test_stints_frame_has_the_strategy_chart_columns(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = TestReplayOfRecordedMessages._replay("TyreStintSeries")
         frame = LiveDataProcessor.stints_from_state(
@@ -179,7 +179,7 @@ class TestStateDerivedFrames:
             assert column in frame.columns
 
     def test_stints_are_keyed_by_acronym_not_racing_number(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update(
@@ -192,7 +192,7 @@ class TestStateDerivedFrames:
         assert frame["Compound"].tolist() == ["SOFT"]
 
     def test_stint_lap_bounds_come_from_the_lap_counts(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update(
@@ -213,7 +213,7 @@ class TestStateDerivedFrames:
         assert frame["LapCount"].tolist() == [10, 25]
 
     def test_drivers_frame_reflects_later_updates(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update("DriverList", {"1": {"RacingNumber": "1", "Tla": "VER", "TeamName": "RB"}})
@@ -225,7 +225,7 @@ class TestStateDerivedFrames:
         assert frame["team_colour"].tolist() == ["#3671C6"]
 
     def test_timing_frame_has_one_row_per_driver(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = TestReplayOfRecordedMessages._replay("TimingData")
         frame = LiveDataProcessor.timing_from_state(state.get("TimingData"))
@@ -259,7 +259,7 @@ class TestSectorIndexing:
         }
 
     def test_a_delta_for_index_one_updates_the_second_sector(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update("TimingData", self._snapshot())
@@ -273,7 +273,7 @@ class TestSectorIndexing:
         assert row["Sectors_3_Value"] == "25.000"
 
     def test_a_delta_for_index_zero_updates_the_first_sector(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update("TimingData", self._snapshot())
@@ -285,7 +285,7 @@ class TestSectorIndexing:
         assert row["Sectors_2_Value"] == "31.000"
 
     def test_columns_are_one_based_for_display(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update("TimingData", self._snapshot())
@@ -295,7 +295,7 @@ class TestSectorIndexing:
         assert "Sectors_1_Value" in columns and "Sectors_0_Value" not in columns
 
     def test_lap_rows_carry_the_sectors_in_order(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update("TimingData", self._snapshot())
@@ -309,7 +309,7 @@ class TestSectorIndexing:
         assert row["Sector3Time"] == "25.000"
 
     def test_segments_do_not_leak_into_sector_columns(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         state = LiveState()
         state.update(

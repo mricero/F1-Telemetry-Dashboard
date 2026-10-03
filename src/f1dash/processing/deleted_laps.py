@@ -11,9 +11,9 @@ import re
 import numpy as np
 import pandas as pd
 
-from processing.replay_model import _event_seconds
-from processing.time_utils import to_seconds
-from processing.timing import _deletion
+from f1dash.processing.replay_model import _event_seconds
+from f1dash.processing.time_utils import to_seconds
+from f1dash.processing.timing import _deletion
 
 DELETED_COLUMNS = ["Driver", "LapNumber", "LapTime", "Reason", "Announced"]
 COUNT_COLUMNS = ["Driver", "Warnings", "Deletions"]

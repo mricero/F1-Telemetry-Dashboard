@@ -14,7 +14,12 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCS = ("readme.md", "ARCHITECTURE.md")
-CODE = ("data/live_adapter.py", "data/signalr_core.py", "scripts/live_smoke.py")
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"  # src layout (REPO-10)
+CODE = (
+    "src/f1dash/data/live_adapter.py",
+    "src/f1dash/data/signalr_core.py",
+    "scripts/live_smoke.py",
+)
 
 
 def _text(relative: str) -> str:
@@ -59,12 +64,15 @@ class TestArchitectureMatchesTheCode:
 
     @staticmethod
     def _modules() -> list[str]:
-        return sorted(
-            path.relative_to(PROJECT_ROOT).as_posix()
+        """Paths relative to ``src/f1dash/``, as ARCHITECTURE.md writes them."""
+        modules = sorted(
+            path.relative_to(PACKAGE).as_posix()
             for package in ("data", "processing", "ui")
-            for path in (PROJECT_ROOT / package).rglob("*.py")
+            for path in (PACKAGE / package).rglob("*.py")
             if path.name != "__init__.py"
         )
+        assert modules, f"no modules found under {PACKAGE}"
+        return modules
 
     def test_every_module_is_described(self):
         text = _text("ARCHITECTURE.md")

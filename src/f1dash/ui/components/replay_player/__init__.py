@@ -15,7 +15,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from ui.theme import (
+from f1dash.ui.theme import (
     COMPOUND_LETTER,
     COMPOUND_RING,
     FLAG_STATES,

@@ -13,7 +13,7 @@ from streamlit.testing.v1 import AppTest
 def _adapter_id_script():
     import streamlit as st
 
-    from data.live_service import get_live_adapter
+    from f1dash.data.live_service import get_live_adapter
 
     adapter = get_live_adapter()
     st.session_state["adapter_id"] = id(adapter)
@@ -23,7 +23,7 @@ def _adapter_id_script():
 def _prime_script():
     import streamlit as st
 
-    from data.live_service import get_live_adapter
+    from f1dash.data.live_service import get_live_adapter
     from tests import live_fixtures
 
     adapter = get_live_adapter()
@@ -36,7 +36,7 @@ def _prime_script():
 
 @pytest.fixture(autouse=True)
 def _fresh_service():
-    from data.live_service import reset_live_service
+    from f1dash.data.live_service import reset_live_service
 
     reset_live_service()
     yield
@@ -64,12 +64,12 @@ class TestProcessWideAdapter:
         assert consumer.session_state["buffered"] == producer.session_state["buffered"]
 
     def test_repeated_calls_in_one_session_return_the_same_object(self):
-        from data.live_service import get_live_adapter
+        from f1dash.data.live_service import get_live_adapter
 
         assert get_live_adapter() is get_live_adapter()
 
     def test_reset_hands_out_a_new_adapter(self):
-        from data.live_service import get_live_adapter, reset_live_service
+        from f1dash.data.live_service import get_live_adapter, reset_live_service
 
         first = get_live_adapter()
         reset_live_service()
@@ -80,18 +80,18 @@ class TestProcessWideAdapter:
 class TestManagerUsesTheSharedAdapter:
     def test_two_managers_share_the_live_adapter(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         assert DataSourceManager().live is DataSourceManager().live
 
     def test_an_explicit_adapter_still_wins(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
-        from data.live_adapter import SignalRLiveAdapter
-        from data.source_manager import DataSourceManager
+        from f1dash.data.live_adapter import SignalRLiveAdapter
+        from f1dash.data.source_manager import DataSourceManager
 
         own = SignalRLiveAdapter()
 

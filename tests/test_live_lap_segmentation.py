@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.live_adapter import SignalRLiveAdapter
-from data.source_manager import DataSourceManager
+from f1dash.data.live_adapter import SignalRLiveAdapter
+from f1dash.data.source_manager import DataSourceManager
 
 LAP_LENGTH_UNITS = 50_000.0  # 5 km in the feed's 1/10 m
 LAP_SECONDS = 90
@@ -66,7 +66,9 @@ def _stamp(elapsed_seconds: float) -> str:
 
 @pytest.fixture
 def three_lap_manager(monkeypatch):
-    monkeypatch.setattr("data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})())
+    monkeypatch.setattr(
+        "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+    )
     adapter = SignalRLiveAdapter()
     adapter.handle_message(
         "DriverList", {"1": {"RacingNumber": "1", "Tla": "VER", "TeamName": "RB"}}
@@ -131,7 +133,7 @@ class TestLapScopedTelemetry:
 
     def test_two_drivers_line_up_on_the_same_axis(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
         adapter = SignalRLiveAdapter()
         adapter.handle_message(
@@ -157,7 +159,7 @@ class TestLapScopedTelemetry:
 class TestWithoutLapCompletions:
     def test_it_falls_back_to_the_running_tail(self, monkeypatch):
         monkeypatch.setattr(
-            "data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
+            "f1dash.data.source_manager.FastF1Adapter", lambda *a, **kw: type("A", (), {})()
         )
         adapter = SignalRLiveAdapter()
         adapter.handle_message(
@@ -224,7 +226,7 @@ class TestAgainstTheRecordedFeed:
         assert all(entry["Utc"] for entry in completions)
 
     def test_boundaries_are_derived_from_them(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         boundaries = LiveDataProcessor.lap_boundaries(self._adapter().recorded_laps())
 
@@ -233,7 +235,7 @@ class TestAgainstTheRecordedFeed:
             assert times == sorted(times)
 
     def test_a_slice_without_enough_samples_falls_back(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         adapter = self._adapter()
         boundaries = LiveDataProcessor.lap_boundaries(adapter.recorded_laps())

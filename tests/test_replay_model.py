@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.replay_model import (
+from f1dash.processing.replay_model import (
     FINISHED,
     IN_PIT,
     KNOCKED_OUT,
@@ -28,7 +28,7 @@ from processing.replay_model import (
     snapshot_at,
     tower_series,
 )
-from processing.timing import build_timing_rows
+from f1dash.processing.timing import build_timing_rows
 from tests import replay_fixtures as fx
 
 
@@ -679,7 +679,7 @@ class TestPerformance:
 
 class TestTheDashboardDrawsAMoment:
     def test_the_header_reads_race_time_and_the_lap(self, race, race_series):
-        from ui.dashboard import header_html
+        from f1dash.ui.dashboard import header_html
 
         markup = header_html(snapshot_at(race, fx.LIGHTS_OUT, race_series))
 
@@ -688,7 +688,7 @@ class TestTheDashboardDrawsAMoment:
         assert "1/5" in markup
 
     def test_the_header_flag_is_the_flag_at_that_moment(self, race, race_series):
-        from ui.dashboard import header_html
+        from f1dash.ui.dashboard import header_html
 
         assert ">SC<" in header_html(snapshot_at(race, fx.SC_START + 5, race_series))
 
@@ -696,7 +696,7 @@ class TestTheDashboardDrawsAMoment:
         import base64
         import re
 
-        from ui.dashboard import map_panel_html
+        from f1dash.ui.dashboard import map_panel_html
 
         snapshot = snapshot_at(race, 1200.0, race_series)
         markup = map_panel_html(snapshot, build_timing_rows(snapshot))

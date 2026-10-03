@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.replay import (
+from f1dash.processing.replay import (
     DEFAULT_STEP_SECONDS,
     END_PADDING_SECONDS,
     ReplayClock,

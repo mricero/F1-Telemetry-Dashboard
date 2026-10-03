@@ -17,9 +17,9 @@ from hypothesis import given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 from hypothesis.extra import numpy as hnp  # noqa: E402
 
-from data.live_state import DELETED_KEY, deep_merge  # noqa: E402
-from processing.telemetry_processor import TelemetryProcessor  # noqa: E402
-from processing.timing import segment_boundaries  # noqa: E402
+from f1dash.data.live_state import DELETED_KEY, deep_merge  # noqa: E402
+from f1dash.processing.telemetry_processor import TelemetryProcessor  # noqa: E402
+from f1dash.processing.timing import segment_boundaries  # noqa: E402
 
 # database=None: no .hypothesis/ folder in the working tree (TEST-08).
 PROPERTY_SETTINGS = settings(max_examples=60, deadline=None, database=None)

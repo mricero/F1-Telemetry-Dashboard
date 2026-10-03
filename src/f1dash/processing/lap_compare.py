@@ -10,8 +10,8 @@ time window; the first has only the one lap, so nothing else can be offered.
 import numpy as np
 import pandas as pd
 
-from processing.telemetry_processor import TelemetryProcessor
-from processing.time_utils import seconds_series
+from f1dash.processing.telemetry_processor import TelemetryProcessor
+from f1dash.processing.time_utils import seconds_series
 
 SCOPE_SESSION = "session"
 MIN_LAP_SAMPLES = 20

@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"  # src layout (REPO-10)
 PACKAGES = ("data", "processing", "ui")
 
 
@@ -19,7 +20,7 @@ class TestLoggersExist:
     def test_modules_that_swallow_exceptions_have_a_logger(self):
         missing = []
         for package in PACKAGES:
-            for path in (PROJECT_ROOT / package).rglob("*.py"):
+            for path in (PACKAGE / package).rglob("*.py"):
                 text = path.read_text(encoding="utf-8")
                 if "except Exception" in text and "getLogger(__name__)" not in text:
                     missing.append(str(path.relative_to(PROJECT_ROOT)))
@@ -30,7 +31,7 @@ class TestLoggersExist:
         """Every `except Exception` must log, re-raise, or say why not."""
         offenders = []
         for package in PACKAGES:
-            for path in (PROJECT_ROOT / package).rglob("*.py"):
+            for path in (PACKAGE / package).rglob("*.py"):
                 lines = path.read_text(encoding="utf-8").splitlines()
                 for index, line in enumerate(lines):
                     if "except Exception" not in line:
@@ -48,7 +49,7 @@ class TestLoggersExist:
 
 class TestDegradedPathsLog:
     def test_a_failed_weather_load_is_logged(self, caplog):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         class Boom:
             @property
@@ -62,7 +63,7 @@ class TestDegradedPathsLog:
         assert any("upstream is down" in record.message for record in caplog.records)
 
     def test_a_failed_results_load_is_logged(self, caplog):
-        from data.fastf1_adapter import FastF1Adapter
+        from f1dash.data.fastf1_adapter import FastF1Adapter
 
         class Boom:
             @property
@@ -79,7 +80,7 @@ class TestDegradedPathsLog:
         import importlib
 
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-        import config
+        from f1dash import config
 
         importlib.reload(config)
 
@@ -88,7 +89,7 @@ class TestDegradedPathsLog:
 
 class TestFrameShapeIsStillHonoured:
     def test_degraded_calls_still_return_a_frame(self):
-        from data.source_manager import DataSourceManager
+        from f1dash.data.source_manager import DataSourceManager
 
         class Boom:
             @property
@@ -100,7 +101,7 @@ class TestFrameShapeIsStillHonoured:
 
 class TestAppConfiguresLogging:
     def test_app_sets_up_logging_from_config(self):
-        source = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
+        source = (PACKAGE / "app.py").read_text(encoding="utf-8")
 
         assert "logging.basicConfig" in source
         assert "config.log_level" in source
@@ -109,7 +110,7 @@ class TestAppConfiguresLogging:
         import importlib
 
         monkeypatch.delenv("LOG_LEVEL", raising=False)
-        import config
+        from f1dash import config
 
         importlib.reload(config)
 

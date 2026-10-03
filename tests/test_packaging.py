@@ -34,7 +34,7 @@ class TestMetadata:
         assert declared == _requirements_txt()
 
     def test_the_command_is_declared(self):
-        assert _pyproject()["project"]["scripts"] == {"f1dash": "f1dash_cli:main"}
+        assert _pyproject()["project"]["scripts"] == {"f1dash": "f1dash.cli:main"}
 
     def test_hatchling_builds_it(self):
         assert _pyproject()["build-system"]["build-backend"] == "hatchling.build"
@@ -47,22 +47,27 @@ class TestMetadata:
             assert (PROJECT_ROOT / name).is_file()
 
 
+PACKAGE = PROJECT_ROOT / "src" / "f1dash"
+
+# src layout (REPO-10): everything ships inside the one f1dash package.
 EXPECTED_IN_WHEEL = [
-    "app.py",
-    "config.py",
-    "f1dash_cli.py",
-    "data/__init__.py",
-    "data/source_manager.py",
-    "data/update_check.py",
-    "processing/__init__.py",
-    "processing/replay_payload.py",
-    "ui/__init__.py",
-    "ui/layout.py",
-    "ui/components/replay_player/player.js",
-    "ui/components/replay_player/player.css",
-    "ui/components/replay_player/player.html",
-    "ui/assets/fonts/OFL.txt",
-    ".streamlit/config.toml",
+    "f1dash/__init__.py",
+    "f1dash/__main__.py",
+    "f1dash/app.py",
+    "f1dash/config.py",
+    "f1dash/cli.py",
+    "f1dash/data/__init__.py",
+    "f1dash/data/source_manager.py",
+    "f1dash/data/update_check.py",
+    "f1dash/processing/__init__.py",
+    "f1dash/processing/replay_payload.py",
+    "f1dash/ui/__init__.py",
+    "f1dash/ui/layout.py",
+    "f1dash/ui/components/replay_player/player.js",
+    "f1dash/ui/components/replay_player/player.css",
+    "f1dash/ui/components/replay_player/player.html",
+    "f1dash/ui/assets/fonts/OFL.txt",
+    "f1dash/.streamlit/config.toml",
 ]
 
 
@@ -93,11 +98,17 @@ class TestWheel:
         assert name in wheel
 
     def test_every_source_module_ships(self, wheel):
-        for folder in ("data", "processing", "ui"):
-            for path in (PROJECT_ROOT / folder).rglob("*.py"):
-                if "__pycache__" in path.parts:
-                    continue
-                assert path.relative_to(PROJECT_ROOT).as_posix() in wheel
+        for path in PACKAGE.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            assert path.relative_to(PACKAGE.parent).as_posix() in wheel
+
+    def test_only_the_f1dash_package_is_top_level(self, wheel):
+        """No flat ``data`` / ``ui`` / ``config`` modules shadowing other
+        installs' names (REPO-10): just the package and its metadata."""
+        tops = {name.split("/")[0] for name in wheel}
+
+        assert {top for top in tops if not top.endswith(".dist-info")} == {"f1dash"}
 
     def test_the_fonts_ship(self, wheel):
         assert any(name.endswith(".woff2") for name in wheel)

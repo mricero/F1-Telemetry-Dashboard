@@ -5,7 +5,7 @@ import json
 import pytest
 import requests
 
-from data import update_check
+from f1dash.data import update_check
 
 NOW = 1_800_000_000.0
 

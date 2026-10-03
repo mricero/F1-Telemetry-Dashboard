@@ -21,17 +21,17 @@ import zlib
 import numpy as np
 import pandas as pd
 
-from processing.replay import ReplayClock, build_position_cube
-from processing.replay_model import (
+from f1dash.processing.replay import ReplayClock, build_position_cube
+from f1dash.processing.replay_model import (
     FIELD_DEFAULTS,
     TowerSeries,
     _event_seconds,
     events,
     flag_timeline,
 )
-from processing.time_utils import seconds_series
-from processing.timing import is_raining
-from processing.track_geometry import VIEW_H, VIEW_W, path_from, track_geometry
+from f1dash.processing.time_utils import seconds_series
+from f1dash.processing.timing import is_raining
+from f1dash.processing.track_geometry import VIEW_H, VIEW_W, path_from, track_geometry
 
 # 2: packed positions (``xy_z``) and interval trend (``trend.z``), REPLAY-29.
 # 3: each car's lap fraction (``pos.lap_z``), FEAT-07.
@@ -327,7 +327,7 @@ def _drivers(session_data: dict, series: TowerSeries) -> list[dict]:
 
 def _driver_laps(session_data: dict, series: TowerSeries) -> dict[str, list[list]]:
     """Every completed lap per driver: ``[time, lap, display, flag]``."""
-    from processing.replay_model import format_laptime, session_lap_table
+    from f1dash.processing.replay_model import format_laptime, session_lap_table
 
     table = session_lap_table(session_data)
     found: dict[str, list[list]] = {code: [] for code in series.drivers}
@@ -388,7 +388,7 @@ def decode_trend(trend: dict) -> dict[str, list[float | None]]:
 
 def _close_series(interval):
     """Whether the car is within a second of the one ahead, as a series."""
-    from processing.replay_model import _series
+    from f1dash.processing.replay_model import _series
 
     return _series(
         (t, value is not None and 0 <= value < CLOSE_INTERVAL_SECONDS)

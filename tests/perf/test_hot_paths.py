@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing.time_utils import seconds_series, to_seconds
+from f1dash.processing.time_utils import seconds_series, to_seconds
 
 ROWS = 20_000
 
@@ -88,7 +88,7 @@ class TestDriverMaps:
         )
 
     def test_the_colour_map_is_built_without_iterrows(self):
-        from processing.telemetry_processor import TelemetryProcessor
+        from f1dash.processing.telemetry_processor import TelemetryProcessor
 
         colours = TelemetryProcessor().build_driver_color_map(self._drivers())
 
@@ -97,7 +97,7 @@ class TestDriverMaps:
 
     @pytest.mark.perf
     def test_building_it_is_cheap_at_grid_size(self):
-        from processing.telemetry_processor import TelemetryProcessor
+        from f1dash.processing.telemetry_processor import TelemetryProcessor
 
         processor = TelemetryProcessor()
         drivers = self._drivers()
@@ -130,7 +130,7 @@ class TestCarDataParsing:
     @pytest.mark.perf
     def test_column_conversion_beats_per_record_conversion(self):
         """REPO-08's 5x, where it is real: 120 000 scalar calls become six."""
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         records = self._records()
 
@@ -157,14 +157,14 @@ class TestCarDataParsing:
 
     @pytest.mark.perf
     def test_parsing_a_full_buffer_is_quick(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         elapsed = _elapsed(lambda: LiveDataProcessor.parse_car_data(self._records()))
 
         assert elapsed < 0.5, f"{ROWS} records took {elapsed * 1000:.0f} ms"
 
     def test_the_parsed_frame_is_numeric(self):
-        from data.live_adapter import LiveDataProcessor
+        from f1dash.data.live_adapter import LiveDataProcessor
 
         frame = LiveDataProcessor.parse_car_data(
             [{"DriverNo": "1", "Utc": "t", "speed": "250", "rpm": "11000"}]
@@ -178,7 +178,7 @@ class TestCarDataParsing:
 
 class TestStintChartTraces:
     def test_one_trace_per_compound_not_per_stint(self):
-        from ui.layout import stint_traces
+        from f1dash.ui.layout import stint_traces
 
         stints = pd.DataFrame(
             {
@@ -197,7 +197,7 @@ class TestStintChartTraces:
 
     @pytest.mark.perf
     def test_a_race_of_stints_builds_quickly(self):
-        from ui.layout import stint_traces
+        from f1dash.ui.layout import stint_traces
 
         rows = 22 * 4
         stints = pd.DataFrame(
@@ -220,7 +220,7 @@ class TestReplayPositionLookup:
 
     @pytest.mark.perf
     def test_a_lookup_on_a_full_race_cube_is_under_two_milliseconds(self):
-        from processing.replay import PositionCube, positions_at
+        from f1dash.processing.replay import PositionCube, positions_at
 
         frames, drivers = 14_000, 22
         rng = np.random.default_rng(1)
@@ -246,7 +246,7 @@ class TestTowerSeries:
     @pytest.mark.perf
     def test_a_full_race_builds_in_under_150_milliseconds(self):
         """REPLAY-28: 22 cars, 57 laps, ~31 k stream rows took ~0.45 s."""
-        from processing.replay_model import tower_series
+        from f1dash.processing.replay_model import tower_series
         from tests.test_replay_model import _big_race
 
         race = _big_race()

@@ -67,7 +67,7 @@ jobs:
         run: python -m black --check .
 
       - name: Mypy
-        run: python -m mypy --ignore-missing-imports app.py data processing ui
+        run: python -m mypy --ignore-missing-imports src
 
       - name: Pytest
         env:
@@ -76,7 +76,7 @@ jobs:
           FASTF1_CACHE_DIR: ${{ runner.temp }}/fastf1
         # mypy already ran above; tests/test_type_checking.py repeats it.
         # The floor sits a few points under the measured coverage (TEST-05).
-        run: python -m pytest --cov=data --cov=processing --cov=ui --cov-report=term --cov-fail-under=75 --deselect tests/test_type_checking.py
+        run: python -m pytest --cov=f1dash.data --cov=f1dash.processing --cov=f1dash.ui --cov-report=term --cov-fail-under=75 --deselect tests/test_type_checking.py
 
       - name: The run left the working tree as it found it
         # TEST-08: tests write only under tmp_path.

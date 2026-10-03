@@ -14,7 +14,7 @@ from tests import live_fixtures
 
 def _primed_adapter():
     """An adapter holding only the topics that work without a token."""
-    from data.live_adapter import SignalRLiveAdapter
+    from f1dash.data.live_adapter import SignalRLiveAdapter
 
     adapter = SignalRLiveAdapter()
     for topic in ("SessionInfo", "DriverList", "TimingData", "TyreStintSeries"):
@@ -54,10 +54,10 @@ def _primed_adapter():
 def _live_script():
     import streamlit as st
 
-    from data.source_manager import DataSourceManager
-    from processing.telemetry_processor import TelemetryProcessor
+    from f1dash.data.source_manager import DataSourceManager
+    from f1dash.processing.telemetry_processor import TelemetryProcessor
+    from f1dash.ui.layout import render_live_dashboard
     from tests.test_live_view import _primed_adapter
-    from ui.layout import render_live_dashboard
 
     class Stub(DataSourceManager):
         def __init__(self):
@@ -70,7 +70,7 @@ def _live_script():
 
 @pytest.fixture
 def live_app(monkeypatch):
-    import data.source_manager as source_manager
+    import f1dash.data.source_manager as source_manager
 
     monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
     app = AppTest.from_function(_live_script, default_timeout=60)
@@ -107,12 +107,12 @@ class TestDegradedMode:
             assert expected in labels
 
     def test_auth_topics_are_named_explicitly(self):
-        from data.live_adapter import AUTH_TOPICS
+        from f1dash.data.live_adapter import AUTH_TOPICS
 
         assert {"CarData.z", "Position.z"} <= AUTH_TOPICS
 
     def test_gated_topics_are_only_subscribed_with_a_token(self, monkeypatch):
-        from data.live_adapter import AUTH_TOPICS, SignalRLiveAdapter
+        from f1dash.data.live_adapter import AUTH_TOPICS, SignalRLiveAdapter
 
         monkeypatch.delenv("F1TV_SUBSCRIPTION_TOKEN", raising=False)
         without = set(SignalRLiveAdapter().subscribed_topics())
@@ -131,7 +131,7 @@ class TestLiveDashboardIsFed:
     """LIVE-10: the timing tower must see live data, not the empty dict."""
 
     def test_the_polled_snapshot_carries_timing_rows(self, live_app):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         rows = build_timing_rows(live_app.session_state["snapshot"])
 
@@ -139,15 +139,15 @@ class TestLiveDashboardIsFed:
         assert len(rows) >= 15
 
     def test_the_header_names_the_session(self, live_app):
-        from ui.dashboard import header_html
+        from f1dash.ui.dashboard import header_html
 
         markup = header_html(live_app.session_state["snapshot"])
 
         assert "Bahrain Grand Prix" in markup
 
     def test_the_tower_has_a_row_per_driver(self, live_app):
-        from processing.timing import build_timing_rows
-        from ui.dashboard import tower_html
+        from f1dash.processing.timing import build_timing_rows
+        from f1dash.ui.dashboard import tower_html
 
         snapshot = live_app.session_state["snapshot"]
         markup = tower_html(build_timing_rows(snapshot))
@@ -164,9 +164,9 @@ def _dashboard_spy_script():
     """
     import streamlit as st
 
-    import ui.layout as layout
-    from data.source_manager import DataSourceManager
-    from processing.telemetry_processor import TelemetryProcessor
+    import f1dash.ui.layout as layout
+    from f1dash.data.source_manager import DataSourceManager
+    from f1dash.processing.telemetry_processor import TelemetryProcessor
     from tests.test_live_view import _primed_adapter
 
     def spy(session_data):
@@ -186,7 +186,7 @@ class TestLiveDashboardRendersInTheFragment:
 
     @pytest.fixture
     def spy_app(self, monkeypatch):
-        import data.source_manager as source_manager
+        import f1dash.data.source_manager as source_manager
 
         monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
         app = AppTest.from_function(_dashboard_spy_script, default_timeout=60)
@@ -202,7 +202,7 @@ class TestLiveDashboardRendersInTheFragment:
         assert not given["laps"].empty, "the tower would show 'No timing data'"
 
     def test_the_dashboard_sees_the_drivers(self, spy_app):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         rows = build_timing_rows(spy_app.session_state["dashboard_input"])
 
@@ -217,7 +217,7 @@ class TestLiveDashboardRendersInTheFragment:
     def test_the_app_skips_the_static_dashboard_for_live_sessions(self):
         import inspect
 
-        from ui.pages import live_page, page_specs, results_page
+        from f1dash.ui.pages import live_page, page_specs, results_page
 
         # The pre-poll dict is empty for a live session, so rendering the
         # dashboard from it is what LIVE-10 removed: a live session has no
@@ -230,11 +230,11 @@ class TestLiveDashboardRendersInTheFragment:
 def _full_feed_script():
     import streamlit as st
 
-    from data.live_adapter import SignalRLiveAdapter
-    from data.source_manager import DataSourceManager
-    from processing.telemetry_processor import TelemetryProcessor
+    from f1dash.data.live_adapter import SignalRLiveAdapter
+    from f1dash.data.source_manager import DataSourceManager
+    from f1dash.processing.telemetry_processor import TelemetryProcessor
+    from f1dash.ui.layout import render_live_dashboard
     from tests import live_fixtures
-    from ui.layout import render_live_dashboard
 
     adapter = SignalRLiveAdapter()
     messages = []
@@ -254,7 +254,7 @@ class TestFullFeedThroughTheRealIngestPath:
 
     @pytest.fixture
     def app(self, monkeypatch):
-        import data.source_manager as source_manager
+        import f1dash.data.source_manager as source_manager
 
         monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
         app = AppTest.from_function(_full_feed_script, default_timeout=60)
@@ -265,7 +265,7 @@ class TestFullFeedThroughTheRealIngestPath:
         assert not app.exception
 
     def test_the_tower_follows_the_timing_screen(self, app):
-        from processing.timing import build_timing_rows
+        from f1dash.processing.timing import build_timing_rows
 
         snapshot = app.session_state["snapshot"]
         rows = build_timing_rows(snapshot)
@@ -283,11 +283,11 @@ class TestFullFeedThroughTheRealIngestPath:
 def _weather_tab_script():
     import streamlit as st
 
-    from data.source_manager import DataSourceManager
-    from processing.telemetry_processor import TelemetryProcessor
+    from f1dash.data.source_manager import DataSourceManager
+    from f1dash.processing.telemetry_processor import TelemetryProcessor
+    from f1dash.ui.layout import LIVE_TAB_KEY, render_live_dashboard
     from tests import live_fixtures
     from tests.test_live_view import _primed_adapter
-    from ui.layout import LIVE_TAB_KEY, render_live_dashboard
 
     class Stub(DataSourceManager):
         def __init__(self):
@@ -307,7 +307,7 @@ class TestOnlyTheOpenTabIsDrawn:
     """LIVE-35: with Weather open, the six telemetry figures were rebuilt every 3 s."""
 
     def _charts(self, monkeypatch, tab: str) -> int:
-        import data.source_manager as source_manager
+        import f1dash.data.source_manager as source_manager
 
         monkeypatch.setattr(source_manager, "FastF1Adapter", lambda *a, **kw: type("A", (), {})())
         app = AppTest.from_function(_weather_tab_script, default_timeout=60)

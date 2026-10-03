@@ -31,6 +31,11 @@ offers "Go live"; otherwise the user picks a season, Grand Prix and session.
 
 ## Layers
 
+The code is one package, `f1dash`, in `src/f1dash/` (REPO-10). Module paths
+in this file (`app.py`, `data/...`, `ui/...`) are relative to that folder
+unless they start with `src/`, `tests/` or `scripts/`; imports are absolute
+(`from f1dash.data.source_manager import DataSourceManager`).
+
 ```
 app.py                     orchestration: selection -> load -> process -> record
   |
@@ -56,9 +61,10 @@ producing that dict, not touching `ui/`.
 
 | File | Role |
 |---|---|
-| `app.py` | Streamlit script. Re-enters through `streamlit run` when started as `python app.py` (bare mode). Loads the selection through the runtime cache, builds the processed views, folds records into the metrics store and hands off to `ui.pages`. |
-| `f1dash_cli.py` | The installed `f1dash` command: finds the bundled `app.py`, passes `.streamlit/config.toml` as `--section.key=value` flags, picks a free port, and implements `f1dash paths`, `f1dash update` and `--version`. |
-| `config.py` | Loads `.env`, resolves the data locations (repo-local in a checkout, `platformdirs` per-user directories in an install) and reads `__version__` from `pyproject.toml` or the installed metadata. |
+| `app.py` | Streamlit script (`src/f1dash/app.py`). Re-enters through `streamlit run` when started as `python app.py` (bare mode). Loads the selection through the runtime cache, builds the processed views, folds records into the metrics store and hands off to `ui.pages`. |
+| `cli.py` | The `f1dash` command (`f1dash.cli:main`, also `python -m f1dash` through `__main__.py`): runs the package's `app.py` with `streamlit run`, passes `.streamlit/config.toml` (the wheel's bundled copy, else the checkout's) as `--section.key=value` flags, picks a free port, and implements `f1dash paths`, `f1dash update` and `--version`. |
+| `config.py` | Loads `.env`, resolves the data locations (repo-local in a checkout - the package sits in `<root>/src/f1dash/` and `<root>` has a `.git` - `platformdirs` per-user directories in an install) and reads `__version__` from `pyproject.toml` or the installed metadata. |
+| `app.py` at the repository root | Checkout shim: puts `src/` on `sys.path` and runs `src/f1dash/app.py`, so `streamlit run app.py` works next to `.streamlit/config.toml` without an install. |
 
 ### `data/` - adapters and live ingest
 
@@ -254,18 +260,16 @@ variable `PUBLISH_PYPI` is `true`.
 
 ```
 .
-├── app.py                      # Streamlit script (orchestration only)
-├── f1dash_cli.py               # the installed `f1dash` command
-├── config.py                   # .env, data locations, version
+├── app.py                      # checkout shim: runs src/f1dash/app.py
 ├── install.ps1 / install.sh    # one-line installers (uv + f1dash)
 ├── pyproject.toml              # package metadata, ruff/black/mypy config
 ├── requirements.txt            # runtime dependencies
 ├── requirements-dev.txt        # test and lint dependencies
 ├── requirements.lock           # hashed runtime lock
 ├── requirements-dev.lock       # hashed development lock
-├── pytest.ini                  # testpaths = tests, markers
+├── pytest.ini                  # testpaths = tests, pythonpath = src, markers
 ├── .env.example                # every environment variable, commented
-├── .streamlit/config.toml      # theme and server settings
+├── .streamlit/config.toml      # theme and server settings (the wheel bundles a copy)
 ├── readme.md, CHANGELOG.md, LICENSE, NOTICE
 ├── ARCHITECTURE.md             # this file
 ├── CLAUDE.md                   # rules for agents working on the code
@@ -273,52 +277,57 @@ variable `PUBLISH_PYPI` is `true`.
 ├── tasks.md                    # audit register
 ├── layout.md                   # dashboard and replay-screen specification
 ├── docs/history/               # superseded research notes
-├── data/
-│   ├── fastf1_adapter.py
-│   ├── openf1_adapter.py
-│   ├── jolpica_adapter.py
-│   ├── live_adapter.py
-│   ├── live_recorder.py
-│   ├── live_service.py
-│   ├── live_state.py
-│   ├── runtime_cache.py
-│   ├── signalr_core.py
-│   ├── source_manager.py
-│   ├── token_store.py
-│   └── update_check.py
-├── processing/
-│   ├── driver_selection.py
-│   ├── deleted_laps.py
-│   ├── lap_review.py
-│   ├── metrics_store.py
-│   ├── pace.py
-│   ├── pit_loss.py
-│   ├── replay.py
-│   ├── replay_model.py
-│   ├── lap_compare.py
-│   ├── replay_payload.py
-│   ├── standings.py
-│   ├── telemetry_processor.py
-│   ├── time_utils.py
-│   ├── timing.py
-│   ├── track_geometry.py
-│   ├── track_periods.py
-│   ├── units.py
-│   └── view_params.py
-├── ui/
-│   ├── dashboard.py
-│   ├── fonts.py
-│   ├── layout.py
-│   ├── pages.py
-│   ├── lap_panels.py
-│   ├── preferences.py
-│   ├── replay_view.py
-│   ├── standings.py
-│   ├── status.py
-│   ├── theme.py
-│   ├── track_map.py
-│   ├── assets/fonts/           # Titillium Web (OFL-1.1)
-│   └── components/replay_player/
+├── src/f1dash/                 # the package (REPO-10)
+│   ├── __init__.py, __main__.py   # __main__: python -m f1dash
+│   ├── app.py                  # Streamlit script (orchestration only)
+│   ├── cli.py                  # the `f1dash` command
+│   ├── config.py               # .env, data locations, version
+│   ├── data/
+│   │   ├── fastf1_adapter.py
+│   │   ├── openf1_adapter.py
+│   │   ├── jolpica_adapter.py
+│   │   ├── live_adapter.py
+│   │   ├── live_recorder.py
+│   │   ├── live_service.py
+│   │   ├── live_state.py
+│   │   ├── runtime_cache.py
+│   │   ├── signalr_core.py
+│   │   ├── source_manager.py
+│   │   ├── token_store.py
+│   │   └── update_check.py
+│   ├── processing/
+│   │   ├── driver_selection.py
+│   │   ├── deleted_laps.py
+│   │   ├── lap_review.py
+│   │   ├── metrics_store.py
+│   │   ├── pace.py
+│   │   ├── pit_loss.py
+│   │   ├── replay.py
+│   │   ├── replay_model.py
+│   │   ├── lap_compare.py
+│   │   ├── replay_payload.py
+│   │   ├── standings.py
+│   │   ├── telemetry_processor.py
+│   │   ├── time_utils.py
+│   │   ├── timing.py
+│   │   ├── track_geometry.py
+│   │   ├── track_periods.py
+│   │   ├── units.py
+│   │   └── view_params.py
+│   └── ui/
+│       ├── dashboard.py
+│       ├── fonts.py
+│       ├── layout.py
+│       ├── pages.py
+│       ├── lap_panels.py
+│       ├── preferences.py
+│       ├── replay_view.py
+│       ├── standings.py
+│       ├── status.py
+│       ├── theme.py
+│       ├── track_map.py
+│       ├── assets/fonts/           # Titillium Web (OFL-1.1)
+│       └── components/replay_player/
 ├── scripts/
 │   ├── capture_fixture.py      # record a live-feed fixture
 │   ├── convert_legacy_replay.py

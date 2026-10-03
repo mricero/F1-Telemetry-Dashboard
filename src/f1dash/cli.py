@@ -2,19 +2,24 @@
 
 Streamlit apps start with ``streamlit run app.py`` from the folder that holds
 ``.streamlit/config.toml``. An installed tool has neither a known path nor
-that working directory, so this finds the ``app.py`` installed next to it,
+that working directory, so this finds the package's own ``f1dash/app.py``,
 turns the bundled ``config.toml`` into ``--section.key=value`` flags (theme,
 radius, toolbar, ``gatherUsageStats = false``) and hands both to Streamlit's
 own CLI. Going through ``streamlit run`` keeps ``app.py``'s bare-mode
 relaunch out of play.
 
+The config file is the checkout's ``.streamlit/config.toml``; the wheel
+carries a copy at ``f1dash/.streamlit/config.toml`` (REPO-10), which is
+looked for first.
+
     f1dash                       # open the dashboard in the browser
+    python -m f1dash             # the same, from a checkout
     f1dash --port 8600 --no-browser
     f1dash paths                 # where cache, replays, records and .env live
     f1dash update                # reinstall the newest release with uv
     f1dash --version
 
-Importing :mod:`config` loads ``.env`` from the user config directory (or the
+Importing :mod:`f1dash.config` loads ``.env`` from the user config directory (or the
 checkout) before Streamlit starts.
 """
 
@@ -28,11 +33,21 @@ import sys
 import tomllib
 from pathlib import Path
 
-import config
+from f1dash import config
 
 HERE = Path(__file__).resolve().parent
 APP_PATH = HERE / "app.py"
-STREAMLIT_CONFIG = HERE / ".streamlit" / "config.toml"
+
+
+def _streamlit_config() -> Path:
+    """The wheel's bundled copy, else the checkout's ``.streamlit/config.toml``."""
+    bundled = HERE / ".streamlit" / "config.toml"
+    if bundled.is_file():
+        return bundled
+    return config.PROJECT_ROOT / ".streamlit" / "config.toml"
+
+
+STREAMLIT_CONFIG = _streamlit_config()
 DEFAULT_PORT = 8501
 PORT_ATTEMPTS = 50
 
@@ -109,7 +124,7 @@ def print_paths(out=None) -> int:
 
 
 def run_update(run=subprocess.run, which=shutil.which) -> int:
-    from data import update_check
+    from f1dash.data import update_check
 
     if which("uv") is None:
         print(

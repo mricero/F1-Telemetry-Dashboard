@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.fastf1_adapter import (
+from f1dash.data.fastf1_adapter import (
     SCOPE_SESSION,
     FastF1Adapter,
     latest_completed_event,
@@ -82,16 +82,16 @@ class TestFastF1Adapter:
         FastF1Adapter(cache_dir=str(cache_dir))
         assert cache_dir.exists()
 
-    @patch("data.fastf1_adapter.fastf1.Cache.enable_cache")
+    @patch("f1dash.data.fastf1_adapter.fastf1.Cache.enable_cache")
     def test_init_enables_cache(self, mock_enable_cache, tmp_path, monkeypatch):
         """Test that FastF1 cache is enabled (in a temp folder: "./test_cache"
         used to be created inside the repository on every run, TEST-08)"""
-        monkeypatch.setattr("data.fastf1_adapter._enabled_cache_dir", None)
+        monkeypatch.setattr("f1dash.data.fastf1_adapter._enabled_cache_dir", None)
         cache_dir = str(tmp_path / "test_cache")
         FastF1Adapter(cache_dir=cache_dir)
         mock_enable_cache.assert_called_once_with(cache_dir)
 
-    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    @patch("f1dash.data.fastf1_adapter.fastf1.get_event_schedule")
     def test_get_available_sessions(self, mock_get_schedule):
         """Test getting available sessions"""
         mock_get_schedule.return_value = pd.DataFrame(
@@ -114,7 +114,7 @@ class TestFastF1Adapter:
         assert "Saudi Arabia" in sessions["EventName"].to_numpy()
         assert "Australia" not in sessions["EventName"].to_numpy()
 
-    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    @patch("f1dash.data.fastf1_adapter.fastf1.get_event_schedule")
     def test_get_available_sessions_drops_testing(self, mock_get_schedule):
         """Pre-season testing has no Race session and must not be offered."""
         mock_get_schedule.return_value = pd.DataFrame(
@@ -134,7 +134,7 @@ class TestFastF1Adapter:
 
         assert sessions["EventName"].tolist() == ["Bahrain"]
 
-    @patch("data.fastf1_adapter.fastf1.get_session")
+    @patch("f1dash.data.fastf1_adapter.fastf1.get_session")
     def test_load_session(self, mock_get_session):
         """Test loading a session"""
         mock_session = Mock()
@@ -342,10 +342,10 @@ if __name__ == "__main__":
 class TestScheduleYears:
     """HIST-04: the default season window must follow the clock, not 2025."""
 
-    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    @patch("f1dash.data.fastf1_adapter.fastf1.get_event_schedule")
     def test_default_years_are_relative_to_now(self, mock_get_schedule, monkeypatch):
         monkeypatch.setattr(
-            "data.fastf1_adapter._utcnow", lambda: pd.Timestamp("2026-09-16", tz="UTC")
+            "f1dash.data.fastf1_adapter._utcnow", lambda: pd.Timestamp("2026-09-16", tz="UTC")
         )
         mock_get_schedule.return_value = pd.DataFrame(
             {
@@ -360,10 +360,10 @@ class TestScheduleYears:
         requested = sorted(call.args[0] for call in mock_get_schedule.call_args_list)
         assert requested == [2025, 2026]
 
-    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    @patch("f1dash.data.fastf1_adapter.fastf1.get_event_schedule")
     def test_latest_completed_event_uses_the_race_session_end(self, mock_get_schedule, monkeypatch):
         monkeypatch.setattr(
-            "data.fastf1_adapter._utcnow",
+            "f1dash.data.fastf1_adapter._utcnow",
             lambda: pd.Timestamp("2026-09-16T12:00:00", tz="UTC"),
         )
         schedule = pd.DataFrame(
@@ -389,12 +389,12 @@ class TestScheduleYears:
         assert latest is not None
         assert latest["EventName"] == "Monza"
 
-    @patch("data.fastf1_adapter.fastf1.get_event_schedule")
+    @patch("f1dash.data.fastf1_adapter.fastf1.get_event_schedule")
     def test_latest_completed_event_ignores_a_race_still_running(
         self, mock_get_schedule, monkeypatch
     ):
         monkeypatch.setattr(
-            "data.fastf1_adapter._utcnow",
+            "f1dash.data.fastf1_adapter._utcnow",
             lambda: pd.Timestamp("2026-09-06T14:00:00", tz="UTC"),
         )
         schedule = pd.DataFrame(
@@ -435,7 +435,9 @@ class TestSessionCodes:
         return pd.Series(row)
 
     def _now(self, monkeypatch, when="2025-05-10T00:00:00"):
-        monkeypatch.setattr("data.fastf1_adapter._utcnow", lambda: pd.Timestamp(when, tz="UTC"))
+        monkeypatch.setattr(
+            "f1dash.data.fastf1_adapter._utcnow", lambda: pd.Timestamp(when, tz="UTC")
+        )
 
     def test_conventional_weekend(self, monkeypatch):
         self._now(monkeypatch)
@@ -648,14 +650,14 @@ class TestTimingStream:
     def test_fastf1_still_emits_the_columns_this_reads(self):
         from fastf1 import _api
 
-        from data.fastf1_adapter import RAW_STREAM_COLUMNS
+        from f1dash.data.fastf1_adapter import RAW_STREAM_COLUMNS
 
         assert set(RAW_STREAM_COLUMNS) <= set(_api.EMPTY_STREAM)
 
     def test_it_maps_numbers_to_acronyms_and_parses_gaps(self, monkeypatch):
         import fastf1._api
 
-        from data.fastf1_adapter import TIMING_STREAM_COLUMNS
+        from f1dash.data.fastf1_adapter import TIMING_STREAM_COLUMNS
 
         monkeypatch.setattr(
             fastf1._api, "_extended_timing_data", lambda path: (None, _recorded_stream(), [])
@@ -675,14 +677,14 @@ class TestTimingStream:
     def test_a_failure_degrades_to_an_empty_frame_and_says_so(self, monkeypatch, caplog):
         import fastf1._api
 
-        from data.fastf1_adapter import TIMING_STREAM_COLUMNS
+        from f1dash.data.fastf1_adapter import TIMING_STREAM_COLUMNS
 
         def broken(path):
             raise KeyError("TimingData")
 
         monkeypatch.setattr(fastf1._api, "_extended_timing_data", broken)
 
-        with caplog.at_level("WARNING", logger="data.fastf1_adapter"):
+        with caplog.at_level("WARNING", logger="f1dash.data.fastf1_adapter"):
             stream = FastF1Adapter.get_timing_stream(_stream_session())
 
         assert stream.empty
