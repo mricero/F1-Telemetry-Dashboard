@@ -291,7 +291,7 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
   - Fix: a `NOTICE` (or a LICENSE section) listing the fonts under OFL-1.1 and the fixture data as © Formula One World Championship Ltd, included for testing only and not under MIT. DOC-05 covers the readme side.
   - Acceptance: NOTICE lists both; the readme links it.
 
-- [ ] **REPO-09** · P3 · S — **`python app.py` relaunch hack** (carried)
+- [x] **REPO-09** · P3 · S — **`python app.py` relaunch hack** (carried) — closed as keep (reason in `tasks.md`)
   - Status (2026-10-02): **still needed.** Streamlit 1.59's "python app.py" support is `st.App("app.py").run()` (`streamlit/web/server/starlette/starlette_app.py`). It is an explicit launcher that runs the Starlette/uvicorn server mode. A plain page script started with `python app.py` still lands in bare mode. Putting `st.App` inside `app.py` would also switch `streamlit run app.py` to ASGI mode through AST discovery.
   - Fix:
     - Option: a separate `run.py` (`st.App("app.py").run()`), then delete `launch_via_streamlit` and `_RELAUNCH_FLAG`. This changes the server backend, so verify the v2 component, fragments and AppTest under it first.
