@@ -422,7 +422,8 @@ Line numbers refer to `2eb3971`. Grep for the names if the code has moved.
     - Results go into `tasks.md`.
   - Depends on: LIVE-25, LIVE-26, LIVE-27, LIVE-30, LIVE-32 (so the recording is trustworthy), CORE-01.
 
-- [ ] **LIVE-19** · P1 · M — **Live qualifying: segments, knock-outs and the segment clock** (carried)
+- [~] **LIVE-19** · P1 · M — **Live qualifying: segments, knock-outs and the segment clock** (carried)
+  - **Blocked (2026-10-03) until LIVE-18 has the Singapore SQ/Q recordings.** The segment clock in the header is done (`f2fc6fc`); the ordering by segment bests and the "Eliminated in Q1/Q2" headings wait for the real key names.
   - Status: not started. `standings_from_state` (`data/live_adapter.py:710-804`) maps `KnockedOut` to `KO` and uses `TimeDiffToFastest`; it reads neither `SessionPart`, `BestLapTimes` nor partitions.
   - Fix:
     - Read `TimingData.SessionPart` (1–3), per-line `KnockedOut`, `BestLapTimes` (per segment) and `Stats`.
