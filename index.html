@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F1 Telemetry Dashboard</title>
+<meta name="description" content="A local dashboard for Formula 1 sessions: live timing from F1's own feed, a replay of any session with the timing tower and track map, and twelve analysis views. Free, local, open source.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0c0f">
+<meta property="og:type" content="website">
+<meta property="og:title" content="F1 Telemetry Dashboard">
+<meta property="og:description" content="Live timing, session replays and lap-by-lap analysis for Formula 1, running on your own machine.">
+<meta property="og:url" content="https://mricero.github.io/F1-Telemetry-Dashboard/">
+<meta property="og:image" content="https://mricero.github.io/F1-Telemetry-Dashboard/assets/video/live-film.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%230b0c0f'/%3E%3Crect x='6' y='9' width='20' height='4' fill='%23e10600'/%3E%3Crect x='6' y='16' width='14' height='4' fill='%23eceef1'/%3E%3Crect x='6' y='23' width='8' height='4' fill='%239aa1ab'/%3E%3C/svg%3E">
+<style>
+@font-face { font-family: "Titillium Web"; font-weight: 600; font-style: normal; font-display: swap;
+  src: url("assets/fonts/titillium-web-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Titillium Web"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("assets/fonts/titillium-web-latin-700-normal.woff2") format("woff2"); }
+
+/* The app's own palette (src/f1dash/ui/theme.py): one red accent, solid panels, radius 4 px. */
+:root {
+  --bg: #0b0c0f; --surface: #13151a; --surface-2: #181b21; --line: #262a31;
+  --text: #eceef1; --dim: #9aa1ab; --accent: #e10600; --accent-text: #ff4d45;
+  --best: #b138dd; --pb: #2fbf5b; --yellow: #e6c229;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --label: "Titillium Web", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  --max: 1180px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 var(--body); -webkit-font-smoothing: antialiased; }
+a { color: var(--text); text-decoration-color: var(--accent); text-underline-offset: 3px; }
+a:hover { color: #fff; }
+img, video { display: block; max-width: 100%; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+.label { font-family: var(--label); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; color: var(--dim); }
+h1, h2, h3 { font-family: var(--label); font-weight: 700; line-height: 1.08; margin: 0; letter-spacing: -.005em; }
+h1 { font-size: clamp(40px, 6.2vw, 74px); }
+h2 { font-size: clamp(30px, 4vw, 46px); }
+h3 { font-size: 22px; }
+p { margin: 0; }
+.lede { font-size: 20px; color: #c9ced5; max-width: 700px; }
+code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+
+/* header */
+header.top { position: sticky; top: 0; z-index: 10; background: rgba(11, 12, 15, .96); border-bottom: 1px solid var(--line); }
+.top .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--label); font-weight: 700; font-size: 18px; text-decoration: none; white-space: nowrap; }
+.brand i { width: 4px; height: 22px; background: var(--accent); border-radius: 1px; }
+.top nav { display: flex; gap: 22px; margin-left: auto; }
+.top nav a { font-family: var(--label); font-weight: 600; font-size: 15px; color: var(--dim); text-decoration: none; }
+.top nav a:hover { color: var(--text); }
+.btn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--label); font-weight: 700; font-size: 16px; text-decoration: none;
+  padding: 11px 20px; border-radius: 4px; border: 1px solid var(--line); background: var(--surface); color: var(--text); }
+.btn:hover { border-color: #3a4049; color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #c40500; }
+.top .btn { padding: 7px 14px; font-size: 14px; }
+
+/* hero */
+.hero { padding: 72px 0 40px; }
+.hero .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+.chip { font-family: var(--label); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+  padding: 3px 10px; border-radius: 4px; border: 1px solid var(--line); color: var(--dim); background: var(--surface); }
+.chip.live { background: var(--pb); border-color: var(--pb); color: #06210f; }
+.hero h1 { max-width: 900px; }
+.hero .lede { margin-top: 20px; }
+.hero .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.film { margin-top: 48px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #000; }
+.film video { width: 100%; aspect-ratio: 16 / 9; }
+.caption { margin-top: 10px; font-size: 14px; color: var(--dim); }
+
+/* stats */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 4px; margin: 56px 0 0; }
+.stat { padding: 22px 24px; border-left: 1px solid var(--line); }
+.stat:first-child { border-left: 0; }
+.stat b { display: block; font-family: var(--label); font-size: 38px; line-height: 1; }
+.stat span { display: block; margin-top: 8px; color: var(--dim); font-size: 15px; }
+
+/* sections */
+section.block { padding: 96px 0 0; }
+.head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: end; margin-bottom: 36px; }
+.head .label { margin-bottom: 12px; display: block; }
+.head p { color: #c9ced5; }
+.shot { border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: var(--surface); }
+.shot a { display: block; }
+.shot img { width: 100%; }
+figure { margin: 0; }
+figcaption { padding: 12px 16px; font-size: 14px; color: var(--dim); border-top: 1px solid var(--line); }
+figcaption b { color: var(--text); font-family: var(--label); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+.list { list-style: none; padding: 0; margin: 28px 0 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 32px; }
+.list li { padding: 12px 0 12px 18px; border-top: 1px solid var(--line); position: relative; }
+.list li::before { content: ""; position: absolute; left: 0; top: 22px; width: 8px; height: 2px; background: var(--accent); }
+.list b { font-family: var(--label); font-weight: 600; }
+
+/* tables */
+.table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.table th, .table td { text-align: left; padding: 12px 14px; border-top: 1px solid var(--line); vertical-align: top; }
+.table th { font-family: var(--label); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); border-top: 0; }
+.table td:first-child { font-family: var(--label); font-weight: 700; white-space: nowrap; }
+.table td code { white-space: nowrap; }
+.table tr:hover td { background: var(--surface); }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+
+/* cards */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 28px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 22px 22px 24px; }
+.card h3 { margin-bottom: 8px; }
+.card p { color: #c9ced5; font-size: 16px; }
+
+/* install */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin-top: 28px; overflow-x: auto; }
+.tabs button { font: 600 15px var(--label); color: var(--dim); background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 10px 18px; cursor: pointer; margin-bottom: -1px; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.panel { display: none; padding-top: 18px; }
+.panel.on { display: block; }
+.panel p { color: #c9ced5; margin-bottom: 12px; }
+pre { position: relative; margin: 0 0 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+  padding: 16px 92px 16px 18px; overflow-x: auto; font: 15px/1.6 var(--mono); color: var(--text); }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+pre .c { color: var(--dim); }
+.copy { position: absolute; top: 10px; right: 10px; font: 600 13px var(--label); padding: 5px 10px; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--dim); cursor: pointer; }
+.copy:hover { color: var(--text); }
+.copy.done { color: var(--pb); border-color: var(--pb); }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; margin-top: 40px; }
+.two > div, .panel { min-width: 0; }
+.two h3 { margin-bottom: 12px; }
+
+/* note + footer */
+.note { margin-top: 28px; padding: 18px 20px; border: 1px solid var(--line); border-left: 4px solid var(--yellow); border-radius: 4px; background: var(--surface); color: #c9ced5; font-size: 16px; }
+footer { margin-top: 110px; border-top: 1px solid var(--line); padding: 36px 0 48px; color: var(--dim); font-size: 14px; }
+footer .wrap { display: grid; grid-template-columns: 1fr auto; gap: 24px; }
+footer nav { display: flex; gap: 18px; flex-wrap: wrap; }
+footer a { color: var(--dim); }
+
+@media (max-width: 900px) {
+  .top nav { display: none; }
+  .top .btn { margin-left: auto; }
+  .head, .grid2, .two { grid-template-columns: minmax(0, 1fr); }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .stat:nth-child(3) { border-left: 0; }
+  .stat:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .list { grid-template-columns: minmax(0, 1fr); }
+  footer .wrap { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .wrap { padding: 0 16px; }
+  .hero { padding-top: 44px; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  section.block { padding-top: 72px; }
+  pre { padding-right: 18px; padding-top: 44px; }
+  .stat b { font-size: 30px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><i></i>F1 Telemetry Dashboard</a>
+    <nav aria-label="Sections">
+      <a href="#live">Live</a>
+      <a href="#replay">Replay</a>
+      <a href="#analysis">Analysis</a>
+      <a href="#install">Install</a>
+    </nav>
+    <a class="btn" href="https://github.com/mricero/F1-Telemetry-Dashboard">GitHub</a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div class="chips"><span class="chip live">Live</span><span class="chip">Replay</span><span class="chip">Analysis</span><span class="chip">Free &middot; local &middot; open source</span></div>
+      <h1>Formula 1 timing, on your own machine.</h1>
+      <p class="lede">Follow a session live from F1's own timing feed, replay any race with the timing tower and track map, then take every lap apart in twelve analysis views.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install</a>
+        <a class="btn" href="https://github.com/mricero/F1-Telemetry-Dashboard">View the code</a>
+      </div>
+      <div class="film">
+        <video controls playsinline preload="metadata" poster="assets/video/live-film.jpg">
+          <source src="assets/video/live-film.mp4" type="video/mp4">
+        </video>
+      </div>
+      <p class="caption">21 seconds of the app with a race on air: live timing, tyres, the championship as it stands, a replay and the analysis views. Every screen is the real app.</p>
+
+      <div class="stats" role="list">
+        <div class="stat" role="listitem"><b>12</b><span>analysis views per session</span></div>
+        <div class="stat" role="listitem"><b>1 click</b><span>from the sidebar to live timing</span></div>
+        <div class="stat" role="listitem"><b>No account</b><span>for timing, tyres, race control and weather</span></div>
+        <div class="stat" role="listitem"><b>MIT</b><span>licensed, runs locally</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="live">
+    <div class="wrap">
+      <div class="head">
+        <div><span class="label">Live</span><h2>A session is running now.</h2></div>
+        <p>When a session is on air the sidebar offers <b>Go live</b>. The Live page reads F1's own timing feed through the app's SignalR Core client, so the tower updates as the cars cross the line, with no account needed.</p>
+      </div>
+      <figure class="shot">
+        <a href="assets/img/live-timing.jpg"><img src="assets/img/live-timing.jpg" alt="The Live page during the 2026 Bahrain Grand Prix: the LIVE chip, remaining time 0:17:59 under a green flag, and the timing tower with last and best laps, interval, gap, sector times and tyre history for every car." loading="lazy"></a>
+        <figcaption><b>Timing tower.</b> Position, last and best lap, interval, gap, sectors and tyre history, with the session clock, flag and track conditions above it.</figcaption>
+      </figure>
+      <div class="grid2">
+        <figure class="shot">
+          <a href="assets/img/live-tyres.jpg"><img src="assets/img/live-tyres.jpg" alt="Tyre stints for every driver, coloured by compound across the laps of the race." loading="lazy"></a>
+          <figcaption><b>Tyres.</b> Every stint for every driver, by compound and lap.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a href="assets/img/live-championship.jpg"><img src="assets/img/live-championship.jpg" alt="Drivers' and constructors' championship tables with the points now, the points from this race, the projected total and the change in position." loading="lazy"></a>
+          <figcaption><b>Championship, live.</b> The standings if the race finished in the current order: now, this race, projected and change.</figcaption>
+        </figure>
+      </div>
+      <figure class="shot" style="margin-top:18px">
+        <a href="assets/img/live-weather.jpg"><img src="assets/img/live-weather.jpg" alt="Live weather: air and track temperature, humidity, wind and pressure, with temperature and humidity charted over the session." loading="lazy"></a>
+        <figcaption><b>Weather.</b> Air and track temperature, humidity, wind and pressure, charted over the session.</figcaption>
+      </figure>
+      <ul class="list">
+        <li><b>Race control</b> messages and the track status (green, yellow, SC, VSC, red) as they happen.</li>
+        <li><b>Sector leaders</b>: the three fastest in each sector, next to the tower.</li>
+        <li><b>Broadcast delay</b>: hold the live view back to match your TV stream.</li>
+        <li><b>Auto-record</b>: the raw feed is saved, so a live session can be replayed later.</li>
+        <li><b>Reconnects by itself</b> when F1 drops the connection, and shows its state.</li>
+        <li><b>Optional F1TV token</b> adds car telemetry and positions; it is only ever sent to F1.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="replay">
+    <div class="wrap">
+      <div class="head">
+        <div><span class="label">Replay</span><h2>No session on? Replay any race.</h2></div>
+        <p>Pick a season, Grand Prix and session and the app rebuilds it from FastF1: the timing tower and track map as they stood at the cursor, with flags, race control and weather. Play it, scrub it, or step lap by lap.</p>
+      </div>
+      <div class="grid2" style="margin-top:0">
+        <figure class="shot">
+          <a href="assets/img/replay.jpg"><img src="assets/img/replay.jpg" alt="Replay of the 2020 Abu Dhabi Grand Prix on lap 4: the timing tower beside the track map with every car on track." loading="lazy"></a>
+          <figcaption><b>Tower and track map</b>, 2020 Abu Dhabi Grand Prix, lap 4.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a href="assets/img/replay-controls.jpg"><img src="assets/img/replay-controls.jpg" alt="The replay with the linear track-position strip, race control messages, playback controls and the lap timeline with events." loading="lazy"></a>
+          <figcaption><b>Track strip, race control and the timeline</b>, with playback, lap steps and events marked.</figcaption>
+        </figure>
+      </div>
+      <ul class="list">
+        <li><b>Timeline</b> with safety cars, flags, pit stops and fastest laps marked; jump straight to any of them.</li>
+        <li><b>Track-position strip</b>: every car on one line, so trains and gaps are easy to read.</li>
+        <li><b>Qualifying aware</b>: Q1/Q2/Q3 segments, knock-outs and the segment clock.</li>
+        <li><b>Save session for replay</b> keeps a session on disk to open offline later.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="analysis">
+    <div class="wrap">
+      <div class="head">
+        <div><span class="label">Analysis</span><h2>Then take it apart.</h2></div>
+        <p>Every loaded session opens in twelve analysis views. Pick the drivers once and the charts follow them; the selection and the view are in the URL, so a link opens exactly what you were looking at.</p>
+      </div>
+      <figure class="shot">
+        <a href="assets/img/analysis-telemetry.jpg"><img src="assets/img/analysis-telemetry.jpg" alt="Speed traces of VER, BOT, HAM, ALB and NOR over their fastest laps, lined up by distance around the lap." loading="lazy"></a>
+        <figcaption><b>Telemetry.</b> Speed, throttle, brake, RPM, gear and DRS over each driver's fastest lap, lined up by distance.</figcaption>
+      </figure>
+      <figure class="shot" style="margin-top:18px">
+        <a href="assets/img/analysis-race-trace.jpg"><img src="assets/img/analysis-race-trace.jpg" alt="Race trace: every driver's gap to the leader lap by lap, with the safety car and VSC laps shaded." loading="lazy"></a>
+        <figcaption><b>Race trace.</b> The gap to the leader, or to any driver, lap by lap, with safety car and VSC laps shaded.</figcaption>
+      </figure>
+      <div class="scroll" style="margin-top:28px">
+        <table class="table">
+          <thead><tr><th>View</th><th>What it shows</th></tr></thead>
+          <tbody>
+            <tr><td>Telemetry</td><td>Speed, throttle, brake, RPM, gear and DRS for the chosen drivers (DRS hidden for 2026, which replaced it with active aero).</td></tr>
+            <tr><td>Head-to-head</td><td>Two drivers stacked: speed, throttle, brake, gear and the time delta, with corner numbers and a lap picker per driver.</td></tr>
+            <tr><td>Lap times</td><td>Every lap for the chosen drivers, with pit-out laps marked and neutralised laps shaded.</td></tr>
+            <tr><td>Race trace</td><td>Gap to the leader or to a chosen driver, lap by lap.</td></tr>
+            <tr><td>Tyre pace</td><td>Fuel-corrected lap time against tyre age per compound, and the loss per lap.</td></tr>
+            <tr><td>Pit rejoin</td><td>Where a car would rejoin if it pitted at the end of a given lap.</td></tr>
+            <tr><td>Rankings</td><td>Best sector times and speed-trap readings (I1, I2, finish line, speed trap), ranked.</td></tr>
+            <tr><td>Deleted laps</td><td>Laps deleted for track limits, the reason, when it was announced, and warnings per driver.</td></tr>
+            <tr><td>Positions</td><td>Running order lap by lap.</td></tr>
+            <tr><td>Weather</td><td>Air and track temperature, humidity, wind and rain over the session.</td></tr>
+            <tr><td>Race control</td><td>Every message, filterable and searchable.</td></tr>
+            <tr><td>Team radio</td><td>The session's team radio recordings (2023 onwards), from OpenF1.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="more">
+    <div class="wrap">
+      <div class="head">
+        <div><span class="label">And the rest</span><h2>Results, records, your settings.</h2></div>
+        <p>The pages around the replay, plus the settings that make it yours.</p>
+      </div>
+      <div class="cards">
+        <div class="card"><h3>Results</h3><p>Final classification, sector bests, track dominance, tyre strategy and the championship after the round.</p></div>
+        <div class="card"><h3>Records</h3><p>Fastest lap, sector bests and top speed for this session and across every session you have loaded, kept between runs.</p></div>
+        <div class="card"><h3>Settings</h3><p>km/h or mph, &deg;C or &deg;F, track or local time, favourite drivers, which tower columns and panels show, and cache controls.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="install">
+    <div class="wrap">
+      <div class="head">
+        <div><span class="label">Install</span><h2>One command.</h2></div>
+        <p>The installers set up <a href="https://docs.astral.sh/uv/">uv</a> if it is missing and install the app as a uv tool. uv downloads a matching Python itself, so you don't need Python installed, and no admin rights are needed.</p>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Operating system">
+        <button role="tab" id="t-win" aria-controls="p-win" aria-selected="true">Windows</button>
+        <button role="tab" id="t-nix" aria-controls="p-nix" aria-selected="false">macOS and Linux</button>
+        <button role="tab" id="t-uv" aria-controls="p-uv" aria-selected="false">With uv</button>
+      </div>
+      <div class="panel on" id="p-win" role="tabpanel" aria-labelledby="t-win">
+        <p>In PowerShell. This also adds a Start-menu shortcut, "F1 Replay".</p>
+        <pre><code>irm https://raw.githubusercontent.com/mricero/F1-Telemetry-Dashboard/main/install.ps1 | iex</code></pre>
+      </div>
+      <div class="panel" id="p-nix" role="tabpanel" aria-labelledby="t-nix">
+        <p>In a terminal.</p>
+        <pre><code>curl -LsSf https://raw.githubusercontent.com/mricero/F1-Telemetry-Dashboard/main/install.sh | sh</code></pre>
+      </div>
+      <div class="panel" id="p-uv" role="tabpanel" aria-labelledby="t-uv">
+        <p>On any OS, once <a href="https://docs.astral.sh/uv/getting-started/installation/">uv is installed</a>. To try it without installing, use the second line.</p>
+        <pre><code>uv tool install git+https://github.com/mricero/F1-Telemetry-Dashboard</code></pre>
+        <pre><code>uvx --from git+https://github.com/mricero/F1-Telemetry-Dashboard f1dash</code></pre>
+      </div>
+      <h3 style="margin-top:40px">Run it</h3>
+      <div class="scroll" style="margin-top:14px">
+        <table class="table">
+          <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>f1dash</code></td><td>Opens the dashboard in your browser.</td></tr>
+            <tr><td><code>f1dash --port 8600</code></td><td>Serves on a specific port (default 8501, or the next free one).</td></tr>
+            <tr><td><code>f1dash --no-browser</code></td><td>Serves without opening a browser window.</td></tr>
+            <tr><td><code>f1dash update</code></td><td>Installs the newest release.</td></tr>
+            <tr><td><code>f1dash paths</code></td><td>Shows where the cache, replays, records and <code>.env</code> live.</td></tr>
+            <tr><td><code>uv tool uninstall f1dash</code></td><td>Removes the app; your data folders stay until you delete them.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="color:#c9ced5; margin-top:16px">Pick a season, Grand Prix and session in the sidebar and select <b>Load session</b>. The first load downloads the session through FastF1; later loads read the cache. When a session is on air, select <b>Go live</b>.</p>
+      <p class="note">This is an <b>unofficial</b> project. It reads F1's undocumented live-timing endpoints and FastF1's archive, and it is not associated with the Formula 1 companies. Run it locally, for yourself: F1 has blocked the IP addresses of hosted, heavy users of the feed. Read <a href="https://github.com/mricero/F1-Telemetry-Dashboard#data-sources--terms">Data sources &amp; terms</a> first.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <p>F1 Telemetry Dashboard is MIT licensed. The Titillium Web font is under the SIL Open Font License 1.1.</p>
+      <p style="margin-top:8px">F1, FORMULA ONE, FORMULA 1, FIA FORMULA ONE WORLD CHAMPIONSHIP, GRAND PRIX and related marks are trade marks of Formula One Licensing B.V. This site and the app are not affiliated with them.</p>
+    </div>
+    <nav aria-label="Links">
+      <a href="https://github.com/mricero/F1-Telemetry-Dashboard">GitHub</a>
+      <a href="https://github.com/mricero/F1-Telemetry-Dashboard#readme">Readme</a>
+      <a href="https://github.com/mricero/F1-Telemetry-Dashboard/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/mricero/F1-Telemetry-Dashboard/issues">Issues</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  // Install tabs
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  function select(tab) {
+    tabs.forEach((t) => {
+      const on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute("aria-controls")).classList.toggle("on", on);
+    });
+  }
+  tabs.forEach((t, i) => {
+    t.addEventListener("click", () => select(t));
+    t.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      select(next); next.focus();
+    });
+  });
+  select(tabs[0]);
+  // Copy buttons on every command block (comments after "#" are left out)
+  document.querySelectorAll("pre").forEach((pre) => {
+    const button = document.createElement("button");
+    button.className = "copy"; button.type = "button"; button.textContent = "Copy";
+    button.addEventListener("click", async () => {
+      const text = pre.querySelector("code").innerText
+        .split("\n").map((line) => line.replace(/\s+#.*$/, "")).join("\n").trim();
+      try { await navigator.clipboard.writeText(text); button.textContent = "Copied"; button.classList.add("done"); }
+      catch { button.textContent = "Select and copy"; }
+      setTimeout(() => { button.textContent = "Copy"; button.classList.remove("done"); }, 1600);
+    });
+    pre.append(button);
+  });
+</script>
+</body>
+</html>
