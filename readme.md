@@ -4,15 +4,33 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.55+-FF4B4B.svg)](https://streamlit.io/)
 [![FastF1](https://img.shields.io/badge/FastF1-3.8+-black.svg)](https://docs.fastf1.dev/)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/website-live-e10600.svg)](https://mricero.github.io/F1-Telemetry-Dashboard/)
 
-A local dashboard for Formula 1 sessions: a replay of the session with the
-timing tower and track map, results and tyre strategy, telemetry analysis,
-and records that persist between runs. Historical sessions come from FastF1;
-live timing comes from F1's SignalR Core feed while a session is on air.
+**Formula 1 timing, on your own machine.** Follow a session live from F1's own
+timing feed, replay any race with the timing tower and track map, then take every
+lap apart in twelve analysis views. Results, tyre strategy and records that
+persist between runs are included too. Historical sessions come from FastF1; live
+timing comes from F1's SignalR Core feed while a session is on air.
+
+[![The Live page during a race: timing tower, gaps, sectors and tyre history](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-timing.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/)
+
+[Website](https://mricero.github.io/F1-Telemetry-Dashboard/) ·
+[Watch the 21-second film](https://mricero.github.io/F1-Telemetry-Dashboard/assets/video/live-film.mp4) ·
+[Install](#install) · [Features](#features) · [Data sources & terms](#data-sources--terms)
 
 This is an **unofficial** project. It reads undocumented F1 endpoints and is
 not associated with the Formula 1 companies. Read
 [Data sources & terms](#data-sources--terms) before running it.
+
+**At a glance**
+
+| | What you get |
+|---|---|
+| **Live** | When a session is on air: the timing tower (last and best lap, interval, gap, sectors, tyre history), sector leaders, race control, track status, weather, tyre stints and the championship as it would stand if the race finished now. No account needed. |
+| **Replay** | Any session from FastF1: tower, track map, track-position strip, flags, race control and weather as they stood at the cursor, with playback, lap steps and an event timeline. |
+| **Analysis** | Twelve views per session: telemetry, head-to-head, lap times, race trace, tyre pace, pit rejoin, rankings, deleted laps, positions, weather, race control and team radio. |
+| **Results and records** | Final classification, sector bests, track dominance, tyre strategy and the championship, plus fastest-lap, sector and top-speed records kept across every session you load. |
+| **Yours** | Runs locally. Free and MIT licensed. km/h or mph, °C or °F, track or local time, favourite drivers, and shareable links. |
 
 ## Install
 
@@ -20,6 +38,12 @@ The installers set up [uv](https://docs.astral.sh/uv/) if it is missing, then
 install the app as a uv tool. uv downloads a matching Python itself, so you do
 not need Python installed, and your own Python is not touched. No admin
 rights are needed.
+
+| System | Command |
+|---|---|
+| Windows (PowerShell) | `irm https://raw.githubusercontent.com/mricero/F1-Telemetry-Dashboard/main/install.ps1 \| iex` |
+| macOS and Linux | `curl -LsSf https://raw.githubusercontent.com/mricero/F1-Telemetry-Dashboard/main/install.sh \| sh` |
+| Any OS, with uv | `uv tool install git+https://github.com/mricero/F1-Telemetry-Dashboard` |
 
 Windows (PowerShell; also adds a Start-menu shortcut "F1 Replay"):
 
@@ -65,17 +89,13 @@ Pick a season, Grand Prix and session in the sidebar and select
 session downloads it through FastF1 and takes a while, later loads read the
 cache. A loaded session has these pages:
 
-- **Replay** - the session as it stood at the cursor: timing tower, track map,
-  flags, race control and weather, with playback, lap steps and a timeline.
-- **Results** - the final classification, sector bests, track dominance and
-  tyre strategy.
-- **Analysis** - telemetry, head-to-head (speed traces and an integrated time
-  delta, accurate to roughly 0.1-0.3 s), lap times, positions, weather and
-  race control.
-- **Records** - fastest lap, sector bests and top speed, for this session and
-  across every session you have loaded.
-- **Settings** - clear cached schedules and loaded sessions, data locations,
-  the version.
+| Page | What it shows |
+|---|---|
+| **Replay** | The session as it stood at the cursor: timing tower, track map, track-position strip, flags, race control and weather, with playback, lap steps and a timeline of events. |
+| **Results** | The final classification, sector bests, track dominance, tyre strategy and the championship after the round. |
+| **Analysis** | Twelve views; see [Analysis](#analysis) below. |
+| **Records** | Fastest lap, sector bests and top speed, for this session and across every session you have loaded. |
+| **Settings** | Units and time zone, favourite drivers, which tower columns and panels show, cached schedules and loaded sessions, data locations and the version. |
 
 While a session is on air the sidebar offers **Go live**; the Live page then
 replaces Replay, Results and Analysis.
@@ -115,7 +135,7 @@ prints four locations:
 | FastF1 cache | user cache directory, `fastf1/` | `ff1_cache/` |
 | Replays and live recordings | user data directory, `replays/` | `replay_sessions/` |
 | Records | user data directory, `metrics_store.sqlite` | `metrics_store.sqlite` |
-| `.env` | user config directory, `.env` | `.env` next to `app.py` |
+| `.env` | user config directory, `.env` | `.env` in the project folder |
 
 The user directories come from `platformdirs` (on Windows under
 `%LOCALAPPDATA%\f1dash`, on Linux under `~/.cache/f1dash`,
@@ -144,12 +164,79 @@ to `livetiming.formula1.com` as `Authorization: Bearer`, and never logged. It
 expires after a few days; the Live page shows when.
 
 Live mode connects to `wss://livetiming.formula1.com/signalrcore` with the
-app's own SignalR Core client (`data/signalr_core.py`). F1 closes long
-connections, so the client reconnects by itself and shows its state:
-connecting, waiting for a session, live, reconnecting, or refused (HTTP 401
-for a missing or expired token, 403 when F1 refuses the client). A refusal waits two minutes before the next attempt. To check the
-connection during a race weekend, run `python scripts/live_smoke.py 30` from
-a checkout.
+app's own SignalR Core client (`src/f1dash/data/signalr_core.py`). F1 closes
+long connections, so the client reconnects by itself and shows its state:
+
+| State | Meaning |
+|---|---|
+| Connecting | Negotiating and opening the socket. |
+| Waiting | Connected; no session is on air yet. |
+| Live | Feed data is arriving. |
+| Reconnecting | The connection dropped; retrying with backoff (normal, F1 drops long connections). |
+| Token needed | HTTP 401: the token is missing or expired. Timing still works without it. |
+| Refused | HTTP 403: F1 refused this client or address. The app waits two minutes before trying again. |
+
+To check the connection during a race weekend, run
+`python scripts/live_smoke.py 30` from a checkout.
+
+## Features
+
+### Live
+
+[![Tyre stints for every driver](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-tyres.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#live)
+
+- **Timing tower**: position, last and best lap, interval, gap, sector times and
+  tyre history, with the session clock, track status and conditions above it.
+- **Sector leaders**, **race control** and **weather** next to the tower.
+- **Tyres**: every stint for every driver, by compound and lap.
+- **Championship, live**: the drivers' and constructors' standings if the race
+  finished in the current order (now, this race, projected, change).
+- **Broadcast delay**: hold the live view back to line up with your TV stream.
+- **Auto-record**: the raw feed is saved into the replay folder when a session
+  starts (`F1_LIVE_AUTORECORD`), so it can be replayed afterwards.
+
+### Replay
+
+[![Replay of the 2020 Abu Dhabi Grand Prix with the track strip, race control and timeline](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/replay-controls.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#replay)
+
+- The timing tower and track map as they stood at the cursor; a snapshot never
+  uses information from later in the session.
+- A **track-position strip** with every car on one line, for trains and gaps.
+- A **timeline** with safety cars, flags, pit stops and fastest laps marked, and
+  a jump list to go straight to them.
+- **Qualifying aware**: Q1, Q2 and Q3 (and SQ1 to SQ3) segments, knock-outs and
+  the segment clock.
+- **Save session for replay** writes a session to disk to open offline later.
+
+### Analysis
+
+[![Race trace: gap to the leader per lap with safety car laps shaded](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/analysis-race-trace.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#analysis)
+
+Pick the drivers once and the charts follow them. The drivers, the view and the
+replay position are in the URL, so a link opens exactly what you were looking at.
+
+| View | What it shows |
+|---|---|
+| Telemetry | Speed, throttle, brake, RPM, gear and DRS over each driver's fastest lap, lined up by distance (DRS is hidden for 2026, which replaced it with active aero). |
+| Head-to-head | Two drivers stacked: speed, throttle, brake, gear and the time delta, with corner numbers and a lap picker per driver. The delta is integrated from the speed traces and lands within roughly 0.1-0.3 s of the true gap. |
+| Lap times | Every lap for the chosen drivers, with pit-out laps marked and neutralised laps shaded. |
+| Race trace | The gap to the leader, or to a chosen driver, lap by lap. |
+| Tyre pace | Fuel-corrected lap time against tyre age per compound, and the loss per lap. |
+| Pit rejoin | Where a car would rejoin if it pitted at the end of a given lap. |
+| Rankings | Best sector times and speed-trap readings (I1, I2, finish line, speed trap), ranked. |
+| Deleted laps | Laps deleted for track limits, the reason and when it was announced, plus warnings per driver. |
+| Positions | The running order lap by lap. |
+| Weather | Air and track temperature, humidity, wind and rain over the session. |
+| Race control | Every message, filterable and searchable. |
+| Team radio | The session's team radio recordings, 2023 onwards, listed from OpenF1. |
+
+### Results, records and settings
+
+| Page | Highlights |
+|---|---|
+| Results | Final classification, sector bests, track dominance, tyre strategy and the championship after the round. |
+| Records | Fastest lap, sector bests and top speed, kept in a local database between runs. |
+| Settings | km/h or mph, °C or °F, track or local time, favourite drivers (underlined in the tower), the tower columns and panels shown, cache controls, data locations and the version. |
 
 ## Configuration
 
@@ -176,6 +263,13 @@ Every variable is optional. Set it in the environment or in `.env`;
 
 ## Data sources & terms
 
+| Source | Used for | Notes |
+|---|---|---|
+| F1 live timing (`livetiming.formula1.com`) | The Live page | Undocumented; car telemetry and positions need your own F1TV token. |
+| FastF1 | Schedules, sessions, telemetry and results | Reads F1's timing archive and caches it locally. |
+| [Jolpica](https://github.com/jolpica/jolpica-f1) | Results and championship standings | Free, volunteer-run, Ergast-compatible; 4 requests per second and 500 per hour unauthenticated. |
+| [OpenF1](https://openf1.org) | The Team radio list | The free historical `team_radio` endpoint only; your F1TV token is never sent to it. |
+
 - **Unofficial endpoints.** Live timing comes from F1's undocumented
   `livetiming.formula1.com` feed, and FastF1 reads F1's timing archive. F1
   does not support this use and can change or close the endpoints at any time.
@@ -187,12 +281,9 @@ Every variable is optional. Set it in the environment or in `.env`;
   a hosted f1-telemetry instance went down "due to IP blocking by Formula 1").
   Run the app locally, with one connection, on your own token. The app keeps a
   single upstream connection per process and backs off after a refusal.
-- **Jolpica fair use.** FastF1 reads results from
-  [Jolpica](https://github.com/jolpica/jolpica-f1), a free, volunteer-run
-  Ergast-compatible API. Unauthenticated use is limited to 4 requests per
-  second and 500 per hour; FastF1's cache keeps repeat loads off the API.
+- **Jolpica fair use.** FastF1's cache keeps repeat loads off the API.
 - **OpenF1** offers historical data for free and real-time data as a paid
-  tier. This app does not use OpenF1.
+  tier. This app reads only its free historical team radio list.
 - **Bundled third-party content.** The Titillium Web font (SIL Open Font
   License 1.1) and the recorded F1 timing excerpt in `tests/fixtures/live/`
   are not covered by the MIT License; see [NOTICE](NOTICE).
@@ -219,6 +310,14 @@ The root `app.py` is a small shim that runs `src/f1dash/app.py`, so
 `streamlit run app.py` needs no install; `pytest.ini` puts `src` on the path
 for the tests. The editable install is what the `f1dash` command and the
 manual scripts in `scripts/` import from (or set `PYTHONPATH=src`).
+
+| Folder | What lives there |
+|---|---|
+| `src/f1dash/data/` | One adapter per upstream: FastF1, Jolpica, OpenF1 and the live SignalR Core client. |
+| `src/f1dash/processing/` | Pure transforms: the timing-tower model, replay snapshots, analysis maths. |
+| `src/f1dash/ui/` | All rendering: pages, the timing tower, the track map and the browser replay player. |
+| `tests/` | The offline test suite, with recorded live fixtures. |
+| `scripts/` | Manual tools: the live smoke test, replay preview, fixture capture. |
 
 Activate the virtualenv first (`.venv\Scripts\activate` on Windows,
 `source .venv/bin/activate` elsewhere), or call its interpreter directly
@@ -252,15 +351,19 @@ rules for changing it are in [CLAUDE.md](CLAUDE.md); open work is in
 
 ### Troubleshooting
 
-- **A session will not load.** FastF1 or its upstream timed out, or the
-  session is too recent to be complete in F1's archive. Try again later, or
-  clear the FastF1 cache folder (`f1dash paths`) and load it again.
-- **The live view says "F1 asked for a subscription token (HTTP 401)".** The
-  token is missing or has expired; paste a new one. "F1 refused the connection
-  (HTTP 403)" means F1 refused this client or address.
-- **Memory.** Keep the telemetry scope on *Fastest lap* (Advanced in the
-  sidebar); *Full session* carries every lap. `F1_CACHE_MAX_ENTRIES` and
-  `F1_CACHE_MAX_BYTES` bound how many loaded sessions stay in memory.
+| Problem | What to do |
+|---|---|
+| A session will not load | FastF1 or its upstream timed out, or the session is too recent to be complete in F1's archive. Try again later, or clear the FastF1 cache folder (`f1dash paths`) and load it again. |
+| "F1 asked for a subscription token (HTTP 401)" | The token is missing or has expired; paste a new one. Timing, tyres, race control and weather keep working without it. |
+| "F1 refused the connection (HTTP 403)" | F1 refused this client or address. Wait; do not restart repeatedly. |
+| High memory use | Keep the telemetry scope on *Fastest lap* (Advanced in the sidebar); *Full session* carries every lap. `F1_CACHE_MAX_ENTRIES` and `F1_CACHE_MAX_BYTES` bound how many loaded sessions stay in memory. |
+
+## Website
+
+The project site at https://mricero.github.io/F1-Telemetry-Dashboard/ is a
+single static page with screenshots and a short film of the app. It is served
+by GitHub Pages from the `gh-pages` branch, which holds only the site, so none
+of it is part of `main`. The screenshots in this readme load from that site.
 
 ## License
 
