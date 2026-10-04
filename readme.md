@@ -6,6 +6,8 @@
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 [![Website](https://img.shields.io/badge/website-live-e10600.svg)](https://mricero.github.io/F1-Telemetry-Dashboard/)
 
+**Website: [mricero.github.io/F1-Telemetry-Dashboard](https://mricero.github.io/F1-Telemetry-Dashboard/)**
+
 **Formula 1 timing, on your own machine.** Follow a session live from F1's own
 timing feed, replay any race with the timing tower and track map, then take every
 lap apart in twelve analysis views. Results, tyre strategy and records that
@@ -17,6 +19,11 @@ timing comes from F1's SignalR Core feed while a session is on air.
 [Website](https://mricero.github.io/F1-Telemetry-Dashboard/) ·
 [Watch the 21-second film](https://mricero.github.io/F1-Telemetry-Dashboard/assets/video/live-film.mp4) ·
 [Install](#install) · [Features](#features) · [Data sources & terms](#data-sources--terms)
+
+| Watch the film | One click to go live |
+|---|---|
+| [![The 21-second film: live timing, tyres, the live championship, a replay and the analysis views](https://mricero.github.io/F1-Telemetry-Dashboard/assets/video/live-film.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/video/live-film.mp4) | [![The sidebar banner "A session is running now" with the Go live button](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/go-live.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#live) |
+| 21 seconds of the app with a race on air. | When a session is on air, the sidebar offers **Go live**. |
 
 This is an **unofficial** project. It reads undocumented F1 endpoints and is
 not associated with the Formula 1 companies. Read
@@ -183,7 +190,11 @@ To check the connection during a race weekend, run
 
 ### Live
 
-[![Tyre stints for every driver](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-tyres.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#live)
+| Tyres | Championship, live |
+|---|---|
+| [![Tyre stints for every driver, by compound and lap](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-tyres.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-tyres.jpg) | [![Drivers' and constructors' standings: now, this race, projected and change](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-championship.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-championship.jpg) |
+
+[![Live weather: air and track temperature, humidity, wind and pressure over the session](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-weather.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/live-weather.jpg)
 
 - **Timing tower**: position, last and best lap, interval, gap, sector times and
   tyre history, with the session clock, track status and conditions above it.
@@ -197,7 +208,9 @@ To check the connection during a race weekend, run
 
 ### Replay
 
-[![Replay of the 2020 Abu Dhabi Grand Prix with the track strip, race control and timeline](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/replay-controls.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#replay)
+| Tower and track map | Track strip, race control and timeline |
+|---|---|
+| [![Replay of the 2020 Abu Dhabi Grand Prix on lap 4: the timing tower beside the track map](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/replay.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/replay.jpg) | [![The replay with the track-position strip, race control, playback controls and the lap timeline](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/replay-controls.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/replay-controls.jpg) |
 
 - The timing tower and track map as they stood at the cursor; a snapshot never
   uses information from later in the session.
@@ -210,7 +223,9 @@ To check the connection during a race weekend, run
 
 ### Analysis
 
-[![Race trace: gap to the leader per lap with safety car laps shaded](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/analysis-race-trace.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/#analysis)
+| Telemetry | Race trace |
+|---|---|
+| [![Speed traces of five drivers over their fastest laps, lined up by distance](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/analysis-telemetry.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/analysis-telemetry.jpg) | [![Race trace: every driver's gap to the leader per lap, with safety car and VSC laps shaded](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/analysis-race-trace.jpg)](https://mricero.github.io/F1-Telemetry-Dashboard/assets/img/analysis-race-trace.jpg) |
 
 Pick the drivers once and the charts follow them. The drivers, the view and the
 replay position are in the URL, so a link opens exactly what you were looking at.
@@ -360,7 +375,7 @@ rules for changing it are in [CLAUDE.md](CLAUDE.md); open work is in
 
 ## Website
 
-The project site at https://mricero.github.io/F1-Telemetry-Dashboard/ is a
+The project site at **https://mricero.github.io/F1-Telemetry-Dashboard/** is a
 single static page with screenshots and a short film of the app. It is served
 by GitHub Pages from the `gh-pages` branch, which holds only the site, so none
 of it is part of `main`. The screenshots in this readme load from that site.
