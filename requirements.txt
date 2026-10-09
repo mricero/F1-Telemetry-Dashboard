@@ -9,7 +9,7 @@
 streamlit>=1.55,<2
 plotly>=5.22,<8
 # FastF1 3.8 pins pandas<3, so pandas stays on 2.x.
-pandas>=2.2,<3
+pandas>=2.2,<4
 # numpy 2.5 deprecates the "generic" timedelta unit that pandas 2.x and FastF1
 # call on every laps load; a numpy that turns it into an error would break
 # historical loads in code this project cannot patch. Lift the ceiling
@@ -26,6 +26,6 @@ python-dotenv>=1.0,<2
 pyarrow>=16,!=25.0.0,<26
 # Websocket transport for data/signalr_core.py (the live feed, LIVE-01). The
 # sync client's proxy support arrived in 15.0; Streamlit 1.60+ needs <17.
-websockets>=15,<17
+websockets>=15,<18
 # Per-user cache/data/config directories for an installed app (DIST-03).
 platformdirs>=4,<5
