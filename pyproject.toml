@@ -22,13 +22,13 @@ classifiers = [
 dependencies = [
     "streamlit>=1.55,<2",
     "plotly>=5.22,<8",
-    "pandas>=2.2,<3",
+    "pandas>=2.2,<4",
     "numpy>=1.26,<2.6",
     "fastf1>=3.8.0,<4",
     "requests>=2.31,<3",
     "python-dotenv>=1.0,<2",
     "pyarrow>=16,!=25.0.0,<26",
-    "websockets>=15,<17",
+    "websockets>=15,<18",
     "platformdirs>=4,<5",
 ]
 
