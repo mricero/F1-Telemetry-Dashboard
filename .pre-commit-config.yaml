@@ -4,7 +4,7 @@
 # (tests/test_pre_commit_config.py checks it), so the hook and CI agree.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.10
+    rev: v0.17.0
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -13,7 +13,7 @@ repos:
         stages: [manual]
 
   - repo: https://github.com/psf/black
-    rev: 26.5.1
+    rev: 26.10.1
     hooks:
       - id: black
 
