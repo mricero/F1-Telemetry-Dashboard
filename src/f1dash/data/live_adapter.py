@@ -332,6 +332,11 @@ class SignalRLiveAdapter:
         self.lap_history: list[dict] = []
         self._lap_keys: set[tuple[str, int]] = set()
         self._lap_counter: dict[str, int] = {}
+        # Pit lane times as they are announced. PitLaneTimeCollection shows a
+        # stop for ~20 s and then deletes it, so the merged state never holds
+        # a race's stops; they are kept here, one row per (driver, lap).
+        self.pit_history: list[dict] = []
+        self._pit_keys: set[tuple[str, str]] = set()
         self._data_buffer: dict[str, list[dict]] = defaultdict(list)
         # The client runs on its own thread while Streamlit polls from the
         # script thread: without this, trimming a buffer shifted the reader's
@@ -376,6 +381,8 @@ class SignalRLiveAdapter:
         if topic in STATE_TOPICS:
             if topic == "TimingData":
                 self._record_lap_progress(payload, timestamp)
+            elif topic == "PitLaneTimeCollection":
+                self._record_pit_times(payload, timestamp)
             self.state.update(topic, payload)
             return
         records = self.normalise_series(topic, payload, timestamp)
@@ -427,6 +434,8 @@ class SignalRLiveAdapter:
             self.lap_history.clear()
             self._lap_keys.clear()
             self._lap_counter.clear()
+            self.pit_history.clear()
+            self._pit_keys.clear()
             self._data_buffer.clear()
             self._ingested += 1
 
@@ -513,6 +522,35 @@ class SignalRLiveAdapter:
                     }
                 )
 
+    def _record_pit_times(self, payload: Any, timestamp: str | None = None) -> None:
+        """Keep each announced pit lane time: ``{"PitTimes": {"44": {"Duration": "24.5", "Lap": "38"}}}``.
+
+        The ``_deleted`` notice that follows ~20 s later is ignored here: the
+        stop happened, and the race's median needs it.
+        """
+        if not isinstance(payload, dict) or not isinstance(payload.get("PitTimes"), dict):
+            return
+        for number, entry in payload["PitTimes"].items():
+            if number == "_deleted" or not isinstance(entry, dict):
+                continue
+            duration = entry.get("Duration")
+            if duration in (None, ""):
+                continue
+            driver = str(entry.get("RacingNumber") or number)
+            lap = str(entry.get("Lap") or "")
+            with self._buffer_lock:
+                if (driver, lap) in self._pit_keys:
+                    continue
+                self._pit_keys.add((driver, lap))
+                self.pit_history.append(
+                    {"driver_number": driver, "Lap": lap, "Duration": duration, "Utc": timestamp}
+                )
+
+    def recorded_pit_times(self) -> list[dict]:
+        """A snapshot copy of the pit lane times announced this session."""
+        with self._buffer_lock:
+            return list(self.pit_history)
+
     def seed_state(self, snapshot: dict[str, Any]) -> None:
         """Apply a subscription snapshot: ``{topic: full_state}``.
 
@@ -524,6 +562,7 @@ class SignalRLiveAdapter:
             self._observe_session(snapshot["SessionInfo"])
         self._record("record_snapshot", snapshot)
         self.state.seed({k: v for k, v in snapshot.items() if k in STATE_TOPICS})
+        self._record_pit_times(snapshot.get("PitLaneTimeCollection"))
         # Joining mid-session: the lap counters come from the snapshot, or the
         # next LastLapTime would have no lap number to be filed under.
         timing = snapshot.get("TimingData")
@@ -659,7 +698,8 @@ class SignalRLiveAdapter:
         """
         with self._buffer_lock:
             ingested, laps = self._ingested, len(self.lap_history)
-        return (self.state.version, laps, ingested)
+            pits = len(self.pit_history)
+        return (self.state.version, laps, ingested, pits)
 
     def recorded_laps(self) -> list[dict]:
         """A snapshot copy of the recorded lap completions."""
@@ -1269,6 +1309,22 @@ class LiveDataProcessor:
                 .astype(bool)
             )
         return frame.sort_values(["Driver", "LapNumber"]).reset_index(drop=True)
+
+    @staticmethod
+    def pit_lane_times(records: Sequence[dict], acronyms: dict[str, str]) -> pd.DataFrame:
+        """Recorded pit lane times -> ``Driver, driver_number, Lap, Duration`` (seconds)."""
+        from f1dash.processing.time_utils import to_seconds
+
+        rows = [
+            {
+                "Driver": acronyms.get(str(r.get("driver_number")), f"#{r.get('driver_number')}"),
+                "driver_number": str(r.get("driver_number")),
+                "Lap": pd.to_numeric(r.get("Lap"), errors="coerce"),
+                "Duration": to_seconds(r.get("Duration")),
+            }
+            for r in records or []
+        ]
+        return pd.DataFrame(rows, columns=["Driver", "driver_number", "Lap", "Duration"])
 
     @staticmethod
     def drivers_from_state(driver_state: dict) -> pd.DataFrame:

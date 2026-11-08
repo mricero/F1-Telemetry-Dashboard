@@ -1,0 +1,697 @@
+{
+ "source": "SignalR Core live feed, 2026 São Paulo Grand Prix race, recorded by scripts/live_smoke.py --record; TimingData trimmed to the fields the strategy tab reads",
+ "acronyms": {
+  "1": "NOR",
+  "12": "ANT",
+  "30": "LAW",
+  "27": "HUL",
+  "6": "HAD",
+  "87": "BEA",
+  "63": "RUS",
+  "14": "ALO",
+  "23": "ALB",
+  "81": "PIA",
+  "51": "CAM",
+  "55": "SAI",
+  "43": "COL",
+  "16": "LEC",
+  "10": "GAS",
+  "18": "STR",
+  "77": "BOT",
+  "41": "LIN",
+  "5": "BOR",
+  "44": "HAM",
+  "3": "VER",
+  "11": "PER"
+ },
+ "pit_times_announced": [
+  {
+   "driver_number": "10",
+   "Lap": "37",
+   "Duration": "24.1",
+   "Utc": "2026-11-08T17:55:27.175Z"
+  },
+  {
+   "driver_number": "44",
+   "Lap": "38",
+   "Duration": "24.5",
+   "Utc": "2026-11-08T17:56:29.59Z"
+  },
+  {
+   "driver_number": "23",
+   "Lap": "42",
+   "Duration": "30.7",
+   "Utc": "2026-11-08T18:01:58.297Z"
+  },
+  {
+   "driver_number": "27",
+   "Lap": "44",
+   "Duration": "24.7",
+   "Utc": "2026-11-08T18:04:01.983Z"
+  },
+  {
+   "driver_number": "3",
+   "Lap": "45",
+   "Duration": "23.3",
+   "Utc": "2026-11-08T18:04:34.28Z"
+  },
+  {
+   "driver_number": "41",
+   "Lap": "45",
+   "Duration": "24.7",
+   "Utc": "2026-11-08T18:05:17.935Z"
+  },
+  {
+   "driver_number": "55",
+   "Lap": "45",
+   "Duration": "23.7",
+   "Utc": "2026-11-08T18:06:15.714Z"
+  }
+ ],
+ "green": {
+  "captured": "2026-11-08T17:54:08.961432+00:00",
+  "TimingData": {
+   "Lines": {
+    "1": {
+     "Position": "1",
+     "Line": 1,
+     "GapToLeader": "LAP 38",
+     "IntervalToPositionAhead": {
+      "Value": "LAP 38"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 37
+    },
+    "12": {
+     "Position": "4",
+     "Line": 4,
+     "GapToLeader": "+17.562",
+     "IntervalToPositionAhead": {
+      "Value": "+8.705"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "30": {
+     "Position": "6",
+     "Line": 6,
+     "GapToLeader": "+33.812",
+     "IntervalToPositionAhead": {
+      "Value": "+10.454"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "27": {
+     "Position": "8",
+     "Line": 8,
+     "GapToLeader": "+47.304",
+     "IntervalToPositionAhead": {
+      "Value": "+7.287"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "6": {
+     "Position": "2",
+     "Line": 2,
+     "GapToLeader": "+7.830",
+     "IntervalToPositionAhead": {
+      "Value": "+7.830"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "87": {
+     "Position": "16",
+     "Line": 16,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+24.236"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 35
+    },
+    "63": {
+     "Position": "7",
+     "Line": 7,
+     "GapToLeader": "+40.060",
+     "IntervalToPositionAhead": {
+      "Value": "+6.298"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "14": {
+     "Position": "11",
+     "Line": 11,
+     "GapToLeader": "+59.348",
+     "IntervalToPositionAhead": {
+      "Value": "+8.860"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "23": {
+     "Position": "14",
+     "Line": 14,
+     "GapToLeader": "+62.933",
+     "IntervalToPositionAhead": {
+      "Value": "+2.043"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "81": {
+     "Position": "5",
+     "Line": 5,
+     "GapToLeader": "+23.436",
+     "IntervalToPositionAhead": {
+      "Value": "+6.013"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "51": {
+     "Position": "19",
+     "Line": 19,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+11.273"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 35
+    },
+    "55": {
+     "Position": "17",
+     "Line": 17,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+6.369"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 35
+    },
+    "43": {
+     "Position": "15",
+     "Line": 15,
+     "GapToLeader": "+63.785",
+     "IntervalToPositionAhead": {
+      "Value": "+0.852"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "16": {
+     "Position": "13",
+     "Line": 13,
+     "GapToLeader": "+60.825",
+     "IntervalToPositionAhead": {
+      "Value": "+0.691"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "10": {
+     "Position": "12",
+     "Line": 12,
+     "GapToLeader": "+60.134",
+     "IntervalToPositionAhead": {
+      "Value": "+0.786"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "18": {
+     "Position": "21",
+     "Line": 21,
+     "GapToLeader": "",
+     "IntervalToPositionAhead": {
+      "Value": ""
+     },
+     "InPit": true,
+     "PitOut": false,
+     "Retired": true,
+     "Stopped": true,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 30
+    },
+    "77": {
+     "Position": "22",
+     "Line": 22,
+     "GapToLeader": "",
+     "IntervalToPositionAhead": {
+      "Value": ""
+     },
+     "InPit": true,
+     "PitOut": false,
+     "Retired": true,
+     "Stopped": true
+    },
+    "41": {
+     "Position": "10",
+     "Line": 10,
+     "GapToLeader": "+50.633",
+     "IntervalToPositionAhead": {
+      "Value": "+3.081"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "5": {
+     "Position": "20",
+     "Line": 20,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+0.426"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 35
+    },
+    "44": {
+     "Position": "9",
+     "Line": 9,
+     "GapToLeader": "+47.558",
+     "IntervalToPositionAhead": {
+      "Value": "+0.254"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "3": {
+     "Position": "3",
+     "Line": 3,
+     "GapToLeader": "+8.812",
+     "IntervalToPositionAhead": {
+      "Value": "+0.982"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 36
+    },
+    "11": {
+     "Position": "18",
+     "Line": 18,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+6.951"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 35
+    }
+   }
+  }
+ },
+ "ver_in_pit": {
+  "captured": "2026-11-08T18:04:10.983Z",
+  "TimingData": {
+   "Lines": {
+    "1": {
+     "Position": "1",
+     "Line": 1,
+     "GapToLeader": "LAP 46",
+     "IntervalToPositionAhead": {
+      "Value": "LAP 46"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 45
+    },
+    "12": {
+     "Position": "4",
+     "Line": 4,
+     "GapToLeader": "+16.389",
+     "IntervalToPositionAhead": {
+      "Value": "+4.743"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "30": {
+     "Position": "6",
+     "Line": 6,
+     "GapToLeader": "+38.475",
+     "IntervalToPositionAhead": {
+      "Value": "+15.670"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "27": {
+     "Position": "12",
+     "Line": 12,
+     "GapToLeader": "+52.377",
+     "IntervalToPositionAhead": {
+      "Value": ""
+     },
+     "InPit": false,
+     "PitOut": true,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 44
+    },
+    "6": {
+     "Position": "2",
+     "Line": 2,
+     "GapToLeader": "+12.144",
+     "IntervalToPositionAhead": {
+      "Value": "+12.144"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 45
+    },
+    "87": {
+     "Position": "15",
+     "Line": 15,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+12.423"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 43
+    },
+    "63": {
+     "Position": "7",
+     "Line": 7,
+     "GapToLeader": "+38.748",
+     "IntervalToPositionAhead": {
+      "Value": "+0.273"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "14": {
+     "Position": "10",
+     "Line": 10,
+     "GapToLeader": "+70.123",
+     "IntervalToPositionAhead": {
+      "Value": "+7.994"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "23": {
+     "Position": "16",
+     "Line": 16,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+5.989"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 43
+    },
+    "81": {
+     "Position": "5",
+     "Line": 5,
+     "GapToLeader": "+22.841",
+     "IntervalToPositionAhead": {
+      "Value": "+6.461"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "51": {
+     "Position": "20",
+     "Line": 20,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+4.383"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 43
+    },
+    "55": {
+     "Position": "17",
+     "Line": 17,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+2.854"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 43
+    },
+    "43": {
+     "Position": "13",
+     "Line": 13,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+4.902"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "16": {
+     "Position": "9",
+     "Line": 9,
+     "GapToLeader": "+62.142",
+     "IntervalToPositionAhead": {
+      "Value": "+8.045"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "10": {
+     "Position": "14",
+     "Line": 14,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+10.123"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 44
+    },
+    "18": {
+     "Position": "21",
+     "Line": 21,
+     "GapToLeader": "",
+     "IntervalToPositionAhead": {
+      "Value": ""
+     },
+     "InPit": true,
+     "PitOut": false,
+     "Retired": true,
+     "Stopped": true,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 30
+    },
+    "77": {
+     "Position": "22",
+     "Line": 22,
+     "GapToLeader": "",
+     "IntervalToPositionAhead": {
+      "Value": ""
+     },
+     "InPit": true,
+     "PitOut": false,
+     "Retired": true,
+     "Stopped": true
+    },
+    "41": {
+     "Position": "8",
+     "Line": 8,
+     "GapToLeader": "+54.214",
+     "IntervalToPositionAhead": {
+      "Value": "+15.777"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 44
+    },
+    "5": {
+     "Position": "19",
+     "Line": 19,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+3.691"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 43
+    },
+    "44": {
+     "Position": "11",
+     "Line": 11,
+     "GapToLeader": "+72.153",
+     "IntervalToPositionAhead": {
+      "Value": "+2.083"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 44
+    },
+    "3": {
+     "Position": "3",
+     "Line": 3,
+     "GapToLeader": "+11.646",
+     "IntervalToPositionAhead": {
+      "Value": ""
+     },
+     "InPit": true,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 2,
+     "NumberOfLaps": 44
+    },
+    "11": {
+     "Position": "18",
+     "Line": 18,
+     "GapToLeader": "1 L",
+     "IntervalToPositionAhead": {
+      "Value": "+8.744"
+     },
+     "InPit": false,
+     "PitOut": false,
+     "Retired": false,
+     "Stopped": false,
+     "NumberOfPitStops": 1,
+     "NumberOfLaps": 43
+    }
+   }
+  }
+ }
+}

@@ -566,6 +566,10 @@ class DataSourceManager:
             # The timing screen's own order, gaps and status (same shape as a
             # replay snapshot's), so the tower is right during a race.
             "standings": standings,
+            # Pit lane times announced so far (live only), for the strategy tab.
+            "pit_lane_times": LiveDataProcessor.pit_lane_times(
+                adapter.recorded_pit_times(), acr_by_num
+            ),
             "positions": pd.DataFrame(),
             "timing_stream": pd.DataFrame(),
             "track_status": pd.DataFrame(),

@@ -145,7 +145,7 @@ def _is_snapshot(session_data: dict) -> bool:
     return (session_data.get("session_info") or {}).get("replay_time") is not None
 
 
-def _flag_state(session_data: dict) -> str:
+def track_flag(session_data: dict) -> str:
     """The track's flag condition for the header.
 
     Race-control messages are scoped: a ``Sector`` yellow or a ``Driver`` blue
@@ -219,7 +219,7 @@ def header_html(session_data: dict, units: Units = METRIC, start: str = "") -> s
         weather.iloc[-1] if weather is not None and not weather.empty else pd.Series(dtype="object")
     )
 
-    flag = _flag_state(session_data)
+    flag = track_flag(session_data)
     bg, fg, label = FLAG_STATES.get(flag, FLAG_STATES["FINISHED"])
     if _is_snapshot(session_data):
         clock_label, clock_value = race_clock_text(info)
@@ -354,6 +354,13 @@ def _tyres_html(history: Sequence[dict]) -> str:
             f"{letter}<em>{age}</em></span>"
         )
     return f'<div class="f1-tyres">{"".join(badges)}</div>'
+
+
+def tyre_badge_html(compound: str | None, age: int | None, fresh: bool | None) -> str:
+    """One tyre badge as the tower draws it, for the current set."""
+    if not compound:
+        return _tyres_html([])
+    return _tyres_html([{"compound": compound, "laps_used": age or 0, "fresh": fresh}])
 
 
 # The tower's status vocabulary (guideline 5.6): the model's words -> the
@@ -611,7 +618,7 @@ def track_state_marks(session_data: dict) -> tuple[str, str | None]:
     """
     if not (_is_snapshot(session_data) or session_data.get("is_live")):
         return "", None
-    state = _flag_state(session_data)
+    state = track_flag(session_data)
     if state not in TRACK_CHIPS:
         return "", None
     return status_chip(TRACK_CHIPS[state], state), FLAG_STATES[state][0]

@@ -81,6 +81,7 @@ them. This is the single most important thing to preserve:
   'track_status': DataFrame,                # Time (s), Status ('1' green .. '7' VSC ending), Message
   'weather':      DataFrame,                # Time, AirTemp, TrackTemp, Humidity, Pressure, Rainfall, Wind*
   'race_control': DataFrame,                # Time (wall clock), SessionTime, Lap, Category, Flag, Scope, Message
+  'pit_lane_times': DataFrame,              # live only: Driver, driver_number, Lap, Duration (s)
   'compound_colors': {compound: hex},       # FastF1's official per-season tyre colours
   'drivers':      DataFrame,                # driver_number, name_acronym, team_colour, team_name, full_name
   'source':       'fastf1'|'live'|'replay',
@@ -184,6 +185,12 @@ schedule caches and the loaded sessions.
   `RaceControlMessages`, `TrackStatus`, `TimingData`) are deep-merged; `CarData.z`/`Position.z`
   are decoded into flat records; `WeatherData` keeps the message timestamp. Parsers read those
   records - never raw payloads.
+- `PitLaneTimeCollection` announces a stop's pit lane time and `_deleted`s it ~20 s later, so
+  the merged state never holds the race's stops. `SignalRLiveAdapter.pit_history` keeps each
+  announcement (both entry points); the Strategy tab's observed pit-lane median reads that.
+- **Pit lane duration is not net pit loss.** Predictions add only the net loss (pit lane time
+  minus the on-track time for the same stretch), an assumption the viewer sets; observed pit
+  lane times are shown for reference and never used as the loss (`processing/pit_loss.py`).
 - Compressed topics (`CarData.z`, `Position.z`) are base64 + **raw DEFLATE**
   (`zlib.decompress(..., -zlib.MAX_WBITS)`), not zlib-wrapped.
 - The live tower is ordered by the timing screen via a `standings` table built from

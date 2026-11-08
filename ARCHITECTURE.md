@@ -95,7 +95,8 @@ producing that dict, not touching `ui/`.
 | `processing/deleted_laps.py` | Deleted laps (FastF1 `Deleted`/`DeletedReason`) with the race-control announcement time, and per-driver track-limit warning and deletion counts. |
 | `processing/lap_review.py` | Per-driver best valid lap per sector and per speed trap (I1, I2, FL, ST), ranked with the gap to the best; deleted and inaccurate laps excluded. |
 | `processing/pace.py` | Tyre degradation and stint pace: clean laps (no in/out, SC/VSC/red, inaccurate or first lap) with tyre age and fuel-corrected time, per-stint slopes and the per-compound median. |
-| `processing/pit_loss.py` | Pit rejoin predictor: green-flag pit lane times from `PitInTime -> PitOutTime`, a per-circuit seed table, and where a car would rejoin given the gaps to the leader. |
+| `processing/pit_loss.py` | The two pit-stop times kept apart: observed green-flag pit lane durations (`PitInTime -> PitOutTime`, median for reference) and the net pit loss, an assumption (`DEFAULT_NET_PIT_LOSS`, `NET_PIT_LOSS_NOTE`); where a car would rejoin when the net loss is added to its gap to the leader (FEAT-02). |
+| `processing/pit_strategy.py` | Live pit strategy (the Live page's Strategy tab): every car on one time axis behind the leader (`GapToLeader`, continued by `IntervalToPositionAhead` for lapped cars), `predict_pit_rejoin()` adding an assumed net pit loss with an `ok`/`uncertain`/`unavailable`/`unsupported` status, margins, ±2 s scenarios, warnings and assumptions, the selected car's summary, and the race's observed pit lane median from `PitLaneTimeCollection` (reference, not used as the loss). Assumptions and limits: `docs/pit-strategy.md`. |
 | `processing/lap_compare.py` | One lap of one driver for the head-to-head: lap list and time windows, slice with Distance from 0, shared 5 m grid, corner markers. |
 | `processing/replay.py` | `ReplayClock` (start, lights out, end) and the `PositionCube`: every car's position on one regular time grid. |
 | `processing/replay_model.py` | `tower_series()` change-point series and `snapshot_at(t)`: the session as it stood at `t`, never reading rows stamped after it; `events()` for jump targets. |
@@ -120,6 +121,7 @@ producing that dict, not touching `ui/`.
 | `ui/theme.py` | Colour tokens (guideline 5.4 of `IMPROVEMENTS.md`) emitted once as CSS variables, flag states, shared CSS. |
 | `ui/fonts.py` | Titillium Web embedded as base64 `@font-face`, so the app requests no fonts at runtime. |
 | `ui/standings.py` | Driver and constructor standings after the selected round (Results page) and the points projection while a race is live (Live page); Jolpica lookups are `@st.cache_data` with a 30 minute TTL (FEAT-06). |
+| `ui/strategy.py` | The Live page's Strategy tab: driver picker, pit-loss slider and the projected order around the rejoin point, from the polled snapshot (no new connection or request). |
 | `ui/status.py` | `DataStatus`: why a panel is empty, carried to the panel that shows it. |
 
 `ui/components/replay_player/` holds the browser replay player
@@ -302,6 +304,7 @@ variable `PUBLISH_PYPI` is `true`.
 │   │   ├── metrics_store.py
 │   │   ├── pace.py
 │   │   ├── pit_loss.py
+│   │   ├── pit_strategy.py
 │   │   ├── replay.py
 │   │   ├── replay_model.py
 │   │   ├── lap_compare.py
@@ -324,6 +327,7 @@ variable `PUBLISH_PYPI` is `true`.
 │       ├── replay_view.py
 │       ├── standings.py
 │       ├── status.py
+│       ├── strategy.py
 │       ├── theme.py
 │       ├── track_map.py
 │       ├── assets/fonts/           # Titillium Web (OFL-1.1)

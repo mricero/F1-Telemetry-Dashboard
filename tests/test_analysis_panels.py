@@ -201,7 +201,10 @@ class TestPitRejoin:
 
         assert not app_test.exception, app_test.exception
         assert app_test.markdown[0].value.startswith("If B pitted at the end of lap 3")
-        assert "default" in app_test.caption[0].value
+        assert app_test.number_input[1].label == "Estimated net pit loss (s)"
+        assert app_test.number_input[1].value == 20.0
+        caption = app_test.caption[0].value
+        assert "is an assumption" in caption and "Observed:" in caption
 
     def test_another_session_says_why(self):
         def render():

@@ -412,6 +412,13 @@ DASHBOARD_CSS = f"""
   border-bottom: 1px solid var(--line);
 }}
 
+/* ---------- live pit strategy ---------- */
+/* The car that pits: the focused-driver outline (accent), top and bottom. */
+.f1-tower tr.focus td {{ border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }}
+.f1-rejoin {{ display: flex; gap: 24px; flex-wrap: wrap; align-items: baseline; margin: 0 0 8px; }}
+.f1-rejoin-item {{ display: flex; flex-direction: column; gap: 2px; }}
+.f1-rejoin-value {{ font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }}
+
 /* ---------- settings: name / value rows ---------- */
 .f1-kv {{ border-collapse: collapse; font-size: 13px; }}
 .f1-kv th {{

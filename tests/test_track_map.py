@@ -591,9 +591,9 @@ class TestHeaderFlagState:
         )
 
     def _flag(self, **session) -> str:
-        from f1dash.ui.dashboard import _flag_state
+        from f1dash.ui.dashboard import track_flag
 
-        return _flag_state({"session_info": {}, "is_live": False, **session})
+        return track_flag({"session_info": {}, "is_live": False, **session})
 
     def test_sector_yellow_is_not_the_track_state(self):
         state = self._flag(

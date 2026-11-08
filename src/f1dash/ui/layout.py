@@ -996,7 +996,7 @@ def poll_live(data_manager, delay: float) -> dict:
     return data_manager.poll_live_data()
 
 
-LIVE_TABS = ["Telemetry", "Tyres", "Race control", "Weather"]
+LIVE_TABS = ["Telemetry", "Tyres", "Strategy", "Race control", "Weather"]
 LIVE_TAB_KEY = "live_tab"
 
 
@@ -1044,7 +1044,7 @@ def render_live_dashboard(data_manager, processor):
     # map is the dashboard's. Only the open tab is drawn (LIVE-35): with the
     # Weather tab open, the six telemetry figures used to be rebuilt every 3 s.
     tabs = st.tabs(LIVE_TABS, key=LIVE_TAB_KEY, on_change="rerun")
-    telemetry_tab, tyres_tab, race_control_tab, weather_tab = tabs
+    telemetry_tab, tyres_tab, strategy_tab, race_control_tab, weather_tab = tabs
     revision = f"live:{info.get('session_key') or info.get('gp') or 'session'}"
     if telemetry_tab.open:
         with telemetry_tab:
@@ -1061,6 +1061,12 @@ def render_live_dashboard(data_manager, processor):
             render_tire_strategy(stints_df, color_map, snapshot.get("compound_colors"))
             if not stints_df.empty:
                 st.dataframe(stints_df, width="stretch", height=250)
+    if strategy_tab.open:
+        with strategy_tab:
+            # Imported here: ui.strategy imports this module.
+            from f1dash.ui.strategy import render_pit_strategy
+
+            render_pit_strategy(snapshot)
     if race_control_tab.open:
         with race_control_tab:
             render_race_control(snapshot.get("race_control"), limit=25, key="rc:live")
@@ -1943,8 +1949,13 @@ def render_pit_rejoin(
     lap: int | None = None,
     key: str = "pit_rejoin",
 ) -> None:
-    """Pit rejoin predictor: current gap plus the circuit's pit loss (FEAT-02)."""
-    from f1dash.processing.pit_loss import pit_loss_for, rejoin_after_lap
+    """Pit rejoin predictor: the gap at the line plus an assumed net pit loss (FEAT-02)."""
+    from f1dash.processing.pit_loss import (
+        DEFAULT_NET_PIT_LOSS,
+        NET_PIT_LOSS_NOTE,
+        median_pit_lane_duration,
+        rejoin_after_lap,
+    )
 
     if not is_race_session(session_info):
         st.info(
@@ -1957,7 +1968,7 @@ def render_pit_rejoin(
         return
     drivers = sorted(set(trace["Driver"]))
     last_lap = int(trace["LapNumber"].max())
-    loss, source = pit_loss_for((session_info or {}).get("gp"), laps, track_status)
+    lane_median, lane_stops = median_pit_lane_duration(laps, track_status)
     left, middle, right = st.columns(3)
     driver = left.selectbox(
         "Driver",
@@ -1974,19 +1985,26 @@ def render_pit_rejoin(
         key=f"{key}_lap",
     )
     seconds = right.number_input(
-        "Pit loss (s)",
+        "Estimated net pit loss (s)",
         min_value=5.0,
         max_value=60.0,
-        value=float(loss),
+        value=DEFAULT_NET_PIT_LOSS,
         step=0.5,
-        key=f"{key}_loss:{loss}",
+        key=f"{key}_net_loss",
+        help=NET_PIT_LOSS_NOTE,
     )
     result = rejoin_after_lap(laps, driver, int(at_lap), float(seconds))
     if result is None:
         st.info(f"{driver} has no timed lap {int(at_lap)}, so there is no gap to start from.")
         return
     st.markdown(rejoin_sentence(driver, int(at_lap), result))
+    observed = (
+        f"Observed: median green-flag pit lane time {lane_median:.1f} s over {lane_stops} "
+        "stops (pit entry to pit exit), shown for reference and not used."
+        if lane_median is not None
+        else f"Observed: {lane_stops} green-flag stop(s) timed, too few for a pit lane median."
+    )
     st.caption(
-        f"Pit loss {loss:.1f} s: {source}. It is the pit lane time from pit entry to pit exit; "
-        "the other cars are assumed to stay out at their gaps to the leader at the end of that lap."
+        f"Net pit loss {float(seconds):.1f} s is an assumption. {NET_PIT_LOSS_NOTE} {observed} "
+        "The other cars are assumed to stay out at their gaps to the leader at the end of that lap."
     )
